@@ -1,6 +1,6 @@
 cosmic-nightlight (0.4.0-1) noble; urgency=medium
 
-  * The schedule is now honoured by whichever part of the app is running, so the
+  * The schedule is now honored by whichever part of the app is running, so the
     applet alone keeps the screen on schedule. Every run mode re-checks the clock
     on a shared 15-second tick and reconciles the screen against it.
   * Remove the "Start on login" toggle, which existed only to launch the
@@ -11,7 +11,7 @@ cosmic-nightlight (0.4.0-1) noble; urgency=medium
     still not enabled, for anyone running without the applet.
   * Schedule times are now minute-precise: From/To pick an hour, minute, and
     AM/PM (or a 24-hour clock, following the system setting), and the Schedule
-    row summarises the window. Existing whole-hour settings are read and carried
+    row summarizes the window. Existing whole-hour settings are read and carried
     over.
   * Fix a schedule window that ends later in the day than it starts (e.g.
     09:00 to 17:00) leaving the tint on around the clock; such a window is now a
@@ -24,7 +24,7 @@ cosmic-nightlight (0.4.0-1) noble; urgency=medium
   * Applies no longer block the GUI: they run on a background thread and
     coalesce, so dragging a slider or flipping the toggle can't freeze the
     applet for the second an apply takes.
-  * Serialise applies across all processes with a lock and a shared record of
+  * Serialize applies across all processes with a lock and a shared record of
     what is on screen, so several noticing the same boundary cost one flicker
     instead of several, and re-applying an unchanged tint is skipped. Failures
     back off exponentially rather than retrying every tick.

@@ -51,6 +51,7 @@ jobs:
 
       # Only on a pushed tag like v0.1.0: attach the .deb to a GitHub Release.
       - name: Build the release notes
+        id: notes
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           # Check the tag against the changelog before publishing anything, so a
@@ -63,7 +64,23 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match debian/changelog ($changelog_version)"
             exit 1
           fi
-          scripts/release-notes.sh > release-notes.md
+
+          # Prefer notes written for this release: they are what a reader wants,
+          # grouped and with the install steps, rather than the changelog's flat
+          # list. Fall back to the changelog so a forgotten file still ships
+          # something accurate, and let GitHub append its generated PR list in
+          # that case only — a hand-written file already ends with the compare
+          # link, and the published releases before this one carry no such
+          # section.
+          handwritten="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$handwritten" ]; then
+            cp "$handwritten" release-notes.md
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no $handwritten; falling back to debian/changelog"
+            scripts/release-notes.sh > release-notes.md
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
           cat release-notes.md
 
       - name: Publish GitHub Release
@@ -71,9 +88,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.deb
-          # The changelog entry for this release, which GitHub's generated
-          # "What's Changed" section is appended to. Without a body the notes
-          # would be that generated section alone — a list of merged PRs, which
-          # says nothing about a release pushed straight to main.
+          # Match the titles of the earlier releases, e.g. "v0.4.0 — Night Light".
+          name: ${{ github.ref_name }} — Night Light
+          # Without a body the notes would be GitHub's generated section alone —
+          # a list of merged PRs, which says nothing about a release pushed
+          # straight to main.
           body_path: release-notes.md
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.notes.outputs.generate }}
