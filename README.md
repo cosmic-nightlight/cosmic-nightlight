@@ -52,7 +52,7 @@ the screen — see [How it works](#how-it-works).
 The easy way — install the `.deb` from the COSMIC Store:
 
 1. Download the latest **`cosmic-nightlight_*.deb`** from the
-   [**Releases**](https://github.com/danielcwtts/cosmic-nightlight/releases)
+   [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
    page.
 2. Open the downloaded file with the **COSMIC Store** and click **Install**.
    (Or from a terminal: `sudo apt install ./cosmic-nightlight_*.deb`.)
