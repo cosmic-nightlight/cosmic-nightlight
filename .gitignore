@@ -11,5 +11,13 @@ debian/*.substvars
 debian/*.debhelper
 debian/*.log
 
+# Flatpak build artifacts. cargo-sources.json is generated from Cargo.lock
+# (see flatpak/README.md); cosmic-flatpak carries its own committed copy.
+flatpak/cargo-sources.json
+flatpak/.flatpak-builder/
+flatpak/build/
+flatpak/venv/
+flatpak/flatpak-cargo-generator.py
+
 # Local Claude Code settings
 .claude/settings.local.json

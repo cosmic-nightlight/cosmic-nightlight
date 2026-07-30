@@ -8,6 +8,11 @@
 //! shells out to the helper through `pkexec`; the bundled polkit rule lets
 //! members of the `wheel`/`sudo` group run it without a password prompt.
 //!
+//! Inside a flatpak the same call is prefixed with `flatpak-spawn --host`, so
+//! pkexec and the helper run on the host. The helper therefore has to be
+//! installed there — the sandbox has no way to hold DRM master itself, whatever
+//! permissions it is given. See [`in_flatpak`].
+//!
 //! Every apply is visible to the user as a brief flicker, so this module also
 //! records what is currently on screen ([`applied`] / [`record_applied`]) in the
 //! session's runtime directory. Callers consult that record before acting, which
@@ -30,7 +35,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 /// Where the helper may live, in priority order. The `.deb` installs to
-/// `/usr/bin`; the `install.sh` script uses `/usr/local/bin`.
+/// `/usr/bin`; the `install.sh` script uses `/usr/local/bin`. Both paths are
+/// whitelisted by the polkit rule, so either can run without a password.
 const HELPER_CANDIDATES: &[&str] = &[
     "/usr/bin/cosmic-nightlight-helper",
     "/usr/local/bin/cosmic-nightlight-helper",
@@ -40,13 +46,50 @@ const HELPER_CANDIDATES: &[&str] = &[
 /// ramp, `Some(kelvin)` for a tint at that temperature.
 pub type TintState = Option<u32>;
 
+/// True when we are running inside a flatpak sandbox.
+///
+/// This changes two things. The helper cannot ship *inside* the sandbox and be
+/// run from there — setting gamma needs DRM master, which needs `CAP_SYS_ADMIN`,
+/// which no sandbox permission grants — so it has to live on the host and be
+/// reached through `flatpak-spawn --host`. And because our `/usr` is the flatpak
+/// runtime rather than the host's, we cannot stat the host's copy directly.
+fn in_flatpak() -> bool {
+    static IN_FLATPAK: OnceLock<bool> = OnceLock::new();
+    *IN_FLATPAK.get_or_init(|| std::path::Path::new("/.flatpak-info").exists())
+}
+
+/// Runs `test -x <path>` on the host, for probing paths our own filesystem view
+/// cannot see. Any failure to even launch the probe counts as "not there".
+fn host_has_executable(path: &str) -> bool {
+    Command::new("flatpak-spawn")
+        .args(["--host", "test", "-x", path])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// Resolves the helper path: an explicit `COSMIC_NIGHTLIGHT_HELPER` override
-/// wins; otherwise the first candidate that exists on disk is used. Falls
-/// back to the first candidate so pkexec produces a clear error if nothing
-/// is installed.
+/// wins; otherwise the first candidate that exists is used. Falls back to the
+/// last candidate so that a sandboxed run without the host-side setup names the
+/// path the setup installs to, and pkexec produces a clear error about it.
+///
+/// Sandboxed, the candidates are probed on the host — one spawn each, cached for
+/// the process, because a schedule transition must not pay for this every time.
 fn helper_path() -> String {
     if let Ok(path) = std::env::var("COSMIC_NIGHTLIGHT_HELPER") {
         return path;
+    }
+    if in_flatpak() {
+        static HOST_HELPER: OnceLock<String> = OnceLock::new();
+        return HOST_HELPER
+            .get_or_init(|| {
+                HELPER_CANDIDATES
+                    .iter()
+                    .find(|candidate| host_has_executable(candidate))
+                    .unwrap_or(&HELPER_CANDIDATES[1])
+                    .to_string()
+            })
+            .clone();
     }
     for candidate in HELPER_CANDIDATES {
         if std::path::Path::new(candidate).exists() {
@@ -60,6 +103,10 @@ fn helper_path() -> String {
 /// an empty vec if `XDG_VTNR` is unset (no local VT — best-effort, the helper
 /// then snapshots the foreground VT). `pkexec` strips the environment, so this
 /// has to be passed explicitly rather than inherited.
+///
+/// Flatpak passes `XDG_VTNR` into the sandbox, so this works there too — which
+/// matters, because the host side of `flatpak-spawn --host` does *not* inherit
+/// it and could not work the VT out for itself.
 fn session_vt_args() -> Vec<String> {
     match std::env::var("XDG_VTNR") {
         Ok(vt) if !vt.is_empty() => vec!["--session-vt".to_string(), vt],
@@ -70,9 +117,18 @@ fn session_vt_args() -> Vec<String> {
 /// Runs the helper via `pkexec` with the given arguments, logging the result.
 /// Returns `true` only if the helper ran and exited successfully, so callers
 /// (the daemon) can retry instead of assuming a failed apply took effect.
+///
+/// Sandboxed, the whole thing is prefixed with `flatpak-spawn --host` so that
+/// pkexec and the helper both run on the host rather than in here.
 fn run_helper(args: &[String]) -> bool {
     let helper = helper_path();
-    let mut command = Command::new("pkexec");
+    let mut command = if in_flatpak() {
+        let mut command = Command::new("flatpak-spawn");
+        command.args(["--host", "pkexec"]);
+        command
+    } else {
+        Command::new("pkexec")
+    };
     command.arg(&helper).args(args).args(session_vt_args());
 
     match command.status() {
@@ -85,7 +141,12 @@ fn run_helper(args: &[String]) -> bool {
             false
         }
         Err(err) => {
-            eprintln!("backend: failed to launch pkexec for {helper} ({err})");
+            let launcher = if in_flatpak() {
+                "flatpak-spawn"
+            } else {
+                "pkexec"
+            };
+            eprintln!("backend: failed to launch {launcher} for {helper} ({err})");
             false
         }
     }
