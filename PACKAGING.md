@@ -97,17 +97,22 @@ With `vendor/` committed and `.cargo/config.toml` redirecting crates to it, the
 
 ## Getting it into the COSMIC Store
 
-The Store reads the system's apt repos (Ubuntu, Pop!_OS, and any you add) plus
-Flathub. To make this installable there as a System package:
+The Store draws from three catalogs, and only one of them takes submissions:
 
-1. Host the `.deb` in an **apt repository** — a Launchpad PPA is the easiest
-   (`debuild -S` then `dput ppa:you/cosmic-nightlight`), or self-host with
-   `reprepro`.
-2. Users add the PPA (`add-apt-repository`); the package then appears in the
-   COSMIC Store and `apt`.
-3. For inclusion in the first-party Pop!_OS repos, that's a System76 decision —
-   open it upstream once the PPA is proven.
+| Catalog | How you get in |
+| --- | --- |
+| System (DEP-11 from apt repos) | Requires Ubuntu universe or System76 packaging it. No submission process. |
+| Flathub | Blocked on the app ID: three components where `io.github.*` needs four. |
+| **COSMIC Flatpak** | **A normal pull request.** The target. |
 
-A Flatpak/Flathub submission only becomes appropriate **after** COSMIC ships its
-native gamma protocol, at which point the DRM/VT helper is replaced by a plain
-Wayland client that needs no special privileges.
+So the route in is the flatpak, not the `.deb` — see
+[docs/flatpak-design.md](docs/flatpak-design.md) for how a sandboxed build reaches
+the privileged helper, and [docs/cosmic-store.md](docs/cosmic-store.md) for what
+the Store reads off the metainfo once it is listed.
+
+Hosting the `.deb` in an apt repository is still worth doing for people who want
+a native package — a Launchpad PPA is the easiest (`debuild -S` then
+`dput ppa:you/cosmic-nightlight`), or self-host with `reprepro`. Note that it
+does **not** lead to a Store listing: PPAs publish no DEP-11, so the System
+catalog cannot see them. Inclusion in the first-party Pop!_OS repos is a System76
+decision, worth opening upstream only once the PPA is proven.

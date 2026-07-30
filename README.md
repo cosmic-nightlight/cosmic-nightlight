@@ -78,7 +78,11 @@ alternative to the `.deb`. They need a Rust toolchain and `libdrm` headers
 ./scripts/uninstall.sh         # remove everything install.sh added
 ```
 
-To build the `.deb` yourself, see [PACKAGING.md](PACKAGING.md).
+To build the `.deb` yourself, see [PACKAGING.md](PACKAGING.md). Two further notes
+for anyone working on distribution: [docs/flatpak-design.md](docs/flatpak-design.md)
+covers how a sandboxed build still reaches a helper that needs root, and
+[docs/cosmic-store.md](docs/cosmic-store.md) what the COSMIC Store reads off the
+AppStream metadata.
 
 ## Using it
 
