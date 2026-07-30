@@ -1,3 +1,35 @@
+cosmic-nightlight (0.5.0-1) noble; urgency=medium
+
+  * The app can now ship as a flatpak, which is what makes a COSMIC Store
+    listing possible. Setting the screen tint needs DRM master, which no sandbox
+    permission grants, so the sandboxed app reaches a privileged helper on the
+    host through flatpak-spawn and pkexec instead.
+  * Installing that host helper now happens by itself, on the first time the
+    night light is turned on. Before it is installed every change costs a
+    password prompt, so the first one is spent installing as well as applying —
+    one prompt, after which there are none. Nothing to find and no setup step.
+  * Add a settings row offering the same thing, for anyone who dismissed that
+    prompt, and offering to replace the installed helper when a release has
+    changed what the app asks of it. It appears only when there is something to
+    do and disappears by itself once done.
+  * The helper accepts --version, reporting the version of its command line
+    rather than of the app, so the app can tell whether a helper installed by an
+    earlier release still understands it. That is what keeps an update from
+    asking for a password it does not need.
+  * An app icon and AppStream metadata, so the app describes itself properly to
+    software centers instead of borrowing a theme icon.
+  * uninstall.sh now removes a flatpak install as well, un-registers the panel
+    applet so the panel does not keep restarting it, and resets the screen tint
+    using whichever helper it can still find.
+  * Add scripts/check-version.sh, which fails a release when the version in
+    Cargo.toml, debian/changelog and the AppStream metadata disagree. A stale
+    metainfo version would otherwise show the previous version on the Store page
+    while serving the new build, with nothing reporting an error.
+  * The note about the screen briefly flickering now appears under the
+    temperature slider in the settings window, not just in the applet popup.
+
+ -- Daniel Watts <danielcwtts@gmail.com>  Thu, 30 Jul 2026 18:00:00 -0500
+
 cosmic-nightlight (0.4.0-1) noble; urgency=medium
 
   * The schedule is now honored by whichever part of the app is running, so the

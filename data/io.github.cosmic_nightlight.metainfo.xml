@@ -41,6 +41,21 @@
   </screenshots>
 
   <releases>
+    <release version="0.5.0" date="2026-07-30">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.5.0</url>
+      <description>
+        <p>
+          Night Light can now be installed as a flatpak, and sets itself up the first time you turn it on.
+        </p>
+        <ul>
+          <li>Turning the night light on for the first time installs what it needs and applies the change together, so it asks for a password once and then never again</li>
+          <li>A settings row offers the same setup if that prompt was dismissed, and offers to update what it installed when a new release needs it</li>
+          <li>The app has an icon of its own and describes itself properly to software centers</li>
+          <li>The note about the screen briefly flickering now appears in the settings window as well as the applet</li>
+          <li>Uninstalling removes a flatpak install too, un-registers the panel applet, and resets the screen tint on the way out</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-07-29">
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.4.0</url>
       <description>
