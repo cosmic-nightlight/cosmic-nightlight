@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<component type="desktop-application">
+  <id>io.github.cosmic_nightlight</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+  <name>Night Light for COSMIC</name>
+  <summary>Warm screen color temperature to reduce eye strain on a schedule</summary>
+
+  <description>
+    <p>
+      Night Light is a native panel applet and settings application for the COSMIC desktop environment (Pop!_OS) that warms your screen color temperature to cut blue light.
+    </p>
+    <p>
+      Built entirely with native libcosmic widgets, it seamlessly integrates with your COSMIC panel or dock.
+    </p>
+    <ul>
+      <li>Quick toggle and temperature slider directly from the panel popup</li>
+      <li>Custom schedule support to set active hours to the exact minute</li>
+      <li>Screen brightness dimming control while active</li>
+      <li>Direct kernel DRM integration for screen color control</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.cosmic_nightlight.settings.desktop</launchable>
+
+  <!-- Names the icon we ship into hicolor, not a theme icon. Metainfo files may
+       only carry "stock" or "remote" icons; the "cached" form belongs to the
+       catalog data a repository generates from this file. -->
+  <icon type="stock">io.github.cosmic_nightlight</icon>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Panel applet popup with temperature control and toggle</caption>
+      <image type="source">https://raw.githubusercontent.com/cosmic-nightlight/cosmic-nightlight/main/docs/screenshots/applet_dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Settings window for custom schedules and brightness</caption>
+      <image type="source">https://raw.githubusercontent.com/cosmic-nightlight/cosmic-nightlight/main/docs/screenshots/settings_dark.png</image>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="0.4.0" date="2026-07-29">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.4.0</url>
+      <description>
+        <p>
+          The applet now keeps to the schedule by itself, so nothing has to run in the background for the screen to warm up on time.
+        </p>
+        <ul>
+          <li>Schedule times are minute-precise: From and To each pick an hour, minute, and AM/PM</li>
+          <li>A brightness slider dims the screen while the night light is on</li>
+          <li>A daytime window such as 9:00AM to 5:00PM no longer leaves the tint on around the clock</li>
+          <li>The tint is re-applied after resuming from suspend</li>
+          <li>Applies run off the UI thread, so the toggle and sliders stay responsive</li>
+          <li>The "Start on login" toggle is gone; enable the systemd user service to run without the applet</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.3.1" date="2026-06-15">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.3.1</url>
+      <description>
+        <p>Fixes around autostart and uninstall.</p>
+        <ul>
+          <li>"Start on login" is honored again: the package no longer auto-enables the systemd user service</li>
+          <li>Autostart entries and units left by the pre-rename "nightshift" version are cleared on upgrade</li>
+          <li>Uninstalling stops the daemon, removes the autostart entry, and resets the screen tint</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-06-15">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.3.0</url>
+      <description>
+        <p>
+          Renamed from "Night Shift" to "Night Light". Settings move to ~/.config/cosmic/io.github.cosmic_nightlight/ and are not carried over automatically.
+        </p>
+        <ul>
+          <li>A manual on/off override that takes precedence over the schedule and clears at the next transition</li>
+          <li>Settings sync live between the applet, settings window, and daemon</li>
+          <li>The settings window mirrors the applet's toggle and follows the system 12/24-hour clock</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-06-14">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.2.0</url>
+      <description>
+        <p>The GUI moves into a COSMIC panel applet.</p>
+        <ul>
+          <li>Panel icon with a popup for the on/off toggle and temperature slider</li>
+          <li>A separate settings window for the schedule and night temperature</li>
+          <li>Settings are shared across the applet, settings window, and daemon</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-06-14">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.1.0</url>
+      <description>
+        <p>
+          First release: a libcosmic GUI, a systemd user scheduler, and the privileged DRM gamma helper invoked through polkit.
+        </p>
+      </description>
+    </release>
+  </releases>
+
+  <url type="homepage">https://github.com/cosmic-nightlight/cosmic-nightlight</url>
+  <url type="bugtracker">https://github.com/cosmic-nightlight/cosmic-nightlight/issues</url>
+
+  <categories>
+    <category>Utility</category>
+    <category>Settings</category>
+    <category>DesktopSettings</category>
+  </categories>
+
+  <provides>
+    <!-- The COSMIC Store's Applets page lists a component only if it provides
+         this ID; without it the applet misses the section built for applets. -->
+    <id>com.system76.CosmicApplet</id>
+    <binary>cosmic-nightlight</binary>
+    <binary>cosmic-nightlight-helper</binary>
+  </provides>
+
+  <content_rating type="oars-1.1" />
+
+  <!-- Deprecated in AppStream 1.0 in favor of the developer block below, but the
+       COSMIC Store's AppStream reader only looks at this tag; without it the
+       store page credits "Night Light for COSMIC Developers". Keep both until
+       it reads the developer block. -->
+  <developer_name>Daniel Watts</developer_name>
+
+  <developer id="io.github.danielcwtts">
+    <name>Daniel Watts</name>
+  </developer>
+</component>
