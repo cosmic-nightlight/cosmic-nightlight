@@ -54,14 +54,12 @@ jobs:
         id: notes
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          # Check the tag against the changelog before publishing anything, so a
-          # forgotten version bump fails the release instead of shipping notes
-          # for the previous one.
-          changelog_version="$(dpkg-parsechangelog -l debian/changelog -S Version)"
-          changelog_version="${changelog_version%-*}"
-          tag_version="${GITHUB_REF_NAME#v}"
-          if [ "$changelog_version" != "$tag_version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match debian/changelog ($changelog_version)"
+          # Check the tag against every place the version is written before
+          # publishing anything, so a forgotten bump fails the release instead of
+          # shipping notes for the previous one — or, in the metainfo's case,
+          # showing the previous version on the Store page indefinitely.
+          if ! scripts/check-version.sh "$GITHUB_REF_NAME"; then
+            echo "::error::version mismatch; see the output above"
             exit 1
           fi
 
