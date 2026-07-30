@@ -10,6 +10,12 @@
 //! Usage:
 //!   cosmic-nightlight-helper --temp <kelvin> [--brightness <0.0-1.0>] [--session-vt <n>]
 //!   cosmic-nightlight-helper --off          (reset to a neutral ramp)
+//!   cosmic-nightlight-helper --version      (app version + CLI contract number)
+//!
+//! Those arguments are a frozen contract, because the flatpak build installs a
+//! copy of this binary on the host that is *not* refreshed when the app updates.
+//! `--version` is how a newer GUI checks the older host copy still understands
+//! it; see `nightlight_core::HELPER_CONTRACT` before changing any of them.
 //!
 //! `--session-vt` is the caller's graphical-session VT (from `XDG_VTNR`, which
 //! `pkexec` strips from the environment). When given, the VT bounce only runs
@@ -74,11 +80,23 @@ fn parse_args() -> Result<Args, String> {
 
 fn usage() {
     eprintln!(
-        "usage: cosmic-nightlight-helper --temp <kelvin> [--brightness <0.0-1.0>] [--session-vt <n>]\n       cosmic-nightlight-helper --off"
+        "usage: cosmic-nightlight-helper --temp <kelvin> [--brightness <0.0-1.0>] [--session-vt <n>]\n       cosmic-nightlight-helper --off\n       cosmic-nightlight-helper --version"
     );
 }
 
 fn main() -> ExitCode {
+    // Answered before anything else, and deliberately before the root check: the
+    // GUI asks the *installed* helper which command line it speaks, and that
+    // question must not cost a password prompt. See `nightlight_core::
+    // HELPER_CONTRACT` for why the answer is a contract number, not a version.
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("{}", nightlight_core::version_line());
+        return ExitCode::SUCCESS;
+    }
+
     let args = match parse_args() {
         Ok(args) => args,
         Err(msg) => {
