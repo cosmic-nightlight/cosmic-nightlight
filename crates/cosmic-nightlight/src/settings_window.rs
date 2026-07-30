@@ -100,6 +100,16 @@ pub struct SettingsWindow {
     /// outlive `view`.
     hour_labels: Vec<String>,
     minute_labels: Vec<String>,
+    /// Whether the flatpak build still wants its one-time host setup, which
+    /// decides whether the setup row exists at all. Held rather than re-derived
+    /// per render because answering costs round trips out of the sandbox; the
+    /// backend refreshes it whenever something could have changed the answer.
+    setup: backend::HostSetup,
+    /// True while a setup attempt is outstanding. The password prompt is another
+    /// process, so the window stays live and needs to say something is happening.
+    setup_busy: bool,
+    /// Why the last attempt didn't take. Cleared when another one starts.
+    setup_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -113,6 +123,10 @@ pub enum Message {
     BrightnessCommitted,
     ConfigUpdated(config::Settings),
     Tick,
+    /// The setup row's button. Starts the one-time host setup.
+    RunHostSetup,
+    /// That setup finished, one way or the other.
+    HostSetupFinished(Result<(), String>),
 }
 
 impl cosmic::Application for SettingsWindow {
@@ -145,6 +159,9 @@ impl cosmic::Application for SettingsWindow {
             military,
             hour_labels: hour_labels(military),
             minute_labels: (0..60).map(|minute| format!("{minute:02}")).collect(),
+            setup: backend::host_setup(),
+            setup_busy: false,
+            setup_error: None,
         };
 
         (app, Task::none())
@@ -227,6 +244,34 @@ impl cosmic::Application for SettingsWindow {
                 // the schedule crossing a boundary while the window sits open,
                 // and puts that verdict on the screen.
                 self.reconcile();
+            }
+            Message::RunHostSetup => {
+                self.setup_busy = true;
+                self.setup_error = None;
+
+                // The setup blocks on a polkit password dialog, so it runs on a
+                // thread of its own and reports back through a channel the
+                // runtime can await. Doing it inline would freeze the window for
+                // as long as the prompt was up.
+                let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
+                std::thread::spawn(move || {
+                    let _ = sender.send(backend::run_host_setup());
+                });
+                return cosmic::task::future(async move {
+                    Message::HostSetupFinished(
+                        receiver
+                            .await
+                            .unwrap_or_else(|_| Err("the setup did not report back".to_string())),
+                    )
+                });
+            }
+            Message::HostSetupFinished(result) => {
+                self.setup_busy = false;
+                self.setup_error = result.err();
+                // Ask the backend again rather than assuming success installed
+                // what we wanted: it re-probes the host, so the row disappears
+                // only once there is genuinely a whitelisted helper to find.
+                self.setup = backend::host_setup();
             }
         }
 
@@ -327,12 +372,16 @@ impl cosmic::Application for SettingsWindow {
                 ));
         }
 
-        let content = widget::settings::view_column(vec![
-            widget::text::title2("Night Light Settings").into(),
-            night_light.into(),
-            schedule.into(),
-        ])
-        .width(Length::Fill);
+        let mut sections: Vec<Element<'_, Message>> =
+            vec![widget::text::title2("Night Light Settings").into()];
+        // Above the settings proper, because it is a thing to do rather than a
+        // thing to configure — and absent entirely on any install that doesn't
+        // need it, which is every `.deb` and every flatpak already set up.
+        sections.extend(self.host_setup_row());
+        sections.push(night_light.into());
+        sections.push(schedule.into());
+
+        let content = widget::settings::view_column(sections).width(Length::Fill);
 
         // `max_width` and `center_x(Fill)` must be on separate containers:
         // applying both to the same container caps its own resolved width at
@@ -356,6 +405,62 @@ impl cosmic::Application for SettingsWindow {
 }
 
 impl SettingsWindow {
+    /// The one-time host setup offer, or `None` when there is nothing to offer.
+    ///
+    /// Deliberately not a wizard and not modal. The app already works without
+    /// this — it just pays a password prompt per change — so gating startup on it
+    /// would misrepresent what it does and put a chore in front of a night light.
+    /// It is worded as the benefit ("skip the password prompt") rather than as a
+    /// requirement, and it disappears on its own once the setup has taken.
+    ///
+    /// Its existence is derived from the backend's view of the host, never
+    /// stored, so there is no "already dismissed" flag to go stale — and it comes
+    /// back correctly if the helper is ever removed.
+    fn host_setup_row(&self) -> Option<Element<'_, Message>> {
+        let (title, description) = match self.setup {
+            backend::HostSetup::Ready => return None,
+            backend::HostSetup::Needed => (
+                "Skip the password prompt",
+                "Night Light asks for your password every time it changes the screen. \
+                 A one-time setup installs a small helper on the system so it doesn't have to.",
+            ),
+            backend::HostSetup::Outdated => (
+                "Update the installed helper",
+                "The helper on this system was installed by an older version and no longer \
+                 understands this one. Running the setup again replaces it.",
+            ),
+        };
+
+        let action = if matches!(self.setup, backend::HostSetup::Outdated) {
+            "Update"
+        } else {
+            "Set Up"
+        };
+
+        // No `on_press` while busy, which is what makes the button inert — the
+        // prompt is a separate process and clicking again would stack another.
+        let button = if self.setup_busy {
+            widget::button::standard("Working…")
+        } else {
+            widget::button::suggested(action).on_press(Message::RunHostSetup)
+        };
+
+        let description = match &self.setup_error {
+            Some(error) => format!("{description}\n\nThat didn't work: {error}."),
+            None => description.to_string(),
+        };
+
+        Some(
+            widget::settings::section()
+                .add(
+                    widget::settings::item::builder(title)
+                        .description(description)
+                        .control(button),
+                )
+                .into(),
+        )
+    }
+
     /// Pushes the current temperature and brightness to the screen, but only if a
     /// tint is up: with the night light off the screen shows a neutral ramp, which
     /// neither setting affects, so applying would cost a flicker for no change.

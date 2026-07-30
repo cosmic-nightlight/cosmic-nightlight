@@ -50,27 +50,70 @@ The applet runs sandboxed and calls out:
 applet (sandbox) → flatpak-spawn --host → pkexec → helper (host, root)
 ```
 
-The helper therefore has to already be on the host, and a flatpak cannot put it
-there. So it ships at `/app/libexec/cosmic-nightlight-helper` purely as the
-payload for a **one-time, user-triggered setup**
-([`scripts/flatpak-host-setup.sh`](../scripts/flatpak-host-setup.sh)), which
-copies it to `/usr/local/bin/` and installs the polkit rule beside it.
+The helper therefore has to run on the host. It ships at
+`/app/libexec/cosmic-nightlight-helper`, which serves two purposes.
 
-Both of those paths are already whitelisted by
+First, it is the payload for a **one-time, user-triggered setup**
+([`scripts/flatpak-host-setup.sh`](../scripts/flatpak-host-setup.sh)), which
+copies it to `/usr/local/bin/` and installs the polkit rule beside it. Both of
+those paths are already whitelisted by
 [`polkit/49-cosmic-nightlight.rules`](../polkit/49-cosmic-nightlight.rules), so
 nothing about the rule differs between the `.deb` and the flatpak.
 
-**Before setup the app still works** — pkexec just prompts for a password on
-every schedule transition. The setup does not unlock the feature; it stops the
+Second — and this is what keeps the app from being broken on arrival — it is
+runnable *where it sits*, before any setup has happened. A flatpak's own files
+are visible on the host, and `/.flatpak-info` names that location as `app-path`,
+so `probe_host_helper` in
+[`backend.rs`](../crates/cosmic-nightlight/src/backend.rs) tries the two
+whitelisted host paths first and falls back to the bundled copy's host path.
+pkexec will run it; no rule names that path, so it prompts every time.
+
+**Before setup the app therefore still works** — it just prompts for a password
+on every schedule transition. The setup does not unlock the feature; it stops the
 nagging. That distinction matters: this is not an app that is broken until
 granted root.
 
+### Why the resolved path is cached only when whitelisted
+
+Probing costs a round trip out of the sandbox per candidate, so the answer wants
+caching — but caching it unconditionally is a trap. The setup is offered from
+*inside the running app*, and it is the one thing that changes the answer. An
+instance that cached the bundled path before the setup ran would keep prompting
+after it, which reads as a setup that silently failed.
+
+So `host_helper_path` keeps only a whitelisted result, which nothing the user
+does later can improve on. The bundled fallback is re-probed on each apply, so
+the setup takes effect on the very next transition with no restart.
+
+A remembered path can still be *removed*, though — by a `.deb` upgrade swapping
+the binary mid-flight, or an uninstall — so any failed apply drops it and the
+next attempt resolves from scratch. That covers the one case caching could
+otherwise wedge until a restart. Failures are mostly something else entirely (a
+dismissed prompt, displays asleep), where the cost is a single extra re-probe
+already damped by the retry backoff.
+
+The cost lands in the right place throughout: extra probes are paid only while
+degraded or after a failure, where a password prompt or a backoff already dwarfs
+them. A set-up system on the happy path probes exactly once.
+
 The user-facing sequence:
 
-1. Install from the Store. It works, but prompts on every transition.
-2. A notice offers to fix that.
-3. One password prompt.
-4. Never prompted again.
+1. Install from the Store.
+2. Turn the night light on. One password prompt — which this build was going to
+   ask for anyway, since nothing is set up yet.
+3. Never prompted again.
+
+There is no separate setup step, because there does not need to be. Before the
+setup, *every* privileged call costs a prompt; spending the first one on the
+install as well as the change is strictly better than spending it on the change
+alone and asking again at sunset. So the first privileged call routes through
+`cosmic-nightlight-setup`, which installs and then forwards the same arguments to
+what it installed. See `privileged_program` in `backend.rs`.
+
+The polkit dialog names that program, so the install is disclosed where consent
+is actually given rather than buried in a notice the user would dismiss. The
+settings row below remains as the deliberate path — for anyone who dismissed the
+prompt, and for a contract update.
 
 ## Why not the obvious alternatives
 
@@ -112,6 +155,54 @@ needs" — so the helper's command line is treated as a **frozen contract**:
 Nothing in the last four releases changed it. The helper exposes `--version`, the
 GUI checks the host copy at startup, and the setup is re-offered only when the
 contract has genuinely moved — in practice, rarely or never.
+
+The number is
+[`nightlight_core::HELPER_CONTRACT`](../crates/nightlight-core/src/lib.rs), which
+is **not** the app version: keying off the app version would re-prompt on every
+release, which is the nag this exists to avoid. `--version` prints both:
+
+```
+cosmic-nightlight-helper 0.4.0 (contract 1)
+```
+
+The format is written by `version_line` and read back by `parse_contract`, which
+sit next to each other so the two ends cannot drift. `--version` is answered
+before the root check, so asking costs no password.
+
+A helper old enough to predate `--version` rejects the flag and exits non-zero,
+which reads as no contract at all — the same verdict as a contract that is merely
+too low, and the same remedy, so both surface as `HostSetup::Outdated`.
+
+Bump `HELPER_CONTRACT` only for a change that would make an *older* helper
+mishandle what the GUI sends: an argument removed or renamed, a unit or range
+redefined, a new argument the GUI relies on. Adding an argument the GUI does not
+require is not a bump.
+
+## The setup UI
+
+Setup normally happens without any UI at all — it rides along on the first tint
+change, as above. What remains is one row at the top of the settings window, for
+the cases where that did not happen: the user dismissed the password prompt, or a
+contract bump means the installed helper needs replacing.
+
+No wizard, no modal, no first-run gate. That is a deliberate reading of what this
+app is: it works before the setup, and only pays a password prompt per change. A
+startup wizard would tell the user the opposite, and would put a chore in front of
+a night light. So the row is worded as the benefit — *Skip the password prompt* —
+rather than as a requirement, and says *Update the installed helper* when the
+contract has moved, since the remedy is the same script.
+
+Its existence is **derived, never stored**: it renders when
+`backend::host_setup()` reports anything other than `Ready`. There is no
+"already dismissed" flag to go stale, a `.deb` install never sees it because the
+condition cannot be true there, and it reappears correctly if the host helper is
+later removed. After a successful setup it disappears on its own, with no
+restart — which is exactly what the caching rule above buys.
+
+The setup blocks on a polkit dialog, so it runs on its own thread and reports
+back through a channel; the window stays live and the button reads *Working…*
+while it is outstanding. A failed attempt keeps the row and appends the reason,
+rather than failing silently.
 
 The discipline this costs: do not change the helper's arguments casually. Since
 the helper exists precisely to be the smallest possible thing running as root,
@@ -169,19 +260,33 @@ Established by building the flatpak and running it, since none of it is in a spe
   is already whitelisted by the rule.
 - Flatpak rewrites `Exec=` on export and preserves both the `--settings` argument
   and `X-CosmicApplet=true`, so the applet picker lists it.
+- `/.flatpak-info` carries the sandbox's host-side location as `app-path` under
+  `[Instance]`, already resolved to the running commit — so reaching the bundled
+  helper needs no guess about per-user vs. system installs or which commit is
+  current.
+
+- pkexec imposes no ownership or writability requirement on the program it is
+  asked to run, so the bundled helper runs from the user-writable flatpak tree.
+  It only *prompts*, which is the intended pre-setup behavior. Confirmed on a
+  real build: a fresh flatpak install on a host with no helper and no rule tints
+  the screen, asking for a password on every transition.
 
 ## Status
 
 Done, on branch `flatpak-sandbox-support`:
 
 - sandbox detection and host routing in `crates/cosmic-nightlight/src/backend.rs`
+- the fallback to the bundled helper, so a fresh install tints the screen before
+  the setup has ever been run
 - the manifest, in [`flatpak/`](../flatpak/)
 - the host setup script
+- `scripts/uninstall.sh` covering a flatpak install, which nothing else removes
+- `--version` on the helper, and the contract check behind it
+- setup on first use, riding along on the first tint change
+- the setup UI — one derived row in the settings window, as the fallback path
 
 Not done:
 
-- `--version` on the helper and the contract check
-- the setup UI — the script exists, but nothing offers to run it
 - extending `scripts/release-notes.sh` to guard the metainfo `<releases>` version,
   which it does not cover today
 - a release tag for the manifest to point at, in place of a branch

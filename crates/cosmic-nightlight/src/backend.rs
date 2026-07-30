@@ -9,9 +9,12 @@
 //! members of the `wheel`/`sudo` group run it without a password prompt.
 //!
 //! Inside a flatpak the same call is prefixed with `flatpak-spawn --host`, so
-//! pkexec and the helper run on the host. The helper therefore has to be
-//! installed there — the sandbox has no way to hold DRM master itself, whatever
-//! permissions it is given. See [`in_flatpak`].
+//! pkexec and the helper both run on the host — the sandbox has no way to hold
+//! DRM master itself, whatever permissions it is given. See [`in_flatpak`].
+//! Which helper the host runs is then a question of what the user has set up:
+//! a root-owned copy at a whitelisted path if they have run the host setup, and
+//! otherwise the one bundled in the flatpak, which works but prompts for a
+//! password every time. See [`host_helper_path`].
 //!
 //! Every apply is visible to the user as a brief flicker, so this module also
 //! records what is currently on screen ([`applied`] / [`record_applied`]) in the
@@ -34,13 +37,19 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-/// Where the helper may live, in priority order. The `.deb` installs to
-/// `/usr/bin`; the `install.sh` script uses `/usr/local/bin`. Both paths are
-/// whitelisted by the polkit rule, so either can run without a password.
+/// Where the helper may live on the host, in priority order. The `.deb` installs
+/// to `/usr/bin`; `install.sh` and the flatpak's host setup use `/usr/local/bin`.
+/// Both paths are whitelisted by the polkit rule, so either can run without a
+/// password — which is why they are tried ahead of the flatpak's own bundled copy
+/// (see [`bundled_helper_path`]), which is not.
 const HELPER_CANDIDATES: &[&str] = &[
     "/usr/bin/cosmic-nightlight-helper",
     "/usr/local/bin/cosmic-nightlight-helper",
 ];
+
+/// The path the flatpak's host setup installs to, and so the one to name in an
+/// error when nothing is found at all.
+const SETUP_INSTALLS_TO: &str = HELPER_CANDIDATES[1];
 
 /// What the displays are currently showing: `None` for a neutral (untinted)
 /// ramp, `Some(kelvin)` for a tint at that temperature.
@@ -68,28 +77,226 @@ fn host_has_executable(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Resolves the helper path: an explicit `COSMIC_NIGHTLIGHT_HELPER` override
-/// wins; otherwise the first candidate that exists is used. Falls back to the
-/// last candidate so that a sandboxed run without the host-side setup names the
-/// path the setup installs to, and pkexec produces a clear error about it.
+/// One of our own `/app/libexec` programs, named by its path *on the host* —
+/// our sandbox-internal paths mean nothing to a process spawned outside.
 ///
-/// Sandboxed, the candidates are probed on the host — one spawn each, cached for
-/// the process, because a schedule transition must not pay for this every time.
+/// `/.flatpak-info` records the location as `app-path`, already resolved to the
+/// running commit, so this needs to know neither where flatpak keeps its
+/// installations (per-user or system) nor which commit is current.
+fn bundled_host_path(program: &str) -> Option<String> {
+    let info = std::fs::read_to_string("/.flatpak-info").ok()?;
+    let app_path = info
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("app-path="))?;
+    Some(format!("{app_path}/libexec/{program}"))
+}
+
+/// The helper we ship inside the flatpak, as the host sees it.
+fn bundled_helper_path() -> Option<String> {
+    bundled_host_path("cosmic-nightlight-helper")
+}
+
+/// What probing the host turned up — which decides whether the answer is worth
+/// remembering. See [`host_helper_path`].
+enum HostHelper {
+    /// A polkit-whitelisted path. Applies cost no password, and nothing the user
+    /// can do later improves on that, so this answer is final.
+    Whitelisted(String),
+    /// Our own bundled copy. It works, but no rule names its path, so pkexec
+    /// prompts every time — and running the host setup replaces it with a
+    /// whitelisted path. This answer can therefore go out of date.
+    Bundled(String),
+    /// Nothing anywhere: no host install, and our own copy unreachable.
+    Missing,
+}
+
+/// Probes the host for a helper, in preference order, because our own `/usr` is
+/// the flatpak runtime rather than the host's.
+///
+/// The whitelisted paths come first so a set-up system never falls back. Our
+/// bundled copy is the last resort and is deliberately still *usable*: the app
+/// tints the screen before the host setup has ever been run rather than failing
+/// outright. The setup stops the prompting; it does not unlock the feature.
+///
+/// Costs one `flatpak-spawn` per candidate — see [`host_helper_path`] for when
+/// that is paid.
+fn probe_host_helper() -> HostHelper {
+    for candidate in HELPER_CANDIDATES {
+        if host_has_executable(candidate) {
+            return HostHelper::Whitelisted((*candidate).to_string());
+        }
+    }
+    if let Some(bundled) = bundled_helper_path() {
+        if host_has_executable(&bundled) {
+            return HostHelper::Bundled(bundled);
+        }
+    }
+    HostHelper::Missing
+}
+
+/// The helper resolved for a sandboxed apply, once that answer is worth keeping.
+/// Empty outside a flatpak, where resolution is a cheap local `stat`.
+static HOST_HELPER: Mutex<Option<String>> = Mutex::new(None);
+
+/// The helper to run for a sandboxed apply, remembering the answer only once it
+/// is final.
+///
+/// A [`HostHelper::Whitelisted`] result cannot be improved on, so it is kept and
+/// the probes are paid once. Anything else is re-probed on every apply, which is
+/// what makes the host setup take effect *without restarting the app*: the setup
+/// is offered from inside the running app, so an answer cached before it ran
+/// would otherwise keep prompting for a password afterwards and read as a setup
+/// that silently failed.
+///
+/// The cost is bounded and lands in the right place — two `flatpak-spawn`s per
+/// apply, paid only while degraded, where a password prompt already dwarfs them.
+fn host_helper_path() -> String {
+    if let Some(path) = HOST_HELPER.lock().ok().and_then(|held| held.clone()) {
+        return path;
+    }
+    match probe_host_helper() {
+        HostHelper::Whitelisted(path) => {
+            if let Ok(mut held) = HOST_HELPER.lock() {
+                *held = Some(path.clone());
+            }
+            path
+        }
+        HostHelper::Bundled(path) => path,
+        // Name the path the setup installs to, so pkexec's error points at what
+        // is missing rather than at a sandbox-internal path meaningless outside.
+        HostHelper::Missing => SETUP_INSTALLS_TO.to_string(),
+    }
+}
+
+/// Drops everything remembered about the host, so the next question resolves
+/// from scratch.
+///
+/// Called whenever an apply fails, because the cheap explanation for a helper
+/// that worked and then didn't is that it is no longer there — a `.deb` upgrade
+/// swapping it out mid-flight, or an uninstall. Without this, the one answer we
+/// treat as final could wedge a long-running instance until it was restarted.
+///
+/// Most failures are something else entirely (a dismissed password prompt,
+/// displays asleep, the session not foreground), and for those this is merely one
+/// re-probe on the next attempt — already damped by the retry backoff.
+fn forget_host_helper() {
+    if let Ok(mut held) = HOST_HELPER.lock() {
+        *held = None;
+    }
+    if let Ok(mut held) = HOST_SETUP.lock() {
+        *held = None;
+    }
+}
+
+/// What the GUI should offer the user about the host-side helper.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostSetup {
+    /// Nothing to offer. Not sandboxed at all, or a host helper is installed and
+    /// still speaks our contract.
+    Ready,
+    /// Sandboxed with no host helper. Everything works, but every change costs a
+    /// password prompt.
+    Needed,
+    /// A host helper is installed, but it predates the command line this build
+    /// sends it. Installed once by an older release and never refreshed since.
+    Outdated,
+}
+
+/// Cached because the GUI asks on every render and the answer costs round trips
+/// out of the sandbox. Only the setup changes it, and the setup goes through us.
+static HOST_SETUP: Mutex<Option<HostSetup>> = Mutex::new(None);
+
+/// Whether to offer the user the one-time host setup, and which way to word it.
+///
+/// Cheap to call repeatedly: resolved once and then held until something we ran
+/// could have changed the answer (see [`forget_host_helper`]). A `.deb` installed
+/// underneath a running flatpak is the one case this will not notice, and it
+/// resolves itself on the next launch.
+pub fn host_setup() -> HostSetup {
+    if let Some(state) = HOST_SETUP.lock().ok().and_then(|held| *held) {
+        return state;
+    }
+    let state = probe_host_setup();
+    if let Ok(mut held) = HOST_SETUP.lock() {
+        *held = Some(state);
+    }
+    state
+}
+
+fn probe_host_setup() -> HostSetup {
+    // The `.deb` ships the GUI and the helper in one package, so they cannot
+    // disagree and there is nothing to install.
+    if !in_flatpak() {
+        return HostSetup::Ready;
+    }
+    match probe_host_helper() {
+        HostHelper::Whitelisted(path) => match host_helper_contract(&path) {
+            Some(contract) if contract >= nightlight_core::HELPER_CONTRACT => HostSetup::Ready,
+            // Either too old to understand us, or old enough to predate
+            // `--version` entirely — same remedy, so the same answer.
+            _ => HostSetup::Outdated,
+        },
+        HostHelper::Bundled(_) | HostHelper::Missing => HostSetup::Needed,
+    }
+}
+
+/// Asks the installed helper which command line it speaks. Needs no privilege,
+/// so no pkexec and no prompt.
+fn host_helper_contract(path: &str) -> Option<u32> {
+    let output = Command::new("flatpak-spawn")
+        .args(["--host", path, "--version"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    nightlight_core::parse_contract(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Runs the one-time host setup: copies our bundled helper to a root-owned path
+/// and installs the polkit rule beside it. Costs exactly one password prompt,
+/// after which applies stop prompting.
+///
+/// **Blocks** on that prompt, so callers must keep it off the UI thread.
+pub fn run_host_setup() -> Result<(), String> {
+    if !in_flatpak() {
+        return Err("the host setup applies to the flatpak build only".to_string());
+    }
+    let script = bundled_host_path("cosmic-nightlight-setup")
+        .ok_or("could not find the setup program inside the flatpak")?;
+
+    let status = Command::new("flatpak-spawn")
+        .args(["--host", "pkexec", &script])
+        .status()
+        .map_err(|err| format!("could not reach the host ({err})"))?;
+
+    // Whether or not it succeeded, what is installed may have moved.
+    forget_host_helper();
+
+    if status.success() {
+        return Ok(());
+    }
+    Err(match status.code() {
+        // pkexec's own codes, distinct from anything the script returns.
+        Some(126) => "authentication was dismissed or failed".to_string(),
+        Some(127) => "the setup program could not be run on the host".to_string(),
+        _ => format!("the setup exited with {status}"),
+    })
+}
+
+/// Resolves the helper path: an explicit `COSMIC_NIGHTLIGHT_HELPER` override
+/// wins; otherwise the first candidate that exists is used, falling back to the
+/// `.deb`'s path so pkexec produces a clear error naming it.
+///
+/// Unsandboxed this re-checks every call, which is a cheap local `stat`, so an
+/// install or removal is picked up without restarting. Sandboxed the same
+/// question costs a round trip out of the sandbox — see [`host_helper_path`].
 fn helper_path() -> String {
     if let Ok(path) = std::env::var("COSMIC_NIGHTLIGHT_HELPER") {
         return path;
     }
     if in_flatpak() {
-        static HOST_HELPER: OnceLock<String> = OnceLock::new();
-        return HOST_HELPER
-            .get_or_init(|| {
-                HELPER_CANDIDATES
-                    .iter()
-                    .find(|candidate| host_has_executable(candidate))
-                    .unwrap_or(&HELPER_CANDIDATES[1])
-                    .to_string()
-            })
-            .clone();
+        return host_helper_path();
     }
     for candidate in HELPER_CANDIDATES {
         if std::path::Path::new(candidate).exists() {
@@ -114,14 +321,35 @@ fn session_vt_args() -> Vec<String> {
     }
 }
 
+/// What the privileged call should run, and whether that program also installs.
+///
+/// Sandboxed and not yet set up, this is the setup program rather than the helper
+/// — it installs, then forwards the same arguments on to what it installed. The
+/// user was going to be asked for a password by this call either way, so spending
+/// that one prompt on both the change and the setup is strictly better than
+/// spending it on the change alone and asking again next time.
+///
+/// A stale contract routes here too: an old helper would reject arguments it does
+/// not know and the apply would simply fail, so replacing it is the only way the
+/// change lands. That does cost a prompt on a system that had been silent, which
+/// is the intended price of a contract bump — see `HELPER_CONTRACT`.
+fn privileged_program() -> (String, bool) {
+    if in_flatpak() && host_setup() != HostSetup::Ready {
+        if let Some(setup) = bundled_host_path("cosmic-nightlight-setup") {
+            return (setup, true);
+        }
+    }
+    (helper_path(), false)
+}
+
 /// Runs the helper via `pkexec` with the given arguments, logging the result.
-/// Returns `true` only if the helper ran and exited successfully, so callers
-/// (the daemon) can retry instead of assuming a failed apply took effect.
+/// Returns `true` only if it ran and exited successfully, so callers (the daemon)
+/// can retry instead of assuming a failed apply took effect.
 ///
 /// Sandboxed, the whole thing is prefixed with `flatpak-spawn --host` so that
 /// pkexec and the helper both run on the host rather than in here.
 fn run_helper(args: &[String]) -> bool {
-    let helper = helper_path();
+    let (program, installs) = privileged_program();
     let mut command = if in_flatpak() {
         let mut command = Command::new("flatpak-spawn");
         command.args(["--host", "pkexec"]);
@@ -129,15 +357,23 @@ fn run_helper(args: &[String]) -> bool {
     } else {
         Command::new("pkexec")
     };
-    command.arg(&helper).args(args).args(session_vt_args());
+    command.arg(&program).args(args).args(session_vt_args());
 
     match command.status() {
         Ok(status) if status.success() => {
             println!("backend: helper applied {args:?}");
+            if installs {
+                // The host just changed under us: there is now a whitelisted
+                // helper, so re-resolve and stop routing through the setup.
+                forget_host_helper();
+            }
             true
         }
         Ok(status) => {
+            // A missing helper arrives here rather than in the `Err` arm: pkexec
+            // launched fine and it is pkexec that reports the program is gone.
             eprintln!("backend: helper exited with {status} (args: {args:?})");
+            forget_host_helper();
             false
         }
         Err(err) => {
@@ -146,7 +382,8 @@ fn run_helper(args: &[String]) -> bool {
             } else {
                 "pkexec"
             };
-            eprintln!("backend: failed to launch {launcher} for {helper} ({err})");
+            eprintln!("backend: failed to launch {launcher} for {program} ({err})");
+            forget_host_helper();
             false
         }
     }

@@ -15,16 +15,18 @@ configured — note that the manifest asks for no device access at all. Instead 
 applet reaches the host through `flatpak-spawn --host pkexec`, and the privileged
 helper runs there.
 
-That means the helper has to be **on the host**, which a flatpak cannot install
-by itself. It ships at `/app/libexec/cosmic-nightlight-helper` purely as the
-payload for a one-time, user-triggered setup that copies it to
-`/usr/local/bin/cosmic-nightlight-helper` and installs the polkit rule beside it.
-Both of those paths are already whitelisted by
-`polkit/49-cosmic-nightlight.rules`, so nothing about the rule changes between
-the `.deb` and the flatpak.
+That means the helper has to run **on the host**. It ships at
+`/app/libexec/cosmic-nightlight-helper` and is used two ways: as the payload for
+a one-time, user-triggered setup that copies it to
+`/usr/local/bin/cosmic-nightlight-helper` and installs the polkit rule beside it,
+and — before that setup has ever been run — directly, via the host-side path
+`/.flatpak-info` reports as `app-path`. Both `/usr/bin` and `/usr/local/bin` are
+whitelisted by `polkit/49-cosmic-nightlight.rules`, so nothing about the rule
+changes between the `.deb` and the flatpak.
 
-Until that setup has been run, the app still works — pkexec just prompts for a
-password on every schedule transition instead of none.
+Until the setup has been run the app still works — pkexec just prompts for a
+password on every schedule transition instead of none, because no rule names the
+path inside the flatpak. That is the whole of what the setup buys.
 
 ## Generating cargo-sources.json
 
