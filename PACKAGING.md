@@ -2,10 +2,13 @@
 # Packaging cosmic-nightlight as a `.deb`
 
 This tool needs root (DRM master + VT switching), so its natural distribution
-channel is a **native `.deb`**, not a Flatpak — a Flatpak sandbox cannot get
-the capabilities the gamma workaround requires. A `.deb` shows up in the COSMIC
-Store as the "System" version of the app once it's in a repo (a PPA or the
-Pop!_OS repos).
+channel is a **native `.deb`**. A `.deb` shows up in the COSMIC Store as the
+"System" version of the app once it's in a repo (a PPA or the Pop!_OS repos).
+
+A flatpak sandbox still cannot get the capabilities the gamma workaround
+requires — that has not changed — but the applet can be sandboxed anyway if the
+privileged helper runs on the host instead. That is how it reaches the COSMIC
+Store; see [docs/flatpak-design.md](docs/flatpak-design.md).
 
 The `debian/` directory here produces a single binary package,
 `cosmic-nightlight`, that installs:
