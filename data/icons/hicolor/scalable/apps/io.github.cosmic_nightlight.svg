@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <title>Night Light</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="4" x2="0" y2="124" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#42539C"/>
+      <stop offset="1" stop-color="#28336F"/>
+    </linearGradient>
+    <linearGradient id="moon" x1="0" y1="25.0" x2="0" y2="101.0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD089"/>
+      <stop offset="1" stop-color="#FFA845"/>
+    </linearGradient>
+  </defs>
+  <!-- Night sky tile. -->
+  <rect x="4" y="4" width="120" height="120" rx="27" ry="27" fill="url(#sky)"/>
+  <!-- Crescent: the full moon disc, then the sky painted back over it. Both use
+       the same userSpaceOnUse gradient, so the bite is seamless without needing
+       a mask or clip-path that a minimal icon renderer might not support. -->
+  <circle cx="68.0" cy="63.0" r="38.0" fill="url(#moon)"/>
+  <circle cx="90.0" cy="45.0" r="34.0" fill="url(#sky)"/>
+  <!-- Hairline rim. The sky is dark enough to sit close to the COSMIC Store's
+       own background, so the silhouette gets an explicit edge instead of
+       relying on fill luminance to separate it. -->
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="26.25" ry="26.25"
+        fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1.5"/>
+</svg>

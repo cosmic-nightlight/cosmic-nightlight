@@ -63,12 +63,20 @@ remove /usr/local/bin/cosmic-nightlight
 remove /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
 remove /usr/share/applications/io.github.cosmic_nightlight.desktop
 remove /usr/share/applications/io.github.cosmic_nightlight.settings.desktop
+remove /usr/share/metainfo/io.github.cosmic_nightlight.metainfo.xml
+remove /usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
+remove /usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
 # A user service some setups copy in by hand (see systemd/cosmic-nightlight.service).
 remove "$config_home/systemd/user/cosmic-nightlight.service"
 
 # Update desktop database if it exists
 if command -v update-desktop-database >/dev/null 2>&1; then
     sudo update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
+
+# Drop the removed icons from the theme cache.
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    sudo gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
 fi
 
 echo

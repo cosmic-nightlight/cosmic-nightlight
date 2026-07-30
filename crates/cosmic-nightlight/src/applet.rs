@@ -282,7 +282,7 @@ impl NightLightApplet {
         let temperature = cosmic::widget::Column::new()
             .spacing(2)
             .push(temperature_row)
-            .push(widget::text::caption("Note: Screen may briefly flicker"));
+            .push(widget::text::caption(config::FLICKER_NOTE));
 
         // Match the native COSMIC applets (e.g. the keyboard applet's "Keyboard
         // Settings...") — a flat, full-width `AppletMenu` row that highlights on

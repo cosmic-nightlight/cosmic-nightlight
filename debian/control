@@ -14,7 +14,7 @@ Build-Depends:
  libexpat1-dev
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
-Homepage: https://github.com/danielcwtts/cosmic-nightlight
+Homepage: https://github.com/cosmic-nightlight/cosmic-nightlight
 
 Package: cosmic-nightlight
 Architecture: any

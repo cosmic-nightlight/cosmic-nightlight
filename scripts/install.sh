@@ -47,7 +47,20 @@ if [[ "$build_gui" -eq 1 ]]; then
     sudo install -o root -g root -m 0644 \
         "$repo_root/data/io.github.cosmic_nightlight.settings.desktop" \
         /usr/share/applications/io.github.cosmic_nightlight.settings.desktop
+    sudo install -d /usr/share/metainfo
+    sudo install -o root -g root -m 0644 \
+        "$repo_root/data/io.github.cosmic_nightlight.metainfo.xml" \
+        /usr/share/metainfo/io.github.cosmic_nightlight.metainfo.xml
+    sudo install -D -o root -g root -m 0644 \
+        "$repo_root/data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg" \
+        /usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
+    sudo install -D -o root -g root -m 0644 \
+        "$repo_root/data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png" \
+        /usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
     sudo update-desktop-database /usr/share/applications 2>/dev/null || true
+    # Refresh the theme cache so the desktop entries resolve Icon= right away
+    # rather than after the next login.
+    sudo gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
 fi
 
 echo
@@ -58,6 +71,9 @@ if [[ "$build_gui" -eq 1 ]]; then
     echo "  /usr/local/bin/cosmic-nightlight"
     echo "  /usr/share/applications/io.github.cosmic_nightlight.desktop"
     echo "  /usr/share/applications/io.github.cosmic_nightlight.settings.desktop"
+    echo "  /usr/share/metainfo/io.github.cosmic_nightlight.metainfo.xml"
+    echo "  /usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg"
+    echo "  /usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png"
     echo
     echo 'Add "Night Light" to your panel via COSMIC Settings > Panel/Dock > Applets.'
     echo 'Open "Night Light Settings" from the launcher to change the schedule.'

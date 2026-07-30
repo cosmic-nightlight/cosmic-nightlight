@@ -29,6 +29,12 @@ override_dh_auto_install:
 		$(DEB_DESTDIR)/usr/share/applications/io.github.cosmic_nightlight.desktop
 	install -D -m0644 data/io.github.cosmic_nightlight.settings.desktop \
 		$(DEB_DESTDIR)/usr/share/applications/io.github.cosmic_nightlight.settings.desktop
+	install -D -m0644 data/io.github.cosmic_nightlight.metainfo.xml \
+		$(DEB_DESTDIR)/usr/share/metainfo/io.github.cosmic_nightlight.metainfo.xml
+	install -D -m0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg \
+		$(DEB_DESTDIR)/usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
+	install -D -m0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png \
+		$(DEB_DESTDIR)/usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
 	install -D -m0644 polkit/49-cosmic-nightlight.rules \
 		$(DEB_DESTDIR)/usr/share/polkit-1/rules.d/49-cosmic-nightlight.rules
 
