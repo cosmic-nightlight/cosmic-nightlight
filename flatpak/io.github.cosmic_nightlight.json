@@ -12,6 +12,7 @@
     "finish-args": [
         "--share=ipc",
         "--socket=wayland",
+        "--device=dri",
         "--talk-name=com.system76.CosmicSettingsDaemon",
         "--filesystem=xdg-config/cosmic:rw",
         "--talk-name=org.freedesktop.Flatpak"
@@ -30,6 +31,7 @@
                 "cargo --offline build --release --locked -p cosmic-nightlight -p nightlight-helper",
                 "install -Dm755 target/release/cosmic-nightlight /app/bin/cosmic-nightlight",
                 "install -Dm755 target/release/cosmic-nightlight-helper /app/libexec/cosmic-nightlight-helper",
+                "install -Dm755 scripts/flatpak-host-setup.sh /app/libexec/cosmic-nightlight-setup",
                 "install -Dm644 polkit/49-cosmic-nightlight.rules /app/share/polkit-1/rules.d/49-cosmic-nightlight.rules",
                 "install -Dm644 data/io.github.cosmic_nightlight.desktop /app/share/applications/io.github.cosmic_nightlight.desktop",
                 "install -Dm644 data/io.github.cosmic_nightlight.settings.desktop /app/share/applications/io.github.cosmic_nightlight.settings.desktop",

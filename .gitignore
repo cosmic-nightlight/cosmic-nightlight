@@ -14,6 +14,7 @@ debian/*.log
 # Flatpak build artifacts. cargo-sources.json is generated from Cargo.lock
 # (see flatpak/README.md); cosmic-flatpak carries its own committed copy.
 flatpak/cargo-sources.json
+flatpak/*.local.json
 flatpak/.flatpak-builder/
 flatpak/build/
 flatpak/venv/
