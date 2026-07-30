@@ -1,3 +1,40 @@
+cosmic-nightlight (0.4.0-1) noble; urgency=medium
+
+  * The schedule is now honoured by whichever part of the app is running, so the
+    applet alone keeps the screen on schedule. Every run mode re-checks the clock
+    on a shared 15-second tick and reconciles the screen against it.
+  * Remove the "Start on login" toggle, which existed only to launch the
+    headless daemon: with the applet doing the scheduling there is nothing left
+    for it to add. Any XDG autostart entry it wrote (including a pre-rename
+    "nightshift" one) is removed at startup, so upgrades stop launching a daemon
+    with no setting left to turn it off. The systemd user unit is still shipped,
+    still not enabled, for anyone running without the applet.
+  * Schedule times are now minute-precise: From/To pick an hour, minute, and
+    AM/PM (or a 24-hour clock, following the system setting), and the Schedule
+    row summarises the window. Existing whole-hour settings are read and carried
+    over.
+  * Fix a schedule window that ends later in the day than it starts (e.g.
+    09:00 to 17:00) leaving the tint on around the clock; such a window is now a
+    plain range and only one that ends earlier wraps past midnight.
+  * Re-apply the tint after a resume from suspend, whose modeset drops the gamma
+    LUT and previously left the night light silently off until the next
+    scheduled transition.
+  * Add a brightness slider to the settings window, floored at 50% so the gamma
+    dimming cannot black out the screen.
+  * Applies no longer block the GUI: they run on a background thread and
+    coalesce, so dragging a slider or flipping the toggle can't freeze the
+    applet for the second an apply takes.
+  * Serialise applies across all processes with a lock and a shared record of
+    what is on screen, so several noticing the same boundary cost one flicker
+    instead of several, and re-applying an unchanged tint is skipped. Failures
+    back off exponentially rather than retrying every tick.
+  * Sliders no longer jump out from under the pointer when another process
+    writes a setting mid-drag.
+  * uninstall.sh now clears a systemd enablement symlink left dangling when the
+    unit file is already gone.
+
+ -- Daniel Watts <danielcwtts@gmail.com>  Wed, 29 Jul 2026 21:45:00 +0000
+
 cosmic-nightlight (0.3.1-1) noble; urgency=medium
 
   * Fix "Start on login" being ignored: the package auto-enabled the systemd

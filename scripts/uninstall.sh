@@ -21,10 +21,16 @@ echo ">> Uninstalling cosmic-nightlight components (requires sudo)..."
 for unit in cosmic-nightlight.service cosmic-nightshift.service; do
     systemctl --user disable --now "$unit" 2>/dev/null || true
     sudo systemctl --global disable "$unit" 2>/dev/null || true
+    # `disable` is a no-op once the unit file itself is gone (an already-removed
+    # package, or the pre-rename name), which leaves the enablement symlink behind
+    # pointing at nothing. Clear it by hand so a reinstall doesn't inherit it.
+    sudo rm -f "/etc/systemd/user/graphical-session.target.wants/$unit"
 done
 
-# 2. Remove the XDG autostart entry written by the in-app "Start on login" toggle
-#    (current and pre-rename names), from the invoking user's config.
+# 2. Remove the XDG autostart entry that the old in-app "Start on login" toggle
+#    wrote (current and pre-rename names), from the invoking user's config. The
+#    toggle is gone — every run mode now keeps to the schedule on its own — but
+#    versions that had it left an entry behind that still starts a daemon.
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 for app_id in io.github.cosmic_nightlight io.github.cosmic_nightshift; do
     entry="$config_home/autostart/$app_id.desktop"

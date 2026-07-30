@@ -21,6 +21,7 @@ use cosmic::Element;
 
 use crate::backend;
 use crate::config::{self, APP_ID};
+use crate::TICK_INTERVAL;
 
 /// Runs the application as a COSMIC panel applet.
 pub fn run() -> cosmic::iced::Result {
@@ -31,11 +32,16 @@ pub struct NightLightApplet {
     core: Core,
     popup: Option<Id>,
     config: Option<cosmic::cosmic_config::Config>,
-    /// Whether the tint is currently on — the effective state (schedule plus
-    /// any manual override), not just a raw flag. Drives the toggle and icon.
-    tint_on: bool,
-    /// Kelvin, kept as `f32` to feed the slider directly.
+    /// The last snapshot of the shared settings. Whether the tint is *on* is
+    /// derived from this and the current clock on every render — never cached —
+    /// so the icon follows the schedule as time passes.
+    settings: config::Settings,
+    /// The slider's live position in Kelvin, which runs ahead of
+    /// `settings.temperature` while a drag is in progress.
     temperature: f32,
+    /// True between a slider drag starting and being released, so an incoming
+    /// config change doesn't yank the handle out from under the pointer.
+    dragging: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -48,6 +54,7 @@ pub enum Message {
     Surface(cosmic::surface::Action),
     RefreshInit,
     ConfigUpdated(config::Settings),
+    Tick,
 }
 
 impl cosmic::Application for NightLightApplet {
@@ -73,8 +80,9 @@ impl cosmic::Application for NightLightApplet {
             core,
             popup: None,
             config: handler,
-            tint_on: settings.tint_on(),
+            settings,
             temperature: settings.temperature as f32,
+            dragging: false,
         };
 
         let init_task = cosmic::task::future(async { Message::RefreshInit });
@@ -98,29 +106,36 @@ impl cosmic::Application for NightLightApplet {
                 // flipping it to match the schedule just follows it (`Auto`),
                 // while flipping it against the schedule sets a manual override
                 // the daemon honours until the next sunset/sunrise transition.
-                let settings = config::Settings::load_from(&self.config);
-                let new_override = if on == settings.schedule_wants_tint() {
+                let new_override = if on == self.settings.schedule_wants_tint() {
                     config::Override::Auto
                 } else if on {
                     config::Override::On
                 } else {
                     config::Override::Off
                 };
+                // Apply the new override locally as well as persisting it, so
+                // the toggle and icon respond now rather than after the config
+                // watch round-trips back to us.
+                self.settings.tint_override = new_override;
                 config::store_override(&self.config, new_override);
-                self.tint_on = on;
-                if on {
-                    backend::apply_color_temperature(self.temperature as u32, 1.0);
-                } else {
-                    backend::reset();
-                }
+                backend::apply_in_background(
+                    on.then_some(self.temperature as u32),
+                    self.settings.brightness as f32,
+                );
             }
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
+                self.dragging = true;
             }
             Message::TemperatureCommitted => {
-                config::store_temperature(&self.config, self.temperature as u32);
-                if self.tint_on {
-                    backend::apply_color_temperature(self.temperature as u32, 1.0);
+                self.dragging = false;
+                self.settings.temperature = self.temperature as u32;
+                config::store_temperature(&self.config, self.settings.temperature);
+                if self.settings.tint_on() {
+                    backend::apply_in_background(
+                        Some(self.settings.temperature),
+                        self.settings.brightness as f32,
+                    );
                 }
             }
             Message::OpenSettings => {
@@ -137,8 +152,18 @@ impl cosmic::Application for NightLightApplet {
                 // working around a bug where the panel applet appears as size 0 until moved.
             }
             Message::ConfigUpdated(settings) => {
-                self.tint_on = settings.tint_on();
-                self.temperature = settings.temperature as f32;
+                self.settings = settings;
+                if !self.dragging {
+                    self.temperature = settings.temperature as f32;
+                }
+                self.reconcile();
+            }
+            Message::Tick => {
+                // Re-renders so the icon and the "On/Off Until …" line pick up
+                // the schedule crossing a boundary — without it a popup opened
+                // at night keeps showing a moon through the next day — and puts
+                // that verdict on the screen.
+                self.reconcile();
             }
         }
 
@@ -146,11 +171,14 @@ impl cosmic::Application for NightLightApplet {
     }
 
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
-        config::subscription().map(Message::ConfigUpdated)
+        cosmic::iced::Subscription::batch([
+            config::subscription().map(Message::ConfigUpdated),
+            cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
+        ])
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        let icon = if self.tint_on {
+        let icon = if self.settings.tint_on() {
             "weather-clear-night-symbolic"
         } else {
             "weather-clear-symbolic"
@@ -215,32 +243,29 @@ impl cosmic::Application for NightLightApplet {
 }
 
 impl NightLightApplet {
+    /// Expires a manual override the schedule has caught up to, then puts the
+    /// schedule's current verdict on the screen unless it is already showing it.
+    ///
+    /// The daemon does this too, but it must not be the only thing that does:
+    /// without this the applet would draw a moon at sunset — correctly, that is
+    /// what the schedule asks for — while the screen stayed cold because no
+    /// daemon happened to be running.
+    fn reconcile(&mut self) {
+        config::expire_override(&self.config, &mut self.settings);
+        backend::reconcile_in_background(
+            self.settings.tint_on().then_some(self.settings.temperature),
+            self.settings.brightness as f32,
+        );
+    }
+
     /// Builds the popup body: the toggle, the temperature slider, and the
     /// button that opens the settings window.
     fn popup_content(&self) -> Element<'_, Message> {
-        let settings_state = config::Settings::load_from(&self.config);
-
-        let status_text = match settings_state.schedule {
-            config::Schedule::Manual => {
-                if self.tint_on {
-                    "On".to_string()
-                } else {
-                    "Off".to_string()
-                }
-            }
-            config::Schedule::SunsetToSunrise => {
-                let military = config::is_military_time();
-                if self.tint_on {
-                    format!("On Until {}", config::format_hour(settings_state.sunrise_hour, military))
-                } else {
-                    format!("Off Until {}", config::format_hour(settings_state.sunset_hour, military))
-                }
-            }
-        };
+        let tint_on = self.settings.tint_on();
 
         let toggle = settings::item::builder("Night Light")
-            .description(status_text)
-            .control(toggler(self.tint_on).on_toggle(Message::Toggle));
+            .description(config::status_text(&self.settings, tint_on))
+            .control(toggler(tint_on).on_toggle(Message::Toggle));
 
         let temperature_row = settings::item(
             format!("Temperature: {}K", self.temperature as i32),

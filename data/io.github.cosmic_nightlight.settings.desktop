@@ -2,11 +2,11 @@
 Type=Application
 Name=Night Light Settings
 GenericName=Color Temperature Settings
-Comment=Configure autostart, schedule, and color temperature
+Comment=Configure the schedule, color temperature, and brightness
 Exec=cosmic-nightlight --settings
 Icon=weather-clear-night-symbolic
 Terminal=false
 Categories=Utility;Settings;DesktopSettings;
-Keywords=night;light;shift;redshift;gamma;color;temperature;blue;warm;schedule;autostart;
+Keywords=night;light;shift;redshift;gamma;color;temperature;blue;warm;schedule;
 StartupNotify=true
 StartupWMClass=io.github.cosmic_nightlight

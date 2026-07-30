@@ -8,10 +8,11 @@ if [ "$1" = "configure" ]; then
         update-desktop-database -q /usr/share/applications || true
     fi
 
-    # Earlier versions auto-enabled the systemd user service, which then ran the
-    # daemon on every login regardless of the in-app "Start on login" toggle. The
-    # toggle (an XDG autostart entry) is now the single source of truth, so undo
-    # any prior global enablement so disabling the toggle actually takes effect.
+    # Earlier versions auto-enabled the systemd user service, so the daemon ran on
+    # every login whether or not anything wanted it. The unit is opt-in now — the
+    # applet keeps to the schedule on its own — so undo any prior global
+    # enablement. (The XDG autostart entry that the old "Start on login" toggle
+    # wrote lives in each user's config, so the app clears that at startup.)
     rm -f /etc/systemd/user/graphical-session.target.wants/cosmic-nightlight.service
 
     # Clean up the pre-rename "Night Shift" user service and its enablement, which

@@ -60,7 +60,7 @@ if [[ "$build_gui" -eq 1 ]]; then
     echo "  /usr/share/applications/io.github.cosmic_nightlight.settings.desktop"
     echo
     echo 'Add "Night Light" to your panel via COSMIC Settings > Panel/Dock > Applets.'
-    echo 'Open "Night Light Settings" from the launcher to change schedule/autostart.'
+    echo 'Open "Night Light Settings" from the launcher to change the schedule.'
 fi
 echo
 echo "Test it (will briefly flip VTs and warm the screen):"

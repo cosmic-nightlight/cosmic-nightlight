@@ -35,10 +35,10 @@ override_dh_auto_install:
 override_dh_auto_clean:
 	rm -rf target debian/cargo_home
 
-# Ship the user service but do NOT auto-enable it. The in-app "Start on login"
-# toggle (an XDG autostart entry) is the single source of truth for whether the
-# daemon runs at login; auto-enabling the unit would start the daemon on every
-# login regardless of that toggle. Power users can still `systemctl --user
-# enable cosmic-nightlight.service` by hand.
+# Ship the user service but do NOT auto-enable it. The applet keeps to the
+# schedule itself, so the daemon only covers the case of not keeping the applet
+# on the panel; enabling the unit for everyone would run a second scheduler on
+# every login for no gain. Anyone who wants one can `systemctl --user enable
+# cosmic-nightlight.service` by hand.
 override_dh_installsystemduser:
 	dh_installsystemduser --no-enable

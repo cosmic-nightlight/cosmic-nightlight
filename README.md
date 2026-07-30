@@ -5,7 +5,8 @@
 that warms your screen's color temperature to cut blue light. It lives as an
 icon on your **panel or dock**: click it for a simple popup with an on/off
 toggle and a temperature slider, and open **Settings** for a custom schedule
-(warm between the hours you choose), the night temperature, and start-on-login.
+(warm between any two times you choose, to the minute), the night temperature,
+and brightness.
 It's built entirely with native COSMIC/libcosmic widgets, so it looks and
 behaves like a first-party part of the desktop rather than a bolted-on tool.
 
@@ -37,7 +38,7 @@ the screen — see [How it works](#how-it-works).
 <td align="center">
 <img src="docs/screenshots/settings_light.png#gh-light-mode-only" height="300" alt="Night Light settings window">
 <img src="docs/screenshots/settings_dark.png#gh-dark-mode-only" height="300" alt="Night Light settings window">
-<br><sub>Settings window — schedule, night temperature, start-on-login</sub>
+<br><sub>Settings window — night temperature, brightness, and a to-the-minute schedule</sub>
 </td>
 </tr>
 </table>
@@ -84,19 +85,43 @@ To build the `.deb` yourself, see [PACKAGING.md](PACKAGING.md).
 **The applet.** The Night Light icon opens a popup with the on/off toggle, the
 temperature slider, and a **Night Light Settings…** button.
 
-**Settings.** The settings window covers start-on-login, the schedule
-(**Off**, or a **Custom Schedule** with **From**/**To** hours), and the night
-temperature. Open it from the popup, from the **Night Light Settings** launcher
+**Settings.** The settings window covers the schedule (**Off**, or a **Custom
+Schedule** with **From**/**To** times), the night temperature, and brightness —
+which dims the screen while the night light is on. Open it from the popup, from the **Night Light Settings** launcher
 entry, or with `cosmic-nightlight --settings`.
+
+**The schedule.** **From** and **To** each pick an exact time — hour, minute,
+and AM/PM (or a 24-hour clock, following your COSMIC time setting) — and the
+**Schedule** row summarises the result, e.g. *Warm from 9:37PM to 5:22AM*. A
+window that ends earlier in the day than it starts runs overnight; one
+that ends later runs within the day, so `9:00AM`→`5:00PM` warms the screen for
+office hours only.
 
 Toggling the tint against the schedule sets a manual override that lasts until
 the next scheduled transition, after which automatic scheduling resumes.
 Settings live in `~/.config/cosmic/io.github.cosmic_nightlight/` and sync live
 across the applet, the settings window, and the background scheduler.
 
-**Start on login.** Enabling it in Settings runs the background scheduler at
-login, which applies or clears the tint to match your schedule and re-applies
-your saved settings.
+**What applies the schedule.** The applet does, as long as it is on your panel
+or dock: it re-checks the clock every 15 seconds and warms or clears the screen
+when a boundary passes. The settings window does the same while it is open. No
+background service is required, and there is nothing to enable — the applet is
+part of your panel, so it comes up with your session and picks the schedule up
+from there.
+
+**Running without the applet.** If you'd rather not keep the applet on your
+panel, enable the headless scheduler as a systemd user service instead:
+
+```sh
+systemctl --user enable --now cosmic-nightlight.service
+```
+
+The `.deb` ships that unit; from a source install, copy
+`systemd/cosmic-nightlight.service` into `~/.config/systemd/user/` first. It is
+off by default and adds no behaviour of its own — it just keeps a process around
+to do what the applet would have. Running it alongside the applet is harmless:
+they share a record of what is on screen and lock against each other, so a
+boundary still costs a single flicker.
 
 <details>
 <summary>Advanced: drive the helper directly</summary>
@@ -117,9 +142,10 @@ pkexec /usr/bin/cosmic-nightlight-helper --off                 # reset
 
 - **Flicker on every change** — inherent to the VT-bounce workaround.
 - **A modeset can clear the tint** — resolution/monitor-hotplug/DPMS-wake events
-  make the compositor reprogram the CRTC, dropping the LUT. Re-apply (the daemon
-  re-applies on the next schedule boundary).
-- The schedule uses fixed clock hours you pick (**From**/**To**, defaulting to
+  make the compositor reprogram the CRTC, dropping the LUT. A suspend/resume is
+  detected and re-applied automatically; for the others, re-apply by hand (or
+  wait for the next schedule boundary).
+- The schedule uses fixed clock times you pick (**From**/**To**, defaulting to
   18:00 → 06:00), not your location's real sunset/sunrise. Tying it to your
   location (geoclue / an astronomical calc) is a clear next step.
 - Requires `pkexec`/polkit and membership in `wheel` or `sudo`.
@@ -159,7 +185,12 @@ stays tiny and independent of the heavy GUI:
 | --- | --- | --- |
 | [`nightlight-core`](crates/nightlight-core) | library | Gamma math ([`gamma.rs`](crates/nightlight-core/src/gamma.rs)), DRM apply ([`drm.rs`](crates/nightlight-core/src/drm.rs)), VT bounce ([`vt.rs`](crates/nightlight-core/src/vt.rs)) |
 | [`nightlight-helper`](crates/nightlight-helper) | **root** (via `pkexec`) | Thin CLI: parse `--temp`/`--brightness`, call core |
-| [`cosmic-nightlight`](crates/cosmic-nightlight) | your user | libcosmic panel applet + `--settings` window + `--daemon` scheduler; shells out to the helper |
+| [`cosmic-nightlight`](crates/cosmic-nightlight) | your user | libcosmic panel applet + `--settings` window + optional `--daemon` scheduler; shells out to the helper |
+
+All three modes keep to the schedule themselves, so any one of them running is
+enough. They coordinate through a record of what is on screen plus an advisory
+lock, both in `$XDG_RUNTIME_DIR`, so several noticing the same boundary at once
+still apply it once.
 
 Flow on a tint change:
 

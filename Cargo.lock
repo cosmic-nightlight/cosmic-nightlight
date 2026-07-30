@@ -935,9 +935,10 @@ dependencies = [
 
 [[package]]
 name = "cosmic-nightlight"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "chrono",
+ "libc",
  "libcosmic",
  "nightlight-core",
 ]
@@ -3046,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "nightlight-core"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "drm",
  "libc",
@@ -3054,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "nightlight-helper"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "nightlight-core",
 ]
