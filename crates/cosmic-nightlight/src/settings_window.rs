@@ -250,17 +250,23 @@ impl cosmic::Application for SettingsWindow {
                     .description(config::status_text(&self.settings, tint_on))
                     .control(widget::toggler(tint_on).on_toggle(Message::Toggle)),
             )
-            .add(widget::settings::item(
-                format!("Temperature: {}K", self.temperature as i32),
-                widget::slider(
-                    2500.0..=6500.0,
-                    self.temperature,
-                    Message::TemperatureChanged,
-                )
-                .step(50.0)
-                .on_release(Message::TemperatureCommitted)
-                .width(Length::Fixed(200.0)),
-            ))
+            .add(
+                widget::settings::item::builder(format!(
+                    "Temperature: {}K",
+                    self.temperature as i32
+                ))
+                .description(config::FLICKER_NOTE)
+                .control(
+                    widget::slider(
+                        2500.0..=6500.0,
+                        self.temperature,
+                        Message::TemperatureChanged,
+                    )
+                    .step(50.0)
+                    .on_release(Message::TemperatureCommitted)
+                    .width(Length::Fixed(200.0)),
+                ),
+            )
             .add(
                 widget::settings::item::builder(format!(
                     "Brightness: {}%",
