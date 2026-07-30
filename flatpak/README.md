@@ -40,8 +40,17 @@ curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/maste
 ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json
 ```
 
-Regenerate whenever `Cargo.lock` changes. The output is ~450KB and is not
-committed here; cosmic-flatpak carries its own copy.
+Regenerate whenever a *dependency* changes. `Cargo.lock` also records our own
+crates' version numbers, and a release bump rewrites those three lines without
+affecting the file — it only ever describes external crates. Check what actually
+moved before spending the download:
+
+```bash
+git diff <last-release>..HEAD -- ../Cargo.lock | grep -E '^[+-]name'
+```
+
+Empty output means the existing `cargo-sources.json` is still good. The output is
+~450KB and is not committed here; cosmic-flatpak carries its own copy.
 
 ## Building locally
 
