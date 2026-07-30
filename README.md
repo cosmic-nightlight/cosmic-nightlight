@@ -92,7 +92,7 @@ entry, or with `cosmic-nightlight --settings`.
 
 **The schedule.** **From** and **To** each pick an exact time — hour, minute,
 and AM/PM (or a 24-hour clock, following your COSMIC time setting) — and the
-**Schedule** row summarises the result, e.g. *Warm from 9:37PM to 5:22AM*. A
+**Schedule** row summarizes the result, e.g. *Warm from 9:37PM to 5:22AM*. A
 window that ends earlier in the day than it starts runs overnight; one
 that ends later runs within the day, so `9:00AM`→`5:00PM` warms the screen for
 office hours only.
@@ -118,7 +118,7 @@ systemctl --user enable --now cosmic-nightlight.service
 
 The `.deb` ships that unit; from a source install, copy
 `systemd/cosmic-nightlight.service` into `~/.config/systemd/user/` first. It is
-off by default and adds no behaviour of its own — it just keeps a process around
+off by default and adds no behavior of its own — it just keeps a process around
 to do what the applet would have. Running it alongside the applet is harmless:
 they share a record of what is on screen and lock against each other, so a
 boundary still costs a single flicker.

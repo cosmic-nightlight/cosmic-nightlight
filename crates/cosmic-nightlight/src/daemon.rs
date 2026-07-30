@@ -7,13 +7,13 @@
 //!
 //! Each pass is the same pair of calls the applet and the settings window make on
 //! their own tick — [`config::expire_override`] then [`backend::reconcile`] — so
-//! the schedule is honoured whenever *any* part of the app is running. This mode
-//! adds no behaviour of its own; it exists only to cover the case where none of
+//! the schedule is honored whenever *any* part of the app is running. This mode
+//! adds no behavior of its own; it exists only to cover the case where none of
 //! the GUIs is running, which for most people never happens because the applet
 //! sits on the panel. It is not installed or enabled by default: see the shipped
 //! systemd user unit.
 //!
-//! The backend tracks what is on screen and serialises applies between all of
+//! The backend tracks what is on screen and serializes applies between all of
 //! them, so several processes noticing the same boundary still costs one flicker,
 //! and retries after a failure are damped there rather than here.
 

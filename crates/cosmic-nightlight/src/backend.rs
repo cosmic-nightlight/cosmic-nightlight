@@ -262,7 +262,7 @@ fn run_worker(receiver: Receiver<Request>) {
 ///
 /// The lock is advisory `flock`, released by the kernel when the file closes, so
 /// a killed holder cannot wedge it. Without a runtime directory to keep it in we
-/// simply run unserialised, which is what the app did before.
+/// simply run unserialized, which is what the app did before.
 fn with_apply_lock<T>(f: impl FnOnce() -> T) -> T {
     let Some(lock) = lock_file() else {
         return f();
@@ -338,7 +338,7 @@ const SUSPEND_SKEW: Duration = Duration::from_secs(30);
 /// Suspending pauses the monotonic clock but not the wall clock, so a gap that
 /// is far longer in wall-clock terms than it is monotonically spans one. If a
 /// platform's clocks don't behave that way we simply never notice a resume,
-/// which is the behaviour the app had before.
+/// which is the behavior the app had before.
 ///
 /// Every run mode reconciles on the same tick, so several of our processes can
 /// each notice the same resume — and each discard the record the previous one
@@ -372,7 +372,7 @@ fn discard_record_if_resumed() {
     // from now by the monotonic gap lands at roughly the moment we resumed. It
     // errs early by however long we were awake before suspending — under one
     // tick — which at worst leaves an apply from just before the suspend looking
-    // post-resume, i.e. the behaviour we had before.
+    // post-resume, i.e. the behavior we had before.
     let resumed_at = now_wall - monotonic;
     if record_written_since(resumed_at) {
         return;
@@ -435,7 +435,7 @@ static RECORD_UNUSABLE: AtomicBool = AtomicBool::new(false);
 /// ceiling that delay doubles up to.
 ///
 /// Something has to damp this: [`reconcile`] runs on a 15-second tick, and a
-/// failure that persists — no polkit authorisation, displays asleep, the session
+/// failure that persists — no polkit authorization, displays asleep, the session
 /// not foreground — would otherwise re-spawn `pkexec` (and re-prompt, or
 /// re-bounce the VT) every tick, forever.
 const FIRST_RETRY_DELAY: Duration = Duration::from_secs(5);

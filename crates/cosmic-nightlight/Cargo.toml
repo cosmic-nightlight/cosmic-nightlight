@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 nightlight-core.workspace = true
 chrono.workspace = true
-# For `flock`, which serialises gamma applies across our processes.
+# For `flock`, which serializes gamma applies across our processes.
 libc.workspace = true
 
 [dependencies.libcosmic]

@@ -105,7 +105,7 @@ impl cosmic::Application for NightLightApplet {
                 // Interpret the toggle relative to what the schedule wants now:
                 // flipping it to match the schedule just follows it (`Auto`),
                 // while flipping it against the schedule sets a manual override
-                // the daemon honours until the next sunset/sunrise transition.
+                // the daemon honors until the next sunset/sunrise transition.
                 let new_override = if on == self.settings.schedule_wants_tint() {
                     config::Override::Auto
                 } else if on {

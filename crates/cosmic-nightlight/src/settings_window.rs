@@ -176,7 +176,7 @@ impl cosmic::Application for SettingsWindow {
             Message::Toggle(on) => {
                 // Mirrors the applet's toggle logic: flipping it to match the
                 // schedule just follows it (`Auto`), while flipping it against
-                // the schedule sets a manual override the daemon honours until
+                // the schedule sets a manual override the daemon honors until
                 // the next sunset/sunrise transition.
                 let new_override = if on == self.settings.schedule_wants_tint() {
                     config::Override::Auto
