@@ -50,9 +50,30 @@ jobs:
           if-no-files-found: error
 
       # Only on a pushed tag like v0.1.0: attach the .deb to a GitHub Release.
+      - name: Build the release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # Check the tag against the changelog before publishing anything, so a
+          # forgotten version bump fails the release instead of shipping notes
+          # for the previous one.
+          changelog_version="$(dpkg-parsechangelog -l debian/changelog -S Version)"
+          changelog_version="${changelog_version%-*}"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$changelog_version" != "$tag_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match debian/changelog ($changelog_version)"
+            exit 1
+          fi
+          scripts/release-notes.sh > release-notes.md
+          cat release-notes.md
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.deb
+          # The changelog entry for this release, which GitHub's generated
+          # "What's Changed" section is appended to. Without a body the notes
+          # would be that generated section alone — a list of merged PRs, which
+          # says nothing about a release pushed straight to main.
+          body_path: release-notes.md
           generate_release_notes: true
