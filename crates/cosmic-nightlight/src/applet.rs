@@ -322,7 +322,22 @@ fn surface_task(action: cosmic::surface::Action) -> Task<Message> {
 /// surface can't host in-process, so we run it as a separate process.
 fn spawn_settings_window() {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cosmic-nightlight"));
-    if let Err(err) = std::process::Command::new(exe).arg("--settings").spawn() {
-        eprintln!("cosmic-nightlight: failed to open settings window: {err}");
+    match std::process::Command::new(exe).arg("--settings").spawn() {
+        Ok(mut child) => {
+            // Wait on it from a thread of its own. Nothing here wants the exit
+            // status, but a child that is never waited on stays in the process
+            // table as a zombie until its parent dies — and this parent is the
+            // panel applet, which lives as long as the session. One thread per
+            // window, parked in `wait` and gone the moment the window closes.
+            //
+            // Reaping through `SIGCHLD`/`SIG_IGN` would cover this without the
+            // thread, but it is process-wide: the backend runs the helper with
+            // `Command::status`, which needs to reap its own child to read the
+            // exit code that tells a dismissed prompt from a failure.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(err) => eprintln!("cosmic-nightlight: failed to open settings window: {err}"),
     }
 }
