@@ -73,6 +73,77 @@ on every schedule transition. The setup does not unlock the feature; it stops th
 nagging. That distinction matters: this is not an app that is broken until
 granted root.
 
+### What happens when the user says no
+
+"A prompt per transition" is the price only if the user answers them. Dismissing
+one is a failed apply, and the retry backoff is what then decides how often the
+dialog comes back — which on the ordinary five-second-to-five-minute scale meant
+about a hundred prompts between sunset and sunrise. That is the sort of thing
+that gets an app pulled from a store.
+
+So pkexec's refusals are damped on a scale of their own — an hour, doubling to
+six (`FIRST_AUTH_RETRY_DELAY` in `backend.rs`). The distinction being drawn is
+between a fault that will clear while nobody is watching (a display asleep, no
+CRTCs up yet, the session not foreground — all of which reach the helper and come
+back as its own exit 1) and a person declining, which will not clear until that
+person decides otherwise. Only the second kind costs the user a dialog, so only
+the second kind needs to be rare.
+
+That damping is **shared between our processes**, in the session runtime
+directory beside the record of what is on screen (`backoff_path` in
+`backend.rs`). It has to be: the applet, the settings window and the daemon all
+reconcile on the same tick and queue up behind each other on the apply lock, so a
+refusal only one of them collected would hold off only that one. With a per-
+process backoff, one click with the applet and the settings window both open put
+up two dialogs — the first process asked and was refused, and the second, already
+blocked on the lock with nothing in the record to distinguish "refused" from
+"never tried", walked straight into pkexec as soon as the lock came free. A
+success suppressed that duplicate and a refusal did not, so it showed up only
+before the user had authenticated once.
+
+Sharing the record also means the delay doubles once per attempt rather than once
+per attempt *per process*, so three running processes climb one ladder instead of
+three.
+
+It stays finite rather than never retrying, because a prompt can be dismissed by
+accident or a password mistyped. Both ways back are faster than waiting it out
+and neither consults the backoff: the toggle applies directly, and the settings
+row runs the setup directly.
+
+### One question at a time
+
+A refusal answers everything that was already asked, not just the request that
+happened to be carrying it. This matters because the app puts several routes to a
+privileged call in front of the user at once: with a prompt up for the toggle,
+they can still move the temperature slider, move the brightness slider, and pick
+a schedule — and each of those wants privilege of its own.
+
+Two rules keep that to a single dialog.
+
+**Everything privileged takes the apply lock**, `run_host_setup` included. It is
+the only one that does not apply a tint, and before it took the lock its prompt
+could land *beside* an apply's rather than after it — picking a schedule while
+the toggle's prompt was still up put two dialogs on screen at once.
+
+**A refusal answers every request made before it.** The applies queued behind a
+prompt were all decided while the user had no answer to go on, so cancelling the
+prompt cancels them too; they never reach pkexec (`refused_since` in
+`backend.rs`). The cut is by time, not by state — what was declined is the
+authentication, and a request carrying a different temperature would raise the
+identical dialog.
+
+The timing is the whole point of the rule, and it is why the backoff is not
+simply consulted here. A forced apply *does* ignore the backoff, deliberately:
+clicking the toggle again after dismissing a prompt has to work, or a slip costs
+an hour. So what separates the two is when the user acted. Before the refusal,
+they were acting in ignorance of it and it answers for them; after it, they have
+seen it and are trying again.
+
+pkexec spends exit code 127 on both "not authorized" and "could not run the
+program", which want opposite treatment — the first will not improve, the second
+is a helper swapped out mid-flight and should be retried promptly. They are told
+apart by looking to see whether the program is still where we left it.
+
 ### Why the resolved path is cached only when whitelisted
 
 Probing costs a round trip out of the sandbox per candidate, so the answer wants
@@ -115,6 +186,16 @@ is actually given rather than buried in a notice the user would dismiss. The
 settings row below remains as the deliberate path — for anyone who dismissed the
 prompt, and for a contract update.
 
+The install is best-effort: a host whose `/usr/local` or `/etc` cannot be written
+still gets its tint change, because the script forwards the arguments either way
+rather than taking the screen down with the install. That leaves a success the
+app would otherwise misread — it routes through the setup, sees exit 0, and
+routes through it again next time, charging a password prompt for an install that
+can never land. So a setup that returns having left the host no better off is
+recorded as ineffective (`SETUP_INEFFECTIVE`) and not attempted again; later
+applies fall back to the bundled helper, which still prompts, but stops promising
+something that is not going to happen.
+
 ## Why not the obvious alternatives
 
 **Point the polkit rule at the helper inside the flatpak.** This is a local
@@ -130,6 +211,30 @@ password" and another saying "any process running as the user may overwrite that
 binary without a password."
 
 > You can have password-less execution, or password-less replacement — not both.
+
+**What the setup does still trust, and cannot check.** The binary it copies out
+lives inside the flatpak, and on a per-user install (which is what the Store
+does) that tree is owned by the user: `~/.local/share/flatpak/app/…/files/libexec`
+is `drwxr-xr-x` under their own uid. Anything already running as that user can
+replace the payload before the setup copies it, and what lands root-owned at a
+whitelisted path is then whatever they put there — password-less root from that
+point on, without ever knowing a password.
+
+This is not fixable from inside the sandbox, and it is worth being exact about
+why: nothing in a user-writable tree can attest to itself. A digest in the setup
+script is checkable by whoever can also edit the script; one compiled into the
+GUI is checkable by whoever can also replace the GUI. The trust anchor has to sit
+outside the tree, and for a per-user flatpak there is no such anchor to reach.
+
+What it is, then, is the same trust the user extends by running `install.sh` from
+a checkout, and it is bounded the same way: it takes an authenticated prompt, so
+it cannot happen without the user, and it is disclosed at the prompt because
+pkexec names the program. What it converts is *one* authenticated root action
+into a persistent one. A system-wide flatpak install has no such gap, the tree
+being root-owned.
+
+Disclose this in the submission. A reviewer who spots it unaided will reasonably
+wonder what else went unexamined.
 
 **Wait for the compositor.** [cosmic-comp#1543](https://github.com/pop-os/cosmic-comp/pull/1543)
 was closed unmerged by Drakulix in July 2025: gamma belongs to the post-1.0 color
@@ -198,6 +303,14 @@ Its existence is **derived, never stored**: it renders when
 condition cannot be true there, and it reappears correctly if the host helper is
 later removed. After a successful setup it disappears on its own, with no
 restart — which is exactly what the caching rule above buys.
+
+Derived means derived *on the tick*, not once at startup. The setup usually
+happens without this row being touched at all — it rides along on the first tint
+change, and the toggle immediately above the row is one of the things that
+triggers one. A row answered only by its own button would sit there afterwards
+still offering a setup that had already happened, and charge a password prompt
+for pressing it. Re-deriving costs nothing on the tick: the backend holds the
+answer and re-probes the host only after something it ran could have changed it.
 
 The setup blocks on a polkit dialog, so it runs on its own thread and reports
 back through a channel; the window stays live and the button reads *Working…*

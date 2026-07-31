@@ -39,6 +39,7 @@ const KEY_OVERRIDE: &str = "override";
 const KEY_TEMPERATURE: &str = "temperature";
 const KEY_BRIGHTNESS: &str = "brightness";
 const KEY_SCHEDULE: &str = "schedule";
+const KEY_DEFERRED_SCHEDULE: &str = "deferred_schedule";
 const KEY_SUNRISE_MINUTES: &str = "sunrise_minutes";
 const KEY_SUNSET_MINUTES: &str = "sunset_minutes";
 
@@ -123,6 +124,10 @@ pub struct Settings {
     pub temperature: u32,
     pub brightness: f64,
     pub schedule: Schedule,
+    /// A schedule parked because the host setup it depends on is not in place,
+    /// waiting to be restored once it is. `None` when nothing is parked. See
+    /// `backend::defer_schedule_without_setup`.
+    pub deferred_schedule: Option<Schedule>,
     /// When the tint turns off, as minutes since local midnight.
     pub sunrise_minutes: u32,
     /// When the tint turns on, as minutes since local midnight.
@@ -136,6 +141,7 @@ impl Default for Settings {
             temperature: 4500,
             brightness: 1.0,
             schedule: Schedule::Manual,
+            deferred_schedule: None,
             sunrise_minutes: 6 * 60,
             sunset_minutes: 18 * 60,
         }
@@ -167,6 +173,13 @@ impl Settings {
         }
         if let Ok(v) = config.get::<String>(KEY_SCHEDULE) {
             settings.schedule = Schedule::from_key(&v);
+        }
+        if let Ok(v) = config.get::<String>(KEY_DEFERRED_SCHEDULE) {
+            // `Manual` is the "nothing parked" value: it needs no setup, so
+            // parking it would be a no-op. That also makes an unset or
+            // unrecognized key read as `None` for free.
+            let parked = Schedule::from_key(&v);
+            settings.deferred_schedule = (parked != Schedule::Manual).then_some(parked);
         }
         if let Some(v) = read_time_of_day(config, KEY_SUNRISE_MINUTES, LEGACY_KEY_SUNRISE_HOUR) {
             settings.sunrise_minutes = v;
@@ -339,38 +352,91 @@ pub fn handler() -> Option<Config> {
 /// satisfied by inference (avoids a direct `serde` dependency).
 pub fn store_override(handler: &Option<Config>, value: Override) {
     if let Some(config) = handler {
-        report(KEY_OVERRIDE, config.set(KEY_OVERRIDE, value.as_key()));
+        set_str_if_changed(config, KEY_OVERRIDE, value.as_key());
     }
 }
 
 pub fn store_temperature(handler: &Option<Config>, value: u32) {
     if let Some(config) = handler {
-        report(KEY_TEMPERATURE, config.set(KEY_TEMPERATURE, value));
+        set_u32_if_changed(config, KEY_TEMPERATURE, value);
     }
 }
 
 pub fn store_brightness(handler: &Option<Config>, value: f64) {
     if let Some(config) = handler {
-        report(KEY_BRIGHTNESS, config.set(KEY_BRIGHTNESS, value));
+        set_f64_if_changed(config, KEY_BRIGHTNESS, value);
     }
 }
 
 pub fn store_schedule(handler: &Option<Config>, value: Schedule) {
     if let Some(config) = handler {
-        report(KEY_SCHEDULE, config.set(KEY_SCHEDULE, value.as_key()));
+        set_str_if_changed(config, KEY_SCHEDULE, value.as_key());
+    }
+}
+
+/// `None` is written as `Manual`'s key rather than by removing the key, so the
+/// value always round-trips through [`Settings::load_from`] the same way.
+pub fn store_deferred_schedule(handler: &Option<Config>, value: Option<Schedule>) {
+    if let Some(config) = handler {
+        let key = value.unwrap_or(Schedule::Manual).as_key();
+        set_str_if_changed(config, KEY_DEFERRED_SCHEDULE, key);
     }
 }
 
 pub fn store_sunrise_minutes(handler: &Option<Config>, value: u32) {
     if let Some(config) = handler {
-        report(KEY_SUNRISE_MINUTES, config.set(KEY_SUNRISE_MINUTES, value));
+        set_u32_if_changed(config, KEY_SUNRISE_MINUTES, value);
     }
 }
 
 pub fn store_sunset_minutes(handler: &Option<Config>, value: u32) {
     if let Some(config) = handler {
-        report(KEY_SUNSET_MINUTES, config.set(KEY_SUNSET_MINUTES, value));
+        set_u32_if_changed(config, KEY_SUNSET_MINUTES, value);
     }
+}
+
+// A write that changes nothing still costs an atomic write, an fsync, and — the
+// part that bites — a notification to every process watching this store.
+//
+// Both GUIs answer that notification by reconciling, and reconciling writes. So
+// an unconditional write closes a loop: one write wakes both, each writes, each
+// write wakes the other, with nothing but disk speed setting the pace. It has
+// been observed running for minutes at ~100 writes/sec per process, which backs
+// up the filesystem journal and so freezes far more than this app.
+//
+// Skipping the write when the value already matches breaks that loop wherever it
+// starts, and the re-read is the cheap half of the trade — it costs one read to
+// save an atomic write plus the fsync behind it. Callers stay free to write
+// whenever they like without having to know what is already stored.
+//
+// Split by type rather than made generic because expressing the bound
+// (`Serialize + DeserializeOwned + PartialEq`) would mean naming `serde`, which
+// this crate deliberately does not depend on directly.
+
+fn set_str_if_changed(config: &Config, key: &str, value: &str) {
+    if config.get::<String>(key).is_ok_and(|stored| stored == value) {
+        return;
+    }
+    report(key, config.set(key, value));
+}
+
+fn set_u32_if_changed(config: &Config, key: &str, value: u32) {
+    if config.get::<u32>(key).is_ok_and(|stored| stored == value) {
+        return;
+    }
+    report(key, config.set(key, value));
+}
+
+// Exact comparison is the right test here: the question is whether writing would
+// change the stored bytes, not whether two numbers are near enough to each other.
+// A `f64` round-trips through the store exactly, so an unchanged brightness
+// compares equal and a changed one never compares equal by accident.
+#[allow(clippy::float_cmp)]
+fn set_f64_if_changed(config: &Config, key: &str, value: f64) {
+    if config.get::<f64>(key).is_ok_and(|stored| stored == value) {
+        return;
+    }
+    report(key, config.set(key, value));
 }
 
 fn report(key: &str, result: Result<(), cosmic::cosmic_config::Error>) {
@@ -550,6 +616,94 @@ mod tests {
             let (hour, minute) = split_time(minutes);
             assert_eq!(compose_time(hour, minute), minutes);
         }
+    }
+
+    /// A store backed by a directory of this test's own, so writing to it touches
+    /// nothing the user owns and two tests can never collide.
+    fn scratch_store(label: &str) -> (std::path::PathBuf, Option<Config>) {
+        let root = std::env::temp_dir().join(format!(
+            "cosmic-nightlight-test-{}-{label}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let config = Config::with_custom_path(APP_ID, CONFIG_VERSION, root.clone())
+            .expect("scratch config store");
+        let keys = root
+            .join("cosmic")
+            .join(APP_ID)
+            .join(format!("v{CONFIG_VERSION}"));
+        (keys, Some(config))
+    }
+
+    /// Writing a value that is already stored must not reach the disk.
+    ///
+    /// This is load-bearing rather than an optimization. `cosmic_config` notifies
+    /// every watcher on every write, and both GUIs answer that notification by
+    /// reconciling — which writes. An unconditional write therefore closes a loop
+    /// between the two processes that runs at disk speed until something outside
+    /// it happens to break the cycle; it has been seen backing up the filesystem
+    /// journal badly enough to freeze the whole desktop.
+    #[test]
+    fn an_unchanged_value_is_never_rewritten() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (keys, handler) = scratch_store("unchanged");
+        let key_path = keys.join(KEY_TEMPERATURE);
+
+        // `atomicwrites` renames a fresh temp file over the key, so every real
+        // write lands a new inode. That makes "did this write?" an exact question,
+        // with no dependence on mtime resolution or on sleeping.
+        let inode = || std::fs::metadata(&key_path).map(|meta| meta.ino()).ok();
+
+        store_temperature(&handler, 3400);
+        let first = inode();
+        assert!(first.is_some(), "the first write should create the key");
+
+        store_temperature(&handler, 3400);
+        assert_eq!(inode(), first, "an unchanged value must not be rewritten");
+
+        store_temperature(&handler, 3500);
+        assert_ne!(inode(), first, "a changed value must still be written");
+        assert_eq!(Settings::load_from(&handler).temperature, 3500);
+
+        let _ = std::fs::remove_dir_all(keys);
+    }
+
+    /// The same guarantee for the two keys that drove the loop in practice: the
+    /// schedule and its parked companion, which `defer_schedule_without_setup`
+    /// writes as a pair on every pass that changes anything.
+    #[test]
+    fn an_unchanged_schedule_pair_is_never_rewritten() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (keys, handler) = scratch_store("schedule");
+        let inode = |key: &str| std::fs::metadata(keys.join(key)).map(|m| m.ino()).ok();
+
+        store_schedule(&handler, Schedule::SunsetToSunrise);
+        store_deferred_schedule(&handler, None);
+        let before = (inode(KEY_SCHEDULE), inode(KEY_DEFERRED_SCHEDULE));
+
+        store_schedule(&handler, Schedule::SunsetToSunrise);
+        store_deferred_schedule(&handler, None);
+        assert_eq!(
+            (inode(KEY_SCHEDULE), inode(KEY_DEFERRED_SCHEDULE)),
+            before,
+            "re-deciding the same schedule must not write"
+        );
+
+        // `None` is stored as `Manual`'s key, so parking `Manual` is the one case
+        // where a changed `Option` leaves the stored bytes alone. Still no write.
+        store_deferred_schedule(&handler, Some(Schedule::Manual));
+        assert_eq!(
+            inode(KEY_DEFERRED_SCHEDULE),
+            before.1,
+            "`None` and `Some(Manual)` share a representation, so neither rewrites"
+        );
+
+        store_schedule(&handler, Schedule::Manual);
+        assert_ne!(inode(KEY_SCHEDULE), before.0, "a real change must write");
+
+        let _ = std::fs::remove_dir_all(keys);
     }
 
     #[test]

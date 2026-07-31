@@ -22,6 +22,11 @@
 //! keeps them from re-applying — and flickering the screen a second time — a
 //! tint one of the other processes has already put up.
 //!
+//! An apply that *didn't* happen is recorded there too, and shared for the same
+//! reason: a refused password prompt is a fact about the user rather than about
+//! whichever process was asking, so all of them have to hear about it. See
+//! [`backoff_path`].
+//!
 //! [`reconcile`] also notices a resume from suspend, whose modeset drops the
 //! gamma LUT we wrote, and discards the record so the tint is pushed again.
 //! Every run mode reconciles, so this happens whether or not the daemon is the
@@ -37,6 +42,8 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::config;
+
 /// Where the helper may live on the host, in priority order. The `.deb` installs
 /// to `/usr/bin`; `install.sh` and the flatpak's host setup use `/usr/local/bin`.
 /// Both paths are whitelisted by the polkit rule, so either can run without a
@@ -45,6 +52,14 @@ use std::time::{Duration, Instant, SystemTime};
 const HELPER_CANDIDATES: &[&str] = &[
     "/usr/bin/cosmic-nightlight-helper",
     "/usr/local/bin/cosmic-nightlight-helper",
+];
+
+/// Where the polkit rule may live on the host. `install.sh` and the flatpak's
+/// host setup both write the first; the second is where a distro package would
+/// put it. Either one authorizes every path in [`HELPER_CANDIDATES`].
+const RULE_CANDIDATES: &[&str] = &[
+    "/etc/polkit-1/rules.d/49-cosmic-nightlight.rules",
+    "/usr/share/polkit-1/rules.d/49-cosmic-nightlight.rules",
 ];
 
 /// The path the flatpak's host setup installs to, and so the one to name in an
@@ -75,6 +90,23 @@ fn host_has_executable(path: &str) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+/// As [`host_has_executable`], for a file that is meant to be read rather than
+/// run — the polkit rule is `0644`, so `test -x` would miss it.
+fn host_has_file(path: &str) -> bool {
+    Command::new("flatpak-spawn")
+        .args(["--host", "test", "-f", path])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Whether the host carries the rule that makes the whitelisted helper paths
+/// password-less. Without it those paths are just ordinary programs, and pkexec
+/// prompts for every apply.
+fn host_has_polkit_rule() -> bool {
+    RULE_CANDIDATES.iter().any(|path| host_has_file(path))
 }
 
 /// One of our own `/app/libexec` programs, named by its path *on the host* —
@@ -194,8 +226,10 @@ pub enum HostSetup {
     /// Nothing to offer. Not sandboxed at all, or a host helper is installed and
     /// still speaks our contract.
     Ready,
-    /// Sandboxed with no host helper. Everything works, but every change costs a
-    /// password prompt.
+    /// Sandboxed without a working host install: no helper at a whitelisted path,
+    /// or one with no polkit rule to make it password-less. Everything works, but
+    /// a change has to ask for the one-time permission before it lands, and asks
+    /// again on the next change until it is granted.
     Needed,
     /// A host helper is installed, but it predates the command line this build
     /// sends it. Installed once by an older release and never refreshed since.
@@ -230,13 +264,96 @@ fn probe_host_setup() -> HostSetup {
         return HostSetup::Ready;
     }
     match probe_host_helper() {
-        HostHelper::Whitelisted(path) => match host_helper_contract(&path) {
-            Some(contract) if contract >= nightlight_core::HELPER_CONTRACT => HostSetup::Ready,
-            // Either too old to understand us, or old enough to predate
-            // `--version` entirely — same remedy, so the same answer.
-            _ => HostSetup::Outdated,
-        },
-        HostHelper::Bundled(_) | HostHelper::Missing => HostSetup::Needed,
+        // A helper at a whitelisted path is only half the setup: the rule is what
+        // makes that path password-less, and without it every apply still prompts
+        // — the exact thing the setup exists to stop. Checking the helper alone
+        // called such a host `Ready`, which is also what stops
+        // `privileged_program` routing through the setup, so the missing half
+        // never got installed and the prompting had no end.
+        //
+        // Half-installed is reachable in ordinary use: the setup writes the two
+        // separately and is deliberately non-fatal when only the second fails, and
+        // an uninstall can take away either one.
+        HostHelper::Whitelisted(path) if host_has_polkit_rule() => {
+            match host_helper_contract(&path) {
+                Some(contract) if contract >= nightlight_core::HELPER_CONTRACT => HostSetup::Ready,
+                // Either too old to understand us, or old enough to predate
+                // `--version` entirely — same remedy, so the same answer.
+                _ => HostSetup::Outdated,
+            }
+        }
+        HostHelper::Whitelisted(_) | HostHelper::Bundled(_) | HostHelper::Missing => {
+            HostSetup::Needed
+        }
+    }
+}
+
+/// Parks a schedule that has no host setup under it, and restores it once the
+/// setup lands.
+///
+/// A schedule is the one setting that acts while nobody is watching, which makes
+/// it the one that must not outlive the helper that lets it act silently.
+/// Choosing a schedule in the settings window is already gated on the setup, but
+/// a schedule can also arrive *already stored*: the config lives in the user's
+/// own `~/.config/cosmic`, which survives uninstalling the flatpak. Reinstalling
+/// therefore brings back a schedule with nothing underneath it, and left alone it
+/// would fire a password prompt at sunset with the user away from the screen —
+/// exactly what the setup exists to prevent.
+///
+/// So the schedule drops to `Manual` and is remembered rather than discarded: the
+/// user gets their schedule back when the setup completes instead of having to
+/// notice it was silently turned off and pick it again.
+///
+/// Every run mode does this on its tick, next to [`config::expire_override`], so
+/// it happens whichever part of the app is running.
+pub fn defer_schedule_without_setup(
+    handler: &Option<cosmic::cosmic_config::Config>,
+    settings: &mut config::Settings,
+) {
+    let Some(next) = deferral(
+        host_setup() == HostSetup::Ready,
+        settings.schedule,
+        settings.deferred_schedule,
+    ) else {
+        return;
+    };
+
+    settings.schedule = next.schedule;
+    settings.deferred_schedule = next.deferred;
+    config::store_schedule(handler, next.schedule);
+    config::store_deferred_schedule(handler, next.deferred);
+}
+
+/// The schedule and its parked companion after a deferral pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScheduleDeferral {
+    schedule: config::Schedule,
+    deferred: Option<config::Schedule>,
+}
+
+/// What [`defer_schedule_without_setup`] should write, or `None` when the two
+/// values already agree with the host — which is every tick but the one that
+/// changes something, so the common path writes nothing.
+///
+/// Split from the config writes so the decision can be tested without a host to
+/// probe or a config store to write to.
+fn deferral(
+    ready: bool,
+    schedule: config::Schedule,
+    deferred: Option<config::Schedule>,
+) -> Option<ScheduleDeferral> {
+    if !ready {
+        // Park whatever is live. If something was parked already, the live
+        // schedule is the more recent intent and replaces it.
+        (schedule != config::Schedule::Manual).then_some(ScheduleDeferral {
+            schedule: config::Schedule::Manual,
+            deferred: Some(schedule),
+        })
+    } else {
+        deferred.map(|parked| ScheduleDeferral {
+            schedule: parked,
+            deferred: None,
+        })
     }
 }
 
@@ -253,48 +370,84 @@ fn host_helper_contract(path: &str) -> Option<u32> {
     nightlight_core::parse_contract(&String::from_utf8_lossy(&output.stdout))
 }
 
+/// What the settings row says when the setup never got as far as asking, because
+/// the user had already turned down a prompt it would only have repeated.
+/// Worded as what happened from where they were sitting: they dismissed the
+/// dialog that would have authorized this.
+const PROMPT_DISMISSED: &str = "the password prompt was dismissed";
+
 /// Runs the one-time host setup: copies our bundled helper to a root-owned path
 /// and installs the polkit rule beside it. Costs exactly one password prompt,
 /// after which applies stop prompting.
 ///
-/// **Blocks** on that prompt, so callers must keep it off the UI thread.
+/// Takes the apply lock, so its prompt cannot land on top of one an apply is
+/// already showing. Without that the two ran on different threads with nothing
+/// between them, and picking a schedule while a toggle's prompt was still up put
+/// a second dialog on the screen beside the first.
+///
+/// **Blocks** on the lock and on the prompt, so callers must keep it off the UI
+/// thread.
 pub fn run_host_setup() -> Result<(), String> {
     if !in_flatpak() {
         return Err("the host setup applies to the flatpak build only".to_string());
     }
+    // Sampled before the wait for the lock, because it is the moment the *user*
+    // asked that decides whether a refusal arriving in the meantime answers this
+    // request too.
+    let requested_at = SystemTime::now();
     let script = bundled_host_path("cosmic-nightlight-setup")
         .ok_or("could not find the setup program inside the flatpak")?;
 
-    let status = Command::new("flatpak-spawn")
-        .args(["--host", "pkexec", &script])
-        .status()
-        .map_err(|err| format!("could not reach the host ({err})"))?;
+    with_apply_lock(|| {
+        // Whoever held the lock may have been turned down while we waited. The
+        // setup asks for the very same credential, so putting it up now would be
+        // re-asking a question just answered — which from the user's side is the
+        // dialog they cancelled coming straight back.
+        if refused_since(requested_at) {
+            return Err(PROMPT_DISMISSED.to_string());
+        }
 
-    // Whether or not it succeeded, what is installed may have moved.
-    forget_host_helper();
+        let status = Command::new("flatpak-spawn")
+            .args(["--host", "pkexec", &script])
+            .status()
+            .map_err(|err| format!("could not reach the host ({err})"))?;
 
-    if status.success() {
-        return Ok(());
-    }
-    Err(match status.code() {
-        // pkexec's own codes, distinct from anything the script returns.
-        Some(126) => "authentication was dismissed or failed".to_string(),
-        Some(127) => "the setup program could not be run on the host".to_string(),
-        _ => format!("the setup exited with {status}"),
+        // Whether or not it succeeded, what is installed may have moved.
+        forget_host_helper();
+
+        if status.success() {
+            clear_backoff();
+            return Ok(());
+        }
+        Err(match status.code() {
+            // pkexec's own codes, distinct from anything the script returns (it
+            // exits 0 or 1). See `PKEXEC_DISMISSED` for what each one covers.
+            //
+            // Both are the user declining, and recording that is what stops the
+            // applies queued behind us from spending the same refusal again.
+            Some(PKEXEC_DISMISSED) => {
+                note_auth_refusal();
+                PROMPT_DISMISSED.to_string()
+            }
+            Some(PKEXEC_NOT_AUTHORIZED) => {
+                note_auth_refusal();
+                "authentication failed, or the setup could not be run on the host".to_string()
+            }
+            _ => format!("the setup exited with {status}"),
+        })
     })
 }
 
-/// Resolves the helper path: an explicit `COSMIC_NIGHTLIGHT_HELPER` override
-/// wins; otherwise the first candidate that exists is used, falling back to the
-/// `.deb`'s path so pkexec produces a clear error naming it.
+/// Resolves the helper path: the first candidate that exists is used, falling
+/// back to the `.deb`'s path so pkexec produces a clear error naming it.
 ///
 /// Unsandboxed this re-checks every call, which is a cheap local `stat`, so an
 /// install or removal is picked up without restarting. Sandboxed the same
 /// question costs a round trip out of the sandbox — see [`host_helper_path`].
+///
+/// The `COSMIC_NIGHTLIGHT_HELPER` override is handled a level up, in
+/// [`privileged_program`], so that it wins over the setup routing too.
 fn helper_path() -> String {
-    if let Ok(path) = std::env::var("COSMIC_NIGHTLIGHT_HELPER") {
-        return path;
-    }
     if in_flatpak() {
         return host_helper_path();
     }
@@ -334,7 +487,12 @@ fn session_vt_args() -> Vec<String> {
 /// change lands. That does cost a prompt on a system that had been silent, which
 /// is the intended price of a contract bump — see `HELPER_CONTRACT`.
 fn privileged_program() -> (String, bool) {
-    if in_flatpak() && host_setup() != HostSetup::Ready {
+    // An override names the program outright, so honor it ahead of the setup
+    // routing rather than installing something else over the top of it.
+    if let Ok(path) = std::env::var("COSMIC_NIGHTLIGHT_HELPER") {
+        return (path, false);
+    }
+    if in_flatpak() && host_setup() != HostSetup::Ready && !setup_is_ineffective() {
         if let Some(setup) = bundled_host_path("cosmic-nightlight-setup") {
             return (setup, true);
         }
@@ -342,13 +500,68 @@ fn privileged_program() -> (String, bool) {
     (helper_path(), false)
 }
 
+/// Set once the setup has run to completion and left the host no better off,
+/// which means it cannot install here — `/usr/local` or `/etc` read-only, or
+/// otherwise locked down.
+///
+/// Without this the app would route every later apply through the setup as well,
+/// re-running an install that cannot work and charging a password prompt for it
+/// on every schedule transition, forever. Falling back to the bundled helper
+/// still prompts — there is no avoiding that with no host helper to reach — but
+/// it stops promising an install that is never going to happen.
+static SETUP_INEFFECTIVE: AtomicBool = AtomicBool::new(false);
+
+fn setup_is_ineffective() -> bool {
+    SETUP_INEFFECTIVE.load(Ordering::Relaxed)
+}
+
+/// Why an apply didn't happen, which decides how hard to back off from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Failure {
+    /// pkexec refused: the prompt was dismissed, or polkit did not authorize the
+    /// user at all. Either way this is a person saying no — or a machine on which
+    /// the answer will keep being no — rather than a transient fault, so retrying
+    /// on the usual timescale would only re-open the dialog they just closed.
+    /// See [`FIRST_AUTH_RETRY_DELAY`].
+    Auth,
+    /// Anything else. Chiefly the helper's own non-zero exit (a display asleep,
+    /// no CRTCs up yet, the session not foreground), and a helper that has gone
+    /// missing underneath us. All worth retrying soon — the world may change.
+    Other,
+}
+
+/// pkexec's exit code for "the user dismissed the authentication dialog".
+const PKEXEC_DISMISSED: i32 = 126;
+
+/// pkexec's exit code for "not authorized, authentication failed, or an error
+/// occurred" — which lumps polkit turning the user down together with pkexec
+/// being unable to run the program at all. [`run_helper`] tells those apart by
+/// looking to see whether the program is still there.
+///
+/// Neither code can come from our own programs: the helper exits 0 or 1, and so
+/// does the setup script. Nor can they be a shell's own "found but not
+/// executable", since pkexec is always invoked directly rather than through one.
+const PKEXEC_NOT_AUTHORIZED: i32 = 127;
+
+/// Whether the program we just asked pkexec to run is actually there. Answered
+/// only on a failure path, to resolve what exit 127 meant.
+fn program_exists(program: &str) -> bool {
+    if in_flatpak() {
+        host_has_executable(program)
+    } else {
+        std::path::Path::new(program).exists()
+    }
+}
+
 /// Runs the helper via `pkexec` with the given arguments, logging the result.
-/// Returns `true` only if it ran and exited successfully, so callers (the daemon)
-/// can retry instead of assuming a failed apply took effect.
+/// `Ok` only if it ran and exited successfully, so callers (the daemon) can
+/// retry instead of assuming a failed apply took effect.
 ///
 /// Sandboxed, the whole thing is prefixed with `flatpak-spawn --host` so that
-/// pkexec and the helper both run on the host rather than in here.
-fn run_helper(args: &[String]) -> bool {
+/// pkexec and the helper both run on the host rather than in here. `flatpak-spawn`
+/// passes the child's exit code through unchanged, so pkexec's own codes are
+/// readable from in here.
+fn run_helper(args: &[String]) -> Result<(), Failure> {
     let (program, installs) = privileged_program();
     let mut command = if in_flatpak() {
         let mut command = Command::new("flatpak-spawn");
@@ -363,18 +576,39 @@ fn run_helper(args: &[String]) -> bool {
         Ok(status) if status.success() => {
             println!("backend: helper applied {args:?}");
             if installs {
-                // The host just changed under us: there is now a whitelisted
-                // helper, so re-resolve and stop routing through the setup.
+                // The host just changed under us: there should now be a
+                // whitelisted helper, so re-resolve and stop routing through the
+                // setup.
                 forget_host_helper();
+                // Unless there isn't. The setup installs best-effort and forwards
+                // the change either way, so a host it cannot write to lands here
+                // looking like a success. Notice that now, or every later apply
+                // would route through it again and charge a password prompt for
+                // an install that cannot happen.
+                if host_setup() != HostSetup::Ready {
+                    eprintln!(
+                        "backend: the setup ran but installed nothing; falling back to the bundled helper"
+                    );
+                    SETUP_INEFFECTIVE.store(true, Ordering::Relaxed);
+                }
             }
-            true
+            Ok(())
         }
         Ok(status) => {
             // A missing helper arrives here rather than in the `Err` arm: pkexec
             // launched fine and it is pkexec that reports the program is gone.
             eprintln!("backend: helper exited with {status} (args: {args:?})");
             forget_host_helper();
-            false
+            Err(match status.code() {
+                // The dialog was closed. A person said no.
+                Some(PKEXEC_DISMISSED) => Failure::Auth,
+                // Overloaded, so look: a program still sitting where we left it
+                // means polkit turned us down, which asking again shortly will
+                // not change. One that has gone means it was swapped underneath
+                // us — a `.deb` upgrade mid-flight — and is worth retrying soon.
+                Some(PKEXEC_NOT_AUTHORIZED) if program_exists(&program) => Failure::Auth,
+                _ => Failure::Other,
+            })
         }
         Err(err) => {
             let launcher = if in_flatpak() {
@@ -384,14 +618,14 @@ fn run_helper(args: &[String]) -> bool {
             };
             eprintln!("backend: failed to launch {launcher} for {program} ({err})");
             forget_host_helper();
-            false
+            Err(Failure::Other)
         }
     }
 }
 
 /// Pushes `state` to every display through the helper. Callers must already
 /// hold the apply lock; use [`apply_now`] or [`reconcile`] instead.
-fn apply_unlocked(state: TintState, brightness: f32) -> bool {
+fn apply_unlocked(state: TintState, brightness: f32) -> Result<(), Failure> {
     match state {
         Some(kelvin) => run_helper(&[
             "--temp".to_string(),
@@ -408,17 +642,32 @@ fn apply_unlocked(state: TintState, brightness: f32) -> bool {
 /// wrong — a modeset we couldn't detect wiped the LUT — because then toggling
 /// the tint off and on again is the user's way out.
 ///
+/// `requested_at` is when the user asked. It is what separates a change made in
+/// ignorance of a refusal from one made in answer to it: this is the one path
+/// that ignores the backoff, on the grounds that a person acting is worth more
+/// than a timer, but that only holds for a person who has *seen* the refusal.
+/// A request already queued when the prompt was cancelled was made before there
+/// was anything to see, so it is answered by that same refusal rather than
+/// spending a fresh prompt on it.
+///
 /// Blocks for as long as the helper runs (~1s: a VT bounce plus polkit).
-pub fn apply_now(state: TintState, brightness: f32) -> bool {
+fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> bool {
     with_apply_lock(|| {
-        let ok = apply_unlocked(state, brightness);
-        if ok {
-            record_applied(state);
-            clear_backoff();
-        } else {
-            note_failure(state);
+        if refused_since(requested_at) {
+            println!("backend: skipping an apply the user already declined");
+            return false;
         }
-        ok
+        match apply_unlocked(state, brightness) {
+            Ok(()) => {
+                record_applied(state);
+                clear_backoff();
+                true
+            }
+            Err(failure) => {
+                note_failure(state, failure);
+                false
+            }
+        }
     })
 }
 
@@ -443,13 +692,16 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
         if backing_off(state) {
             return Reconcile::Pending;
         }
-        if apply_unlocked(state, brightness) {
-            record_applied(state);
-            clear_backoff();
-            Reconcile::Applied
-        } else {
-            note_failure(state);
-            Reconcile::Pending
+        match apply_unlocked(state, brightness) {
+            Ok(()) => {
+                record_applied(state);
+                clear_backoff();
+                Reconcile::Applied
+            }
+            Err(failure) => {
+                note_failure(state, failure);
+                Reconcile::Pending
+            }
         }
     })
 }
@@ -474,7 +726,27 @@ pub enum Reconcile {
 /// apply is in flight coalesce, so flipping the toggle several times in a row
 /// only applies the state it ended on.
 pub fn apply_in_background(state: TintState, brightness: f32) {
-    queue(Request::Force(state, brightness));
+    queue(Request::force(state, brightness, None));
+}
+
+/// Told whether an apply landed. See [`apply_in_background_reporting`].
+pub type Report = Box<dyn FnOnce(bool) + Send>;
+
+/// [`apply_in_background`], but says afterwards whether it worked.
+///
+/// For the one case that has to know: a toggle the user flipped. Turning the
+/// night light on can fail — most often because the password prompt was
+/// dismissed — and a toggle left sitting in the position the user clicked would
+/// then be describing a screen that never changed, and a stored setting that
+/// re-prompts the next time anything starts up. The GUIs use this to put the
+/// toggle back.
+///
+/// The report is **dropped without being called** when a newer request
+/// supersedes this one, since it is then the newer apply that describes the
+/// screen. Callers must treat that as "no answer" and leave the toggle alone,
+/// not as a failure.
+pub fn apply_in_background_reporting(state: TintState, brightness: f32, report: Report) {
+    queue(Request::force(state, brightness, Some(report)));
 }
 
 /// Queues a [`reconcile`] on the background thread; see [`apply_in_background`].
@@ -485,31 +757,60 @@ pub fn reconcile_in_background(state: TintState, brightness: f32) {
 fn queue(request: Request) {
     // A missing worker, a poisoned lock, and a hung-up receiver all mean the
     // thread is gone; fall back to running the request inline rather than
-    // dropping the change on the floor.
-    let queued = worker().is_some_and(|sender| {
-        sender
-            .lock()
-            .map(|sender| sender.send(request).is_ok())
-            .unwrap_or(false)
-    });
-    if !queued {
+    // dropping the change on the floor. Inline means on the caller's thread,
+    // which for a GUI is its event loop — a bad place to spend a second, but a
+    // better one than losing the change entirely.
+    let Some(worker) = worker() else {
         request.run();
+        return;
+    };
+    let Ok(sender) = worker.lock() else {
+        request.run();
+        return;
+    };
+    if let Err(returned) = sender.send(request) {
+        returned.0.run();
     }
 }
 
-#[derive(Clone, Copy)]
 enum Request {
-    /// A change the user asked for: apply it regardless of the record.
-    Force(TintState, f32),
+    /// A change the user asked for: apply it regardless of the record, and tell
+    /// whoever asked whether it landed.
+    Force {
+        state: TintState,
+        brightness: f32,
+        report: Option<Report>,
+        /// When the user asked, stamped as the request is queued rather than as
+        /// it runs — the two can be a whole password prompt apart, and it is the
+        /// asking that this has to date. See [`apply_now`].
+        requested_at: SystemTime,
+    },
     /// A scheduled change: apply it only if the screen doesn't already match.
     Reconcile(TintState, f32),
 }
 
 impl Request {
+    fn force(state: TintState, brightness: f32, report: Option<Report>) -> Self {
+        Request::Force {
+            state,
+            brightness,
+            report,
+            requested_at: SystemTime::now(),
+        }
+    }
+
     fn run(self) {
         match self {
-            Request::Force(state, brightness) => {
-                apply_now(state, brightness);
+            Request::Force {
+                state,
+                brightness,
+                report,
+                requested_at,
+            } => {
+                let ok = apply_now(state, brightness, requested_at);
+                if let Some(report) = report {
+                    report(ok);
+                }
             }
             Request::Reconcile(state, brightness) => {
                 reconcile(state, brightness);
@@ -542,7 +843,9 @@ fn worker() -> Option<&'static Mutex<Sender<Request>>> {
 fn run_worker(receiver: Receiver<Request>) {
     while let Ok(mut request) = receiver.recv() {
         // Only the most recent request matters — the earlier ones describe
-        // states the user has already moved on from.
+        // states the user has already moved on from. Dropping a superseded
+        // `Force` drops its report unanswered, which is the intended signal:
+        // its outcome would describe a screen that request never got to set.
         while let Ok(newer) = receiver.try_recv() {
             request = newer;
         }
@@ -587,10 +890,20 @@ fn lock_file() -> Option<File> {
         .ok()
 }
 
-/// Path of the file tracking what is currently on screen. It lives in the
-/// session's runtime directory because it describes *hardware* state, which
-/// does not survive a logout — a fresh session always starts with the neutral
-/// ramp the compositor programmed at modeset.
+/// Path of the file tracking what is currently on screen.
+///
+/// It lives in the session's runtime directory, which is **not** where it
+/// belongs. The record describes hardware state, and hardware state outlives the
+/// session: a gamma LUT survives a logout and a user switch, as the whole design
+/// of this app depends on it surviving a VT bounce. Only a full modeset clears
+/// it, which is why a resume from suspend needs handling and a logout does not
+/// get it for free.
+///
+/// So the record dies at logout while the thing it describes does not, and the
+/// next session — or the next *user* — starts out believing the screen is
+/// neutral when it is still warm. See [`assumed`]. Fixing that means recording
+/// the state somewhere session-independent and root-owned, written by the helper
+/// that actually set it; `/run` has exactly gamma's lifetime.
 fn applied_state_path() -> Option<PathBuf> {
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
     Some(PathBuf::from(runtime_dir).join("cosmic-nightlight-applied"))
@@ -709,10 +1022,17 @@ fn forget_applied() {
 /// What *this* process believes is on screen, consulted when the shared record
 /// is unavailable (no runtime directory, or writing it has failed).
 ///
-/// It starts as `Some(None)` — neutral — because gamma never survives a logout:
-/// a session begins showing the identity ramp the compositor programmed at
-/// modeset. That way a session that starts with the tint off matches straight
-/// away and costs no pointless reset bounce at login.
+/// It starts as `Some(None)` — neutral — so a session that starts with the tint
+/// off matches straight away and costs no pointless reset bounce at login.
+///
+/// That optimism is **known to be wrong** after a logout with the tint up: the
+/// LUT is still on the hardware, but a fresh session assumes neutral, agrees
+/// with itself, and never clears it. The screen stays warm, and for a second
+/// user with no copy of the app installed there is nothing to clear it with.
+/// Correcting it means learning the real state rather than assuming it — see
+/// [`applied_state_path`] — and the cost of getting it wrong in the other
+/// direction is a VT bounce on every single login, which is why this has not
+/// simply been flipped to `None`.
 fn assumed() -> &'static Mutex<Option<TintState>> {
     static ASSUMED: Mutex<Option<TintState>> = Mutex::new(Some(None));
     &ASSUMED
@@ -733,54 +1053,256 @@ static RECORD_UNUSABLE: AtomicBool = AtomicBool::new(false);
 /// ceiling that delay doubles up to.
 ///
 /// Something has to damp this: [`reconcile`] runs on a 15-second tick, and a
-/// failure that persists — no polkit authorization, displays asleep, the session
-/// not foreground — would otherwise re-spawn `pkexec` (and re-prompt, or
-/// re-bounce the VT) every tick, forever.
+/// failure that persists — displays asleep, no CRTCs up yet, the session not
+/// foreground — would otherwise re-spawn `pkexec` and re-bounce the VT every
+/// tick, forever. These are faults that tend to clear on their own, so the first
+/// retry is quick.
 const FIRST_RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(300);
 
+/// The same, for an apply the user refused: they dismissed the password prompt,
+/// or they are not in `wheel`/`sudo` and polkit turned them down.
+///
+/// This needs its own, far longer scale. The delays above are tuned for faults
+/// that fix themselves while nobody is watching, but a dismissed prompt fixes
+/// itself only when a person decides otherwise — and every retry re-opens the
+/// dialog they just closed. On the five-minute ceiling above, one dismissal at
+/// sunset costs around a hundred password prompts before sunrise. Starting at an
+/// hour and doubling to six turns that into two or three, which is a reminder
+/// rather than a siege.
+///
+/// It stays finite, and deliberately so: the prompt may have been dismissed by
+/// accident, or mistyped. Anything the user does themselves is faster than
+/// waiting it out, because neither route consults the backoff — the toggle goes
+/// through [`apply_now`], and the settings row through [`run_host_setup`].
+const FIRST_AUTH_RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
+const MAX_AUTH_RETRY_DELAY: Duration = Duration::from_secs(6 * 60 * 60);
+
 /// The apply we are currently backing off from, if any.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Backoff {
     /// The state that failed. A request for a *different* state is always worth
     /// trying immediately — the world has changed.
     state: TintState,
-    retry_at: Instant,
+    /// When it becomes worth trying again, on the **wall** clock, so the deadline
+    /// means the same thing to every process that reads it. The monotonic clock
+    /// cannot be shared: its zero is per-boot at best and its readings are not
+    /// comparable between processes at all.
+    ///
+    /// Wall clock is also the honest clock for what this measures. "Re-offer in
+    /// an hour" is a promise about the user's hour, and suspending the machine in
+    /// the middle of it should spend that hour, not pause it.
+    retry_at: SystemTime,
     delay: Duration,
+    /// What went wrong, which decides how far the record reaches. Only a refusal
+    /// speaks for the user, and so only a refusal can answer a request that was
+    /// made before it — see [`refused_since`] and [`covers`].
+    failure: Failure,
 }
 
+/// Path of the file recording the apply every process is backing off from.
+///
+/// A refusal is a fact about the *user* — they dismissed the dialog, or polkit
+/// will not authorize them at all — rather than about whichever process happened
+/// to be the one asking. So it has to be shared, for the same reason the applied
+/// record is: our processes all reconcile on the same tick and queue up on the
+/// apply lock behind each other.
+///
+/// Without this they each learned about a refusal only by earning their own. One
+/// click with the applet and the settings window both open put up two prompts:
+/// the first process asked and was refused, and the second — already blocked on
+/// the lock, and with nothing in the record to say the state had been refused
+/// rather than never tried — walked straight into pkexec the moment the lock came
+/// free. A success suppressed the duplicate and a refusal did not, which is why
+/// it only ever showed up before authenticating.
+///
+/// Lives beside the applied record and is read and written under the apply lock,
+/// so it needs no locking of its own.
+fn backoff_path() -> Option<PathBuf> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+    Some(PathBuf::from(runtime_dir).join("cosmic-nightlight-backoff"))
+}
+
+/// What *this* process is backing off from, consulted when the shared record is
+/// unavailable (no runtime directory, or writing it has failed) so that losing
+/// the file costs us the sharing rather than the damping.
 fn backoff() -> &'static Mutex<Option<Backoff>> {
     static BACKOFF: Mutex<Option<Backoff>> = Mutex::new(None);
     &BACKOFF
 }
 
+/// The backoff in force, preferring the shared record so that a refusal any of
+/// our processes collected counts for all of them.
+fn current_backoff() -> Option<Backoff> {
+    recorded_backoff().or_else(|| *backoff().lock().unwrap_or_else(|err| err.into_inner()))
+}
+
+fn recorded_backoff() -> Option<Backoff> {
+    let text = std::fs::read_to_string(backoff_path()?).ok()?;
+    parse_backoff(&text)
+}
+
 /// Whether applying `state` should be skipped for now after earlier failures.
 fn backing_off(state: TintState) -> bool {
-    let guard = backoff().lock().unwrap_or_else(|err| err.into_inner());
-    guard
-        .as_ref()
-        .is_some_and(|backoff| backoff.state == state && Instant::now() < backoff.retry_at)
+    current_backoff().is_some_and(|backoff| holds(&backoff, state, SystemTime::now()))
 }
 
-fn note_failure(state: TintState) {
-    let mut guard = backoff().lock().unwrap_or_else(|err| err.into_inner());
-    let delay = match guard.as_ref() {
-        // Still failing at the same state: wait twice as long as last time.
-        Some(previous) if previous.state == state => (previous.delay * 2).min(MAX_RETRY_DELAY),
-        _ => FIRST_RETRY_DELAY,
+/// Whether an authentication refusal has been recorded since `instant`.
+///
+/// This is what keeps one "no" from being spent more than once. Our processes
+/// queue privileged work up behind each other on the apply lock, so by the time
+/// a request reaches the front the user may already have turned down the prompt
+/// belonging to the request ahead of it — and that answer covers this one too,
+/// because it is the same credential being asked for either way.
+///
+/// Deliberately not keyed to the state: what was refused is the authentication,
+/// not the tint, so a request carrying a different temperature would put up the
+/// identical dialog and collect the identical answer.
+fn refused_since(instant: SystemTime) -> bool {
+    current_backoff().is_some_and(|backoff| answers_a_request_from(&backoff, instant))
+}
+
+/// Whether `backoff` is a refusal that also answers a request made at
+/// `requested_at`.
+///
+/// Split out so the ordering can be tested without a record on disk to arrange.
+fn answers_a_request_from(backoff: &Backoff, requested_at: SystemTime) -> bool {
+    // Only a person can answer for a person. An ordinary fault put no question
+    // in front of anyone, so it speaks for nothing but itself.
+    if backoff.failure != Failure::Auth {
+        return false;
+    }
+    // The deadline was set `delay` past the moment of the refusal, so stepping
+    // back by it recovers that moment without storing it twice.
+    backoff
+        .retry_at
+        .checked_sub(backoff.delay)
+        .is_some_and(|refused_at| refused_at >= requested_at)
+}
+
+/// Whether `backoff` speaks to a request for `state`.
+///
+/// An ordinary fault is a fact about what was attempted — a helper that rejected
+/// this tint may be perfectly happy with the next one — so it holds only against
+/// the state that hit it. A refusal is a fact about the user, and holds against
+/// every state: any privileged call raises the same dialog and gets the same
+/// answer, whatever tint it happens to be carrying.
+fn covers(backoff: &Backoff, state: TintState) -> bool {
+    backoff.failure == Failure::Auth || backoff.state == state
+}
+
+/// Whether `backoff` still stands against a request for `state` at `now`.
+///
+/// Split out so the wall clock can be supplied by a test rather than waited on.
+fn holds(backoff: &Backoff, state: TintState, now: SystemTime) -> bool {
+    if !covers(backoff, state) {
+        return false;
+    }
+    // `Err`, or a remainder of zero, means the deadline has been reached: the
+    // wait is over.
+    let Ok(remaining) = backoff.retry_at.duration_since(now) else {
+        return false;
     };
+    if remaining.is_zero() {
+        return false;
+    }
+    // A deadline further out than the longest wait we ever set cannot be one of
+    // ours — the clock has been stepped backwards under a record already written,
+    // by an NTP correction or a dual-boot leaving the RTC in local time. Left
+    // alone it would park the tint until the clock caught up, which for a year's
+    // step means forever. Treat it as expired and re-earn it if the failure is
+    // still there.
+    remaining <= MAX_AUTH_RETRY_DELAY
+}
+
+/// How long to wait after a failure, given how long we waited after the previous
+/// one at this same state (`None` if there wasn't one, or it was for a different
+/// state — a different state is always worth trying at once).
+///
+/// Clamped into *this* failure's range rather than carrying the last one's, so
+/// the two scales cannot leak into each other: a dismissed prompt following a
+/// few fast retries still waits the full hour, and an ordinary fault following a
+/// dismissal doesn't inherit the hours.
+fn retry_delay(previous: Option<Duration>, failure: Failure) -> Duration {
+    let (first, max) = match failure {
+        Failure::Auth => (FIRST_AUTH_RETRY_DELAY, MAX_AUTH_RETRY_DELAY),
+        Failure::Other => (FIRST_RETRY_DELAY, MAX_RETRY_DELAY),
+    };
+    match previous {
+        // Still failing the same way: wait twice as long as last time.
+        Some(previous) => (previous * 2).clamp(first, max),
+        None => first,
+    }
+}
+
+/// Records a failed apply, so the next attempt at the same state — from this
+/// process or any of the others — waits.
+///
+/// The previous delay is read back from the shared record too, so a failure that
+/// keeps happening doubles once per attempt rather than once per attempt *per
+/// process*, which would have three processes climbing three separate ladders.
+///
+/// Callers must hold the apply lock.
+fn note_failure(state: TintState, failure: Failure) {
+    let previous = current_backoff()
+        .filter(|backoff| covers(backoff, state))
+        .map(|backoff| backoff.delay);
+    let delay = retry_delay(previous, failure);
+
     eprintln!(
-        "backend: apply failed; retrying in {}s at the earliest",
+        "backend: apply failed ({failure:?}); retrying in {}s at the earliest",
         delay.as_secs()
     );
-    *guard = Some(Backoff {
+    store_backoff(Some(Backoff {
         state,
-        retry_at: Instant::now() + delay,
+        retry_at: SystemTime::now() + delay,
         delay,
-    });
+        failure,
+    }));
 }
 
+/// Records a refusal that came from the host setup's own prompt rather than from
+/// an apply, so the applies queued behind it are answered by it too.
+///
+/// The state recorded is immaterial and never consulted: a refusal holds against
+/// every state (see [`covers`]). It carries what is on screen so the log line
+/// reads sensibly.
+///
+/// Callers must hold the apply lock.
+fn note_auth_refusal() {
+    note_failure(applied().flatten(), Failure::Auth);
+}
+
+/// Clears the backoff: something just worked, so nothing is worth waiting out.
+///
+/// Callers must hold the apply lock.
 fn clear_backoff() {
-    *backoff().lock().unwrap_or_else(|err| err.into_inner()) = None;
+    store_backoff(None);
+}
+
+/// Writes `backoff` to both the shared record and this process's own copy.
+fn store_backoff(backoff_state: Option<Backoff>) {
+    *backoff().lock().unwrap_or_else(|err| err.into_inner()) = backoff_state;
+
+    let Some(path) = backoff_path() else {
+        return;
+    };
+    let result = match backoff_state {
+        Some(backoff) => std::fs::write(&path, format_backoff(&backoff)),
+        None => match std::fs::remove_file(&path) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        },
+    };
+    if let Err(err) = result {
+        eprintln!("backend: failed to record the apply backoff in {path:?}: {err}");
+        // Whatever is on disk now describes some older attempt, and a stale
+        // deadline is worse than none: it would hold every process off a state
+        // one of them may since have been asked for. Take it out of play and let
+        // each process fall back to its own copy, which is what they had before
+        // the record was shared.
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 /// Parses a recorded tint state, or `None` if the record is unreadable — which
@@ -800,9 +1322,99 @@ fn format_applied(state: TintState) -> String {
     }
 }
 
+/// Renders a backoff as `<state> <retry-at> <delay> <failure>`, the deadline in
+/// seconds since the epoch so it reads the same in every process.
+fn format_backoff(backoff: &Backoff) -> String {
+    let retry_at = backoff
+        .retry_at
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|since_epoch| since_epoch.as_secs())
+        .unwrap_or_default();
+    let failure = match backoff.failure {
+        Failure::Auth => "auth",
+        Failure::Other => "other",
+    };
+    format!(
+        "{} {retry_at} {} {failure}",
+        format_applied(backoff.state),
+        backoff.delay.as_secs()
+    )
+}
+
+/// Parses a recorded backoff, or `None` if the record is unreadable — which
+/// callers must treat as "nothing to wait for". Failing open is the right way
+/// round here: the cost is a retry that could have waited, where failing closed
+/// would park the tint on a record nobody can read.
+fn parse_backoff(text: &str) -> Option<Backoff> {
+    let mut fields = text.split_whitespace();
+    let state = parse_applied(fields.next()?)?;
+    let retry_at = SystemTime::UNIX_EPOCH + Duration::from_secs(fields.next()?.parse().ok()?);
+    let delay = Duration::from_secs(fields.next()?.parse().ok()?);
+    let failure = match fields.next()? {
+        "auth" => Failure::Auth,
+        "other" => Failure::Other,
+        _ => return None,
+    };
+    Some(Backoff {
+        state,
+        retry_at,
+        delay,
+        failure,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::config::Schedule;
+
+    /// The reinstall case: the config outlives the flatpak, so a schedule comes
+    /// back with no helper under it and must not be left standing to prompt for
+    /// a password at sunset with nobody there.
+    #[test]
+    fn a_schedule_without_a_setup_is_parked_not_dropped() {
+        assert_eq!(
+            deferral(false, Schedule::SunsetToSunrise, None),
+            Some(ScheduleDeferral {
+                schedule: Schedule::Manual,
+                deferred: Some(Schedule::SunsetToSunrise),
+            })
+        );
+    }
+
+    /// The parked schedule is the user's, so completing the setup gives it back
+    /// rather than making them notice it was turned off and pick it again.
+    #[test]
+    fn completing_the_setup_restores_the_parked_schedule() {
+        assert_eq!(
+            deferral(true, Schedule::Manual, Some(Schedule::SunsetToSunrise)),
+            Some(ScheduleDeferral {
+                schedule: Schedule::SunsetToSunrise,
+                deferred: None,
+            })
+        );
+    }
+
+    /// Every tick runs this, so anything already settled must write nothing —
+    /// otherwise each pass would rewrite the same keys and wake the config watch
+    /// in the other two processes.
+    #[test]
+    fn a_settled_schedule_writes_nothing() {
+        assert_eq!(deferral(false, Schedule::Manual, None), None);
+        assert_eq!(deferral(true, Schedule::SunsetToSunrise, None), None);
+        assert_eq!(deferral(true, Schedule::Manual, None), None);
+    }
+
+    /// A parked schedule stays parked for as long as the setup is missing; it is
+    /// only the live schedule that gets taken away.
+    #[test]
+    fn a_parked_schedule_survives_ticks_without_a_setup() {
+        assert_eq!(
+            deferral(false, Schedule::Manual, Some(Schedule::SunsetToSunrise)),
+            None
+        );
+    }
 
     #[test]
     fn applied_state_round_trips() {
@@ -822,5 +1434,253 @@ mod tests {
         assert_eq!(parse_applied(""), None);
         assert_eq!(parse_applied("garbage"), None);
         assert_eq!(parse_applied("-1"), None);
+    }
+
+    /// Replays the backoff against the reconcile tick, counting how many times a
+    /// persistent failure would reach `pkexec` over `hours`. For a `Failure::Auth`
+    /// that count is a count of password prompts put in front of the user.
+    fn attempts_over(hours: u64, failure: Failure) -> usize {
+        let mut elapsed = Duration::ZERO;
+        let mut delay: Option<Duration> = None;
+        let mut next_attempt = Duration::ZERO;
+        let mut attempts = 0;
+
+        while elapsed < Duration::from_secs(hours * 60 * 60) {
+            if elapsed >= next_attempt {
+                attempts += 1;
+                let waited = retry_delay(delay, failure);
+                next_attempt = elapsed + waited;
+                delay = Some(waited);
+            }
+            elapsed += crate::TICK_INTERVAL;
+        }
+        attempts
+    }
+
+    /// A fault that clears on its own — a display asleep, no CRTCs up yet — is
+    /// worth retrying briskly, and nobody sees the retries.
+    #[test]
+    fn an_ordinary_failure_retries_briskly() {
+        assert_eq!(retry_delay(None, Failure::Other), FIRST_RETRY_DELAY);
+        assert!(attempts_over(8, Failure::Other) > 90);
+    }
+
+    /// The regression this exists for: on the ordinary schedule, one dismissed
+    /// password prompt at sunset reopened the dialog about a hundred times before
+    /// sunrise.
+    #[test]
+    fn a_dismissed_prompt_does_not_besiege_the_user() {
+        assert_eq!(retry_delay(None, Failure::Auth), FIRST_AUTH_RETRY_DELAY);
+        let prompts = attempts_over(8, Failure::Auth);
+        assert!(
+            (1..=4).contains(&prompts),
+            "a dismissed prompt should be re-offered a couple of times a night, got {prompts}"
+        );
+    }
+
+    /// Each failure is damped on its own scale, however the two interleave, so a
+    /// dismissal can never be retried on the five-second one.
+    #[test]
+    fn the_two_scales_do_not_leak_into_each_other() {
+        // A dismissal after a run of fast retries still waits the full hour.
+        assert_eq!(
+            retry_delay(Some(FIRST_RETRY_DELAY), Failure::Auth),
+            FIRST_AUTH_RETRY_DELAY
+        );
+        assert_eq!(
+            retry_delay(Some(MAX_RETRY_DELAY), Failure::Auth),
+            FIRST_AUTH_RETRY_DELAY
+        );
+        // An ordinary fault after a dismissal doesn't inherit the hours.
+        assert_eq!(
+            retry_delay(Some(MAX_AUTH_RETRY_DELAY), Failure::Other),
+            MAX_RETRY_DELAY
+        );
+    }
+
+    /// A fixed, arbitrary "now" for the backoff tests, so they read the same
+    /// whenever they run.
+    fn t0() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_753_000_000)
+    }
+
+    /// A refusal recorded at [`t0`], as `note_failure` would write it.
+    fn refusal_at(now: SystemTime, state: TintState) -> Backoff {
+        Backoff {
+            state,
+            retry_at: now + FIRST_AUTH_RETRY_DELAY,
+            delay: FIRST_AUTH_RETRY_DELAY,
+            failure: Failure::Auth,
+        }
+    }
+
+    /// A backoff has to survive the trip through the file that shares it, or the
+    /// process that reads it back learns nothing and prompts again.
+    #[test]
+    fn a_backoff_round_trips() {
+        for state in [None, Some(2500), Some(6500)] {
+            for failure in [Failure::Auth, Failure::Other] {
+                let backoff = Backoff {
+                    state,
+                    // Truncated to the whole second the format stores.
+                    retry_at: t0(),
+                    delay: FIRST_AUTH_RETRY_DELAY,
+                    failure,
+                };
+                assert_eq!(parse_backoff(&format_backoff(&backoff)), Some(backoff));
+            }
+        }
+    }
+
+    /// An unreadable record must not park the tint: nothing to wait for beats
+    /// waiting on something nobody can read.
+    #[test]
+    fn unreadable_backoffs_are_ignored() {
+        assert_eq!(parse_backoff(""), None);
+        assert_eq!(parse_backoff("garbage"), None);
+        // Truncated writes, and a record from a build that wrote a format we no
+        // longer understand.
+        assert_eq!(parse_backoff("3500"), None);
+        assert_eq!(parse_backoff("3500 1753000000"), None);
+        assert_eq!(parse_backoff("3500 1753000000 3600"), None);
+        assert_eq!(parse_backoff("off notanumber 3600 auth"), None);
+        assert_eq!(parse_backoff("3500 1753000000 3600 sideways"), None);
+    }
+
+    /// The two-GUI bug. One click with the applet and the settings window open:
+    /// the first process is refused and records it, and the second — sitting on
+    /// the apply lock behind it — must find that record rather than putting the
+    /// same dialog up again.
+    #[test]
+    fn a_refusal_one_process_collected_holds_off_the_others() {
+        let refused = refusal_at(t0(), Some(3500));
+        // What the second process reads back a moment later.
+        let shared = parse_backoff(&format_backoff(&refused)).expect("a record we just wrote");
+
+        assert!(holds(&shared, Some(3500), t0() + Duration::from_secs(1)));
+        // Still holding most of an hour later, and released after it.
+        assert!(holds(
+            &shared,
+            Some(3500),
+            t0() + Duration::from_secs(3_500)
+        ));
+        assert!(!holds(&shared, Some(3500), t0() + FIRST_AUTH_RETRY_DELAY));
+    }
+
+    /// An ordinary fault is specific to what was attempted, so a request for a
+    /// different tint is a different question and worth asking at once.
+    #[test]
+    fn an_ordinary_fault_does_not_hold_off_a_different_state() {
+        let failed = Backoff {
+            state: Some(3500),
+            retry_at: t0() + FIRST_RETRY_DELAY,
+            delay: FIRST_RETRY_DELAY,
+            failure: Failure::Other,
+        };
+
+        assert!(holds(&failed, Some(3500), t0()));
+        assert!(!holds(&failed, Some(4000), t0()));
+        assert!(!holds(&failed, None, t0()));
+    }
+
+    /// A refusal is not: what was turned down is the authentication, and every
+    /// state asks for it the same way. This is what stops a temperature change
+    /// made while the prompt was up from spending a second prompt on the tint
+    /// the user just declined.
+    #[test]
+    fn a_refusal_holds_off_every_state() {
+        let refused = refusal_at(t0(), Some(3500));
+
+        assert!(holds(&refused, Some(3500), t0()));
+        assert!(holds(&refused, Some(4000), t0()));
+        assert!(holds(&refused, None, t0()));
+    }
+
+    /// The pile-up this exists to stop. With a password prompt already on
+    /// screen, changing the temperature, the brightness, or the schedule queues
+    /// more privileged work behind it — all of it decided before the user had
+    /// seen any answer. Cancelling the prompt answers the lot.
+    #[test]
+    fn a_refusal_answers_everything_queued_before_it() {
+        let clicked_toggle = t0();
+        let changed_temperature = t0() + Duration::from_secs(3);
+        let picked_a_schedule = t0() + Duration::from_secs(6);
+        // The user cancels a few seconds after that, and the refusal is recorded
+        // then rather than when the toggle was clicked.
+        let refused = refusal_at(t0() + Duration::from_secs(9), Some(3500));
+
+        for (requested_at, what) in [
+            (clicked_toggle, "the toggle"),
+            (changed_temperature, "the temperature"),
+            (picked_a_schedule, "the schedule"),
+        ] {
+            assert!(
+                answers_a_request_from(&refused, requested_at),
+                "{what} was asked for before the refusal, so the refusal answers it"
+            );
+        }
+    }
+
+    /// The other half of the same rule. Acting *after* seeing the prompt close
+    /// is the user trying again, which is exactly what the backoff must never
+    /// swallow — a dismissal can be a slip, and clicking the toggle again has to
+    /// work rather than going quiet for an hour.
+    #[test]
+    fn a_refusal_does_not_answer_a_request_made_after_it() {
+        let refused = refusal_at(t0(), Some(3500));
+
+        assert!(!answers_a_request_from(
+            &refused,
+            t0() + Duration::from_secs(1)
+        ));
+    }
+
+    /// An ordinary fault never showed the user anything, so it cannot stand in
+    /// for an answer from them — the queued work behind it is still worth doing.
+    #[test]
+    fn an_ordinary_fault_answers_nothing() {
+        let failed = Backoff {
+            failure: Failure::Other,
+            ..refusal_at(t0() + Duration::from_secs(9), Some(3500))
+        };
+
+        assert!(!answers_a_request_from(&failed, t0()));
+    }
+
+    /// The record carries a wall-clock deadline, so a clock stepped backwards
+    /// underneath it must not park the tint until the clock catches up.
+    #[test]
+    fn a_deadline_beyond_any_we_set_is_treated_as_expired() {
+        let stepped_back = Backoff {
+            retry_at: t0() + MAX_AUTH_RETRY_DELAY + Duration::from_secs(1),
+            delay: MAX_AUTH_RETRY_DELAY,
+            ..refusal_at(t0(), Some(3500))
+        };
+
+        assert!(!holds(&stepped_back, Some(3500), t0()));
+        // The longest wait we do set is still honored, so the clamp cannot eat a
+        // legitimate backoff.
+        assert!(holds(
+            &Backoff {
+                retry_at: t0() + MAX_AUTH_RETRY_DELAY,
+                ..stepped_back
+            },
+            Some(3500),
+            t0()
+        ));
+    }
+
+    /// Both scales have to actually stop growing, or a long-lived session ends up
+    /// never retrying at all.
+    #[test]
+    fn both_scales_are_bounded() {
+        let mut delay = FIRST_RETRY_DELAY;
+        let mut auth = FIRST_AUTH_RETRY_DELAY;
+        for _ in 0..40 {
+            delay = retry_delay(Some(delay), Failure::Other);
+            auth = retry_delay(Some(auth), Failure::Auth);
+        }
+        assert_eq!(delay, MAX_RETRY_DELAY);
+        assert_eq!(auth, MAX_AUTH_RETRY_DELAY);
     }
 }

@@ -55,6 +55,40 @@ pub enum Message {
     RefreshInit,
     ConfigUpdated(config::Settings),
     Tick,
+    /// A toggle's apply came back. `previous` is the override to fall back to
+    /// if it didn't land.
+    ToggleFinished {
+        previous: config::Override,
+        applied: bool,
+    },
+}
+
+/// Applies a toggle the user flipped, and reports back so the toggle can be put
+/// where the screen actually ended up. See the settings window's twin.
+///
+/// A superseded apply answers with nothing at all — the channel is dropped — and
+/// that must not read as a failure, because the request that superseded it is
+/// the one describing the screen. So "no answer" reports success, leaving the
+/// toggle as the user set it and deferring to the newer apply's own report.
+fn apply_toggle(
+    state: backend::TintState,
+    brightness: f32,
+    previous: config::Override,
+) -> Task<Message> {
+    let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
+    backend::apply_in_background_reporting(
+        state,
+        brightness,
+        Box::new(move |applied| {
+            let _ = sender.send(applied);
+        }),
+    );
+    cosmic::task::future(async move {
+        Message::ToggleFinished {
+            previous,
+            applied: receiver.await.unwrap_or(true),
+        }
+    })
 }
 
 impl cosmic::Application for NightLightApplet {
@@ -116,12 +150,25 @@ impl cosmic::Application for NightLightApplet {
                 // Apply the new override locally as well as persisting it, so
                 // the toggle and icon respond now rather than after the config
                 // watch round-trips back to us.
+                let previous = self.settings.tint_override;
                 self.settings.tint_override = new_override;
                 config::store_override(&self.config, new_override);
-                backend::apply_in_background(
+                return apply_toggle(
                     on.then_some(self.temperature as u32),
                     self.settings.brightness as f32,
+                    previous,
                 );
+            }
+            Message::ToggleFinished { previous, applied } => {
+                // The apply is what makes a toggle true. When it doesn't land —
+                // the password prompt dismissed, most often — leaving the toggle
+                // and the icon where the user clicked would have them describing
+                // a screen that never changed, and would leave a stored override
+                // to re-prompt from at the next launch. So put both back.
+                if !applied {
+                    self.settings.tint_override = previous;
+                    config::store_override(&self.config, previous);
+                }
             }
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
@@ -156,7 +203,7 @@ impl cosmic::Application for NightLightApplet {
                 if !self.dragging {
                     self.temperature = settings.temperature as f32;
                 }
-                self.reconcile();
+                self.show_current();
             }
             Message::Tick => {
                 // Re-renders so the icon and the "On/Off Until …" line pick up
@@ -250,8 +297,22 @@ impl NightLightApplet {
     /// without this the applet would draw a moon at sunset — correctly, that is
     /// what the schedule asks for — while the screen stayed cold because no
     /// daemon happened to be running.
+    ///
+    /// Belongs on the tick and nowhere else. Both steps persist what they decide,
+    /// and a config write wakes every watcher — including this process's own — so
+    /// deciding in response to a config change would answer a write with a write.
+    /// The tick bounds that to once per [`TICK_INTERVAL`] no matter how the inputs
+    /// behave; see [`show_current`](Self::show_current) for the change-driven half.
     fn reconcile(&mut self) {
+        backend::defer_schedule_without_setup(&self.config, &mut self.settings);
         config::expire_override(&self.config, &mut self.settings);
+        self.show_current();
+    }
+
+    /// Puts the settings as they stand on the screen. Decides nothing and writes
+    /// nothing, so it is safe to run on every config change — which is where the
+    /// applet picks up a toggle or a slider moved in the settings window.
+    fn show_current(&self) {
         backend::reconcile_in_background(
             self.settings.tint_on().then_some(self.settings.temperature),
             self.settings.brightness as f32,

@@ -110,6 +110,9 @@ pub struct SettingsWindow {
     setup_busy: bool,
     /// Why the last attempt didn't take. Cleared when another one starts.
     setup_error: Option<String>,
+    /// Set while a setup is running on behalf of a schedule the user just
+    /// picked, holding the schedule to fall back to if it doesn't land.
+    schedule_revert: Option<Schedule>,
 }
 
 #[derive(Clone, Debug)]
@@ -123,10 +126,45 @@ pub enum Message {
     BrightnessCommitted,
     ConfigUpdated(config::Settings),
     Tick,
+    /// A toggle's apply came back. `previous` is the override to fall back to
+    /// if it didn't land.
+    ToggleFinished {
+        previous: config::Override,
+        applied: bool,
+    },
     /// The setup row's button. Starts the one-time host setup.
     RunHostSetup,
     /// That setup finished, one way or the other.
     HostSetupFinished(Result<(), String>),
+}
+
+/// Applies a toggle the user flipped, and reports back so the toggle can be put
+/// where the screen actually ended up.
+///
+/// A superseded apply answers with nothing at all — the channel is dropped — and
+/// that must not read as a failure, because the request that superseded it is
+/// the one describing the screen. So the "no answer" case reports success, which
+/// leaves the toggle as the user set it and defers to the newer apply's own
+/// report.
+fn apply_toggle(
+    state: backend::TintState,
+    brightness: f32,
+    previous: config::Override,
+) -> Task<Message> {
+    let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
+    backend::apply_in_background_reporting(
+        state,
+        brightness,
+        Box::new(move |applied| {
+            let _ = sender.send(applied);
+        }),
+    );
+    cosmic::task::future(async move {
+        Message::ToggleFinished {
+            previous,
+            applied: receiver.await.unwrap_or(true),
+        }
+    })
 }
 
 impl cosmic::Application for SettingsWindow {
@@ -163,6 +201,7 @@ impl cosmic::Application for SettingsWindow {
             setup: backend::host_setup(),
             setup_busy: false,
             setup_error: None,
+            schedule_revert: None,
         };
 
         (app, Task::none())
@@ -171,8 +210,24 @@ impl cosmic::Application for SettingsWindow {
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
             Message::ScheduleSelected(index) => {
-                self.settings.schedule = Schedule::ALL[index];
-                config::store_schedule(&self.config, self.settings.schedule);
+                let chosen = Schedule::ALL[index];
+                // A schedule is a promise to change the screen while nobody is
+                // watching — which is the one moment a password prompt is worst,
+                // because there is no one there to answer it. So this is the one
+                // place worth asking for the setup up front rather than letting
+                // it ride along: the payment comes due at 9pm otherwise.
+                //
+                // Everything else stays ungated. The app still works unset-up;
+                // it is scheduling specifically that cannot.
+                if chosen == Schedule::SunsetToSunrise && self.setup != backend::HostSetup::Ready {
+                    let previous = self.settings.schedule;
+                    // Show the choice while the prompt is up, but don't persist
+                    // it until the setup that makes it work has actually landed.
+                    self.settings.schedule = chosen;
+                    return self.start_host_setup(Some(previous));
+                }
+                self.settings.schedule = chosen;
+                config::store_schedule(&self.config, chosen);
             }
             Message::TimeSelected(bound, part) => {
                 let current = match bound {
@@ -203,12 +258,25 @@ impl cosmic::Application for SettingsWindow {
                 } else {
                     config::Override::Off
                 };
+                let previous = self.settings.tint_override;
                 self.settings.tint_override = new_override;
                 config::store_override(&self.config, new_override);
-                backend::apply_in_background(
+                return apply_toggle(
                     on.then_some(self.temperature as u32),
                     self.settings.brightness as f32,
+                    previous,
                 );
+            }
+            Message::ToggleFinished { previous, applied } => {
+                // The apply is what makes a toggle true. When it doesn't land —
+                // the password prompt dismissed, most often — leaving the toggle
+                // where the user clicked would have it describing a screen that
+                // never changed, and would leave a stored override to re-prompt
+                // from at the next launch. So put both back.
+                if !applied {
+                    self.settings.tint_override = previous;
+                    config::store_override(&self.config, previous);
+                }
             }
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
@@ -238,33 +306,28 @@ impl cosmic::Application for SettingsWindow {
                 if !self.brightness_dragging {
                     self.brightness = settings.brightness as f32;
                 }
-                self.reconcile();
+                self.show_current();
             }
             Message::Tick => {
                 // Re-renders so the toggle and the "On/Off Until …" line pick up
                 // the schedule crossing a boundary while the window sits open,
                 // and puts that verdict on the screen.
                 self.reconcile();
+                // The setup normally happens without this row being touched — it
+                // rides along on the first tint change, which the toggle right
+                // above can be what triggers. So re-derive the row rather than
+                // waiting on its own button: otherwise it sits there still
+                // offering a setup that has already happened, and clicking it
+                // costs a password prompt for nothing.
+                //
+                // Cheap: the backend holds the answer and only re-probes the host
+                // after something it ran could have changed it.
+                if !self.setup_busy {
+                    self.setup = backend::host_setup();
+                }
             }
             Message::RunHostSetup => {
-                self.setup_busy = true;
-                self.setup_error = None;
-
-                // The setup blocks on a polkit password dialog, so it runs on a
-                // thread of its own and reports back through a channel the
-                // runtime can await. Doing it inline would freeze the window for
-                // as long as the prompt was up.
-                let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
-                std::thread::spawn(move || {
-                    let _ = sender.send(backend::run_host_setup());
-                });
-                return cosmic::task::future(async move {
-                    Message::HostSetupFinished(
-                        receiver
-                            .await
-                            .unwrap_or_else(|_| Err("the setup did not report back".to_string())),
-                    )
-                });
+                return self.start_host_setup(None);
             }
             Message::HostSetupFinished(result) => {
                 self.setup_busy = false;
@@ -273,6 +336,18 @@ impl cosmic::Application for SettingsWindow {
                 // what we wanted: it re-probes the host, so the row disappears
                 // only once there is genuinely a whitelisted helper to find.
                 self.setup = backend::host_setup();
+
+                // A schedule waiting on this setup is only real once the setup
+                // is. Commit it if the helper is now there; otherwise put the
+                // dropdown back, so the user is never left with a schedule that
+                // would ask for a password at sunset with nobody watching.
+                if let Some(previous) = self.schedule_revert.take() {
+                    if self.setup == backend::HostSetup::Ready {
+                        config::store_schedule(&self.config, self.settings.schedule);
+                    } else {
+                        self.settings.schedule = previous;
+                    }
+                }
             }
         }
 
@@ -414,13 +489,41 @@ impl cosmic::Application for SettingsWindow {
 }
 
 impl SettingsWindow {
+    /// Starts the one-time host setup.
+    ///
+    /// `schedule_revert` carries the schedule to fall back to when the setup was
+    /// asked for by picking one, so a dismissed prompt doesn't leave a schedule
+    /// standing that has no way to act on itself.
+    ///
+    /// The setup blocks on a polkit password dialog, so it runs on a thread of
+    /// its own and reports back through a channel the runtime can await. Doing
+    /// it inline would freeze the window for as long as the prompt was up.
+    fn start_host_setup(&mut self, schedule_revert: Option<Schedule>) -> Task<Message> {
+        self.setup_busy = true;
+        self.setup_error = None;
+        self.schedule_revert = schedule_revert;
+
+        let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(backend::run_host_setup());
+        });
+        cosmic::task::future(async move {
+            Message::HostSetupFinished(
+                receiver
+                    .await
+                    .unwrap_or_else(|_| Err("the setup did not report back".to_string())),
+            )
+        })
+    }
+
     /// The one-time host setup offer, or `None` when there is nothing to offer.
     ///
-    /// Deliberately not a wizard and not modal. The app already works without
-    /// this — it just pays a password prompt per change — so gating startup on it
-    /// would misrepresent what it does and put a chore in front of a night light.
-    /// It is worded as the benefit ("skip the password prompt") rather than as a
-    /// requirement, and it disappears on its own once the setup has taken.
+    /// Deliberately not a wizard and not modal. The first change asks for the
+    /// permission on its own, so gating startup on it would put a chore in front
+    /// of a night light for nothing; this row is the way back for a user who
+    /// dismissed that prompt. It is kept to two short lines — what the permission
+    /// is for, and what skipping it costs — and it disappears on its own once the
+    /// setup has taken.
     ///
     /// Its existence is derived from the backend's view of the host, never
     /// stored, so there is no "already dismissed" flag to go stale — and it comes
@@ -428,15 +531,19 @@ impl SettingsWindow {
     fn host_setup_row(&self) -> Option<Element<'_, Message>> {
         let (title, description) = match self.setup {
             backend::HostSetup::Ready => return None,
+            // Says *why* the password is being asked for, because the place the
+            // question actually gets asked cannot. pkexec picks its wording from
+            // the program's path, and a flatpak's path carries the commit hash,
+            // so no polkit action can be written to match it — see
+            // docs/flatpak-design.md. This row is the only place the reason fits.
             backend::HostSetup::Needed => (
-                "Skip the password prompt",
-                "Night Light asks for your password every time it changes the screen. \
-                 A one-time setup installs a small helper on the system so it doesn't have to.",
+                "Set up Night Light",
+                "Turning on the night light needs a one-time system permission.",
             ),
             backend::HostSetup::Outdated => (
                 "Update the installed helper",
-                "The helper on this system was installed by an older version and no longer \
-                 understands this one. Running the setup again replaces it.",
+                "The helper Night Light installed was put there by an older version and no \
+                 longer understands this one. Running the setup again replaces it.",
             ),
         };
 
@@ -486,8 +593,29 @@ impl SettingsWindow {
     /// schedule's current verdict on the screen unless it is already showing it —
     /// so setting a schedule here takes effect straight away whether or not the
     /// daemon is running. See the applet's equivalent.
+    ///
+    /// Belongs on the tick and nowhere else, for the reason spelled out on the
+    /// applet's `reconcile`: both steps persist what they decide, and a config
+    /// write wakes every watcher, so deciding in response to a config change
+    /// answers a write with a write. [`show_current`](Self::show_current) is the
+    /// half that is safe to run on a change.
     fn reconcile(&mut self) {
+        // Not while a setup is in flight: `ScheduleSelected` shows the chosen
+        // schedule for as long as the password prompt is up without persisting
+        // it, and parking it here would blank the dropdown under the user while
+        // they were still answering for it. `HostSetupFinished` settles that
+        // choice either way, and the next tick picks up from there.
+        if !self.setup_busy {
+            backend::defer_schedule_without_setup(&self.config, &mut self.settings);
+        }
         config::expire_override(&self.config, &mut self.settings);
+        self.show_current();
+    }
+
+    /// Puts the settings as they stand on the screen. Decides nothing and writes
+    /// nothing, so it is safe to run on every config change — which is where the
+    /// window picks up a toggle flipped from the applet.
+    fn show_current(&self) {
         backend::reconcile_in_background(
             self.settings.tint_on().then_some(self.settings.temperature),
             self.settings.brightness as f32,

@@ -5,9 +5,10 @@
 //! Runs an indefinite loop that re-reads the shared [`config`] every
 //! [`TICK_INTERVAL`] and reconciles the screen against it.
 //!
-//! Each pass is the same pair of calls the applet and the settings window make on
-//! their own tick — [`config::expire_override`] then [`backend::reconcile`] — so
-//! the schedule is honored whenever *any* part of the app is running. This mode
+//! Each pass is the same sequence of calls the applet and the settings window
+//! make on their own tick — [`backend::defer_schedule_without_setup`], then
+//! [`config::expire_override`], then [`backend::reconcile`] — so the schedule is
+//! honored whenever *any* part of the app is running. This mode
 //! adds no behavior of its own; it exists only to cover the case where none of
 //! the GUIs is running, which for most people never happens because the applet
 //! sits on the panel. It is not installed or enabled by default: see the shipped
@@ -46,6 +47,9 @@ pub fn run() {
 
     loop {
         let mut settings = config::Settings::load_from(&handler);
+        // Before the override expiry, which reads the schedule to decide whether
+        // the override has been caught up to.
+        backend::defer_schedule_without_setup(&handler, &mut settings);
         config::expire_override(&handler, &mut settings);
         let desired = settings.tint_on().then_some(settings.temperature);
 
