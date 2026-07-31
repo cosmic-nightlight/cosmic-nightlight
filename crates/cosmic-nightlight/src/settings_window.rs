@@ -290,7 +290,16 @@ impl cosmic::Application for SettingsWindow {
         let tint_on = self.settings.tint_on();
 
         let night_light = widget::settings::section()
-            .title("Night Light")
+            // `title` is just `header` with a heading in it, so building the
+            // header by hand hangs the flicker note off the section instead of
+            // off a row. Every control below it flickers, and the toggle already
+            // spends its description on the schedule status.
+            .header(
+                widget::Column::new()
+                    .spacing(2)
+                    .push(widget::text::heading("Night Light"))
+                    .push(widget::text::caption(config::FLICKER_NOTE)),
+            )
             .add(
                 widget::settings::item::builder("Night Light")
                     .description(config::status_text(&self.settings, tint_on))
@@ -301,7 +310,6 @@ impl cosmic::Application for SettingsWindow {
                     "Temperature: {}K",
                     self.temperature as i32
                 ))
-                .description(config::FLICKER_NOTE)
                 .control(
                     widget::slider(
                         2500.0..=6500.0,

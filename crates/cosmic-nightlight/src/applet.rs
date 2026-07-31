@@ -279,6 +279,10 @@ impl NightLightApplet {
             .width(Length::Fixed(200.0)),
         );
 
+        // The note is a footnote to the controls above it, not to the slider it
+        // happens to follow — the toggle flickers just as much. Temperature is
+        // the last control, so riding along at the bottom of its column puts the
+        // caption under the group without the padding a row of its own would add.
         let temperature = cosmic::widget::Column::new()
             .spacing(2)
             .push(temperature_row)
@@ -296,12 +300,14 @@ impl NightLightApplet {
         // dividers between sections. The column's vertical padding gives the
         // breathing room above the first row and below the last that the native
         // applets have.
+        //
+        // Only one divider, and it separates the controls from the link out to
+        // the settings window. The toggle and the temperature are one group —
+        // both are night light controls and both are covered by the note at the
+        // foot of the group, which a divider between them would fence off.
         cosmic::widget::Column::new()
             .padding([cosmic::theme::spacing().space_s, 0])
             .push(cosmic::applet::padded_control(toggle))
-            .push(cosmic::applet::padded_control(
-                widget::divider::horizontal::default(),
-            ))
             .push(cosmic::applet::padded_control(temperature))
             .push(cosmic::applet::padded_control(
                 widget::divider::horizontal::default(),
