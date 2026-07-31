@@ -277,6 +277,14 @@ impl cosmic::Application for SettingsWindow {
                     self.settings.tint_override = previous;
                     config::store_override(&self.config, previous);
                 }
+                // That apply is the likeliest thing ever to have run the setup —
+                // it rides along on the first tint change, and turning the night
+                // light on is what most people's first one is. Ask again here
+                // rather than leaving it to the tick, so the row goes the moment
+                // the screen turns amber instead of up to fifteen seconds later,
+                // which reads as the setup having failed and invites a click that
+                // costs a second password prompt.
+                self.setup = backend::host_setup();
             }
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
@@ -320,8 +328,10 @@ impl cosmic::Application for SettingsWindow {
                 // offering a setup that has already happened, and clicking it
                 // costs a password prompt for nothing.
                 //
-                // Cheap: the backend holds the answer and only re-probes the host
-                // after something it ran could have changed it.
+                // The backend re-probes the host on each of these until it finds
+                // the setup done, after which it answers from memory. So the cost
+                // is three `flatpak-spawn`s a tick, and only for as long as there
+                // is genuinely still something to offer.
                 if !self.setup_busy {
                     self.setup = backend::host_setup();
                 }

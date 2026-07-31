@@ -82,31 +82,103 @@ fn in_flatpak() -> bool {
     *IN_FLATPAK.get_or_init(|| std::path::Path::new("/.flatpak-info").exists())
 }
 
-/// Runs `test -x <path>` on the host, for probing paths our own filesystem view
-/// cannot see. Any failure to even launch the probe counts as "not there".
-fn host_has_executable(path: &str) -> bool {
+/// Runs `test <flag> <path>` on the host, for probing paths our own filesystem
+/// view cannot see. Any failure to even launch the probe counts as "no".
+fn host_test(flag: &str, path: &str) -> bool {
     Command::new("flatpak-spawn")
-        .args(["--host", "test", "-x", path])
+        .args(["--host", "test", flag, path])
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+/// Whether the host has something to run at `path`.
+fn host_has_executable(path: &str) -> bool {
+    host_test("-x", path)
 }
 
 /// As [`host_has_executable`], for a file that is meant to be read rather than
 /// run — the polkit rule is `0644`, so `test -x` would miss it.
 fn host_has_file(path: &str) -> bool {
-    Command::new("flatpak-spawn")
-        .args(["--host", "test", "-f", path])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    host_test("-f", path)
+}
+
+/// Whether `dir` is a directory on the host. Answerable even about one closed to
+/// us, since stat-ing a directory needs search permission on its parent rather
+/// than on the directory itself.
+fn host_has_dir(dir: &str) -> bool {
+    host_test("-d", dir)
+}
+
+/// Whether the host lets *us* look inside `dir`. On a directory the execute bit
+/// is search permission, which is what every stat of a path below it needs.
+fn host_can_search(dir: &str) -> bool {
+    host_test("-x", dir)
+}
+
+/// What looking for one polkit rule turned up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuleProbe {
+    /// The rule is there.
+    Present,
+    /// It is not: the directory that would hold it is open to us, and does not.
+    Absent,
+    /// No answer. That directory cannot be searched from here, so a rule sitting
+    /// in it looks exactly like one that was never installed.
+    Unreadable,
+}
+
+/// Looks for one polkit rule on the host, keeping "not there" apart from
+/// "cannot look".
+///
+/// `test -f` needs search permission on every directory along the way and
+/// answers false when it is missing either the file or the permission — two
+/// results that mean opposite things to a caller, which is why they cannot be
+/// left folded together here.
+fn probe_rule(path: &str) -> RuleProbe {
+    if host_has_file(path) {
+        return RuleProbe::Present;
+    }
+    let Some(dir) = std::path::Path::new(path)
+        .parent()
+        .and_then(std::path::Path::to_str)
+    else {
+        return RuleProbe::Absent;
+    };
+    // A directory that is there but closed to us is the case this exists for. One
+    // that is not there at all holds no rule and is a genuine `Absent`; `test -x`
+    // alone cannot tell those apart, since both come back false.
+    if host_has_dir(dir) && !host_can_search(dir) {
+        return RuleProbe::Unreadable;
+    }
+    RuleProbe::Absent
 }
 
 /// Whether the host carries the rule that makes the whitelisted helper paths
 /// password-less. Without it those paths are just ordinary programs, and pkexec
 /// prompts for every apply.
+///
+/// A rule we cannot see counts as installed. That is not optimism, it is the only
+/// safe way round. Polkit's own `/etc/polkit-1/rules.d` — where both the setup and
+/// `install.sh` write — is `0750 root:polkitd` across the Debian family, so the
+/// probe cannot see a rule sitting in it on very nearly every host this build runs
+/// on. And being wrong in that direction is far the more expensive of the two:
+/// [`HostSetup::Needed`] is what routes an apply through the setup program, whose
+/// path inside the flatpak no rule whitelists, so a false `Needed` *causes* a
+/// password prompt on every single change — the exact thing a missing rule was
+/// being looked for in order to prevent. A false `Ready` costs only a setup offer
+/// withheld from a host that was going to keep prompting either way.
 fn host_has_polkit_rule() -> bool {
-    RULE_CANDIDATES.iter().any(|path| host_has_file(path))
+    RULE_CANDIDATES
+        .iter()
+        .map(|path| probe_rule(path))
+        .any(counts_as_installed)
+}
+
+/// Whether one candidate's probe counts as the rule being installed. See
+/// [`host_has_polkit_rule`] for why "cannot look" lands on the yes side.
+fn counts_as_installed(probe: RuleProbe) -> bool {
+    probe != RuleProbe::Absent
 }
 
 /// One of our own `/app/libexec` programs, named by its path *on the host* —
@@ -215,9 +287,7 @@ fn forget_host_helper() {
     if let Ok(mut held) = HOST_HELPER.lock() {
         *held = None;
     }
-    if let Ok(mut held) = HOST_SETUP.lock() {
-        *held = None;
-    }
+    HOST_SETUP_READY.store(false, Ordering::Relaxed);
 }
 
 /// What the GUI should offer the user about the host-side helper.
@@ -236,23 +306,34 @@ pub enum HostSetup {
     Outdated,
 }
 
-/// Cached because the GUI asks on every render and the answer costs round trips
-/// out of the sandbox. Only the setup changes it, and the setup goes through us.
-static HOST_SETUP: Mutex<Option<HostSetup>> = Mutex::new(None);
+/// Set once the host has been found fully set up. That is the one answer worth
+/// remembering, for the same reason [`host_helper_path`] only remembers a
+/// whitelisted path: nothing the user can do improves on it, while re-deriving it
+/// costs round trips out of the sandbox.
+static HOST_SETUP_READY: AtomicBool = AtomicBool::new(false);
 
 /// Whether to offer the user the one-time host setup, and which way to word it.
 ///
-/// Cheap to call repeatedly: resolved once and then held until something we ran
-/// could have changed the answer (see [`forget_host_helper`]). A `.deb` installed
-/// underneath a running flatpak is the one case this will not notice, and it
-/// resolves itself on the next launch.
+/// Every answer but [`HostSetup::Ready`] is re-probed rather than held, because
+/// those are precisely the answers something else may have just made stale — our
+/// own other processes above all. The setup is offered from the settings window,
+/// but the applet and the daemon steer their applies by the same verdict and each
+/// works it out separately. Holding a `Needed` there left the applet sending
+/// applies through the setup program long after the settings window had finished
+/// the setup, and the setup program's path is inside the flatpak, which no rule
+/// whitelists — so it charged the user a second password prompt for the privilege
+/// of re-installing what was already installed.
+///
+/// The re-probe is three `flatpak-spawn`s, paid once a tick and only while the app
+/// is unconfigured — which is exactly the state in which every one of those ticks
+/// is otherwise liable for a password prompt.
 pub fn host_setup() -> HostSetup {
-    if let Some(state) = HOST_SETUP.lock().ok().and_then(|held| *held) {
-        return state;
+    if HOST_SETUP_READY.load(Ordering::Relaxed) {
+        return HostSetup::Ready;
     }
     let state = probe_host_setup();
-    if let Ok(mut held) = HOST_SETUP.lock() {
-        *held = Some(state);
+    if state == HostSetup::Ready {
+        HOST_SETUP_READY.store(true, Ordering::Relaxed);
     }
     state
 }
@@ -1414,6 +1495,37 @@ mod tests {
             deferral(false, Schedule::Manual, Some(Schedule::SunsetToSunrise)),
             None
         );
+    }
+
+    /// The regression this exists for. `/etc/polkit-1/rules.d` is `0750
+    /// root:polkitd` across the Debian family, so the rule the setup installs
+    /// there is invisible to the user we run as, and reading that as "not
+    /// installed" pinned the app at `Needed` forever: the setup row never went
+    /// away, a schedule picked in the settings window was reverted the instant
+    /// its setup "failed", and every apply was routed through the setup program —
+    /// which no rule whitelists — so the prompting the rule exists to stop
+    /// happened on every change, in the applet as well as the window.
+    #[test]
+    fn a_rule_we_cannot_see_is_not_a_rule_that_is_missing() {
+        assert!(counts_as_installed(RuleProbe::Present));
+        assert!(counts_as_installed(RuleProbe::Unreadable));
+        assert!(!counts_as_installed(RuleProbe::Absent));
+    }
+
+    /// Each rule candidate has to have a parent directory for [`probe_rule`] to
+    /// ask about, or it could never report anything but `Absent` and the case
+    /// above would be unreachable.
+    #[test]
+    fn every_rule_candidate_has_a_directory_to_probe() {
+        for path in RULE_CANDIDATES {
+            assert!(
+                std::path::Path::new(path)
+                    .parent()
+                    .and_then(std::path::Path::to_str)
+                    .is_some(),
+                "{path} has no parent directory"
+            );
+        }
     }
 
     #[test]
