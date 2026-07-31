@@ -68,11 +68,18 @@ files affects the applet picker and launcher only.
 
 ## Gotchas
 
-**The version lives in three places** — `debian/changelog`, the git tag, and the
-metainfo `<releases>` block. `scripts/release-notes.sh` fails a release when the
-tag and changelog disagree, but **the metainfo is not covered by that guard**.
-Tagging without touching it would show the previous version on the Store page
-while serving the new one, silently and with no error anywhere.
+**The version lives in four places** — `Cargo.toml`, `debian/changelog`, the
+metainfo `<releases>` block, and the git tag. Nothing connects them but
+`scripts/check-version.sh`, which the release workflow runs before publishing
+anything, and which you can run against an intended tag before creating it:
+
+```bash
+./scripts/check-version.sh v0.5.0
+```
+
+The metainfo one is why that guard exists. A stale `<releases>` version fails
+silently in the worst way: the Store page would show the *previous* version while
+serving the new build, with nothing anywhere reporting an error.
 
 **GitHub's redirect from the old repo path is not permanent.** It lasts until
 something occupies `danielcwtts/cosmic-nightlight` again — which is your own

@@ -229,6 +229,7 @@ Installed on the host by the setup:
 ```
 --share=ipc  --socket=wayland  --device=dri
 --talk-name=com.system76.CosmicSettingsDaemon
+--talk-name=com.system76.CosmicSettingsDaemon.Config.*
 --talk-name=org.freedesktop.Flatpak
 --filesystem=xdg-config/cosmic:rw
 ```
@@ -236,6 +237,19 @@ Installed on the host by the setup:
 `--device=dri` is for libcosmic's GPU rendering, not for DRM — the sandbox never
 touches DRM. There is no `--device=all` and no `--filesystem=host`. This is a
 lighter permission set than minimon-applet, which is already published there.
+
+The `Config.*` name is what makes the applet follow a light/dark switch, and the
+subtree wildcard is load-bearing. `watch_config` on the daemon's own name hands
+back a *per-config* service — `com.system76.CosmicSettingsDaemon.Config.com.system76.CosmicTheme.Mode.V1`
+and one sibling per theme config — and every subsequent change signal is sent
+from there, not from the daemon. Talking to the daemon alone is enough to set the
+watch up, so it fails silently: libcosmic reports the watcher as created, and
+then no update ever arrives. See "the theme watch is a different bus name" below.
+
+The wildcard covers every app's watcher name, not just the theme's, but it opens
+nothing new: those services carry a change signal for a config under
+`~/.config/cosmic`, which `--filesystem=xdg-config/cosmic:rw` already reads and
+writes outright.
 
 Note that the host-side install is **runtime behavior and invisible to the
 manifest**, and cosmic-flatpak's CI only checks that the manifest builds. That is
@@ -271,6 +285,23 @@ Established by building the flatpak and running it, since none of it is in a spe
   real build: a fresh flatpak install on a host with no helper and no rule tints
   the screen, asking for a password on every transition.
 
+- **The theme watch is a different bus name than the daemon.** Run in-sandbox
+  under `--talk-name=com.system76.CosmicSettingsDaemon` alone, the applet's
+  theme-mode watcher is created without error and then never fires: flipping
+  light/dark leaves the icon the old color until the applet is restarted, which
+  is what re-adding it to the panel does. `busctl --user list` shows why — the
+  daemon parks each watched config on its own well-known name under
+  `com.system76.CosmicSettingsDaemon.Config.`, and the `Changed` signal comes
+  from there, so the sandbox's bus proxy drops it. Adding
+  `--talk-name=com.system76.CosmicSettingsDaemon.Config.*` makes the signal
+  arrive and the icon re-color in place. Nothing outside the sandbox sees this;
+  the same binary on the host follows the switch fine.
+
+  Only libcosmic's own watches go over D-Bus. Our settings ride
+  `Config::watch` (inotify), which the bind-mounted `xdg-config/cosmic` already
+  serves — which is why applet and settings window mirrored each other
+  correctly the whole time this was broken.
+
 ## Status
 
 Done, on branch `flatpak-sandbox-support`:
@@ -285,9 +316,10 @@ Done, on branch `flatpak-sandbox-support`:
 - setup on first use, riding along on the first tint change
 - the setup UI — one derived row in the settings window, as the fallback path
 
+- the version guard over the metainfo `<releases>` block, in
+  `scripts/check-version.sh`, run by the release workflow before it publishes
+
 Not done:
 
-- extending `scripts/release-notes.sh` to guard the metainfo `<releases>` version,
-  which it does not cover today
 - a release tag for the manifest to point at, in place of a branch
 - the submission itself
