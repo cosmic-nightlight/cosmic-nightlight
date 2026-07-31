@@ -120,9 +120,14 @@ pub fn with_master_window<T>(
     };
     let spare = query_free_vt(fd)?;
 
-    activate(fd, spare)?;
-    // Switch back to the user's session no matter how `f` exits.
+    // Arm the restore *before* leaving, not after arriving. `activate` is two
+    // ioctls, and a failure of the second (VT_WAITACTIVE, which a signal can
+    // interrupt) leaves the switch already under way — so a guard armed only on
+    // success would return the error from a spare TTY the user is now sitting on,
+    // with nothing left to bring them back. Restoring to the VT we never left is
+    // harmless, which makes arming early strictly the safer order.
     let _restore = VtRestore { fd, original };
+    activate(fd, spare)?;
 
     // Give logind a moment to revoke the compositor's DRM master after the
     // switch completes before we try to grab it.
