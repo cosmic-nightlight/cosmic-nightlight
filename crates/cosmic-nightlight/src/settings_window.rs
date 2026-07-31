@@ -12,7 +12,7 @@ use cosmic::iced::{Alignment, Length, Limits, Size};
 use cosmic::{widget, Element};
 
 use crate::backend;
-use crate::config::{self, Schedule, APP_ID};
+use crate::config::{self, Schedule, SETTINGS_APP_ID};
 use crate::TICK_INTERVAL;
 
 const SCHEDULE_OPTIONS: &[&str] = &["Off", "Custom Schedule"];
@@ -134,7 +134,8 @@ impl cosmic::Application for SettingsWindow {
     type Flags = ();
     type Message = Message;
 
-    const APP_ID: &'static str = APP_ID;
+    // The window's identity, not the config namespace — see `SETTINGS_APP_ID`.
+    const APP_ID: &'static str = SETTINGS_APP_ID;
 
     fn core(&self) -> &Core {
         &self.core

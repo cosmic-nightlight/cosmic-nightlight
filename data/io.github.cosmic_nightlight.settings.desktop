@@ -9,4 +9,7 @@ Terminal=false
 Categories=Utility;Settings;DesktopSettings;
 Keywords=night;light;shift;redshift;gamma;color;temperature;blue;warm;schedule;
 StartupNotify=true
-StartupWMClass=io.github.cosmic_nightlight
+# Matches the id the settings window reports (config::SETTINGS_APP_ID), which is
+# this file's own desktop id rather than the applet's. The applet's entry is
+# NoDisplay, so a window claiming that id gets no icon in the dock.
+StartupWMClass=io.github.cosmic_nightlight.settings

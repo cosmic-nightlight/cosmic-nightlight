@@ -12,8 +12,25 @@
 use chrono::{Local, Timelike};
 use cosmic::cosmic_config::{Config, ConfigGet, ConfigSet};
 
-/// Config namespace; also the application/desktop id.
+/// Config namespace; also the applet's application/desktop id. Every run mode
+/// shares this namespace, so it is what [`handler`] opens regardless of which
+/// one is running.
 pub const APP_ID: &str = "io.github.cosmic_nightlight";
+
+/// The settings window's own application id, which is the desktop id of
+/// `io.github.cosmic_nightlight.settings.desktop`.
+///
+/// It must differ from [`APP_ID`]: a dock or task switcher identifies a window by
+/// the id it reports and then looks for the desktop entry of the same name to get
+/// a name and an icon for it. Under [`APP_ID`] that search lands on the *applet's*
+/// entry, which is `NoDisplay=true` — deliberately, since launching a panel applet
+/// outside the panel does nothing — and an entry hidden from the launcher is
+/// skipped, leaving the window with no entry and so no icon at all.
+///
+/// This is only the window's identity. The config namespace stays [`APP_ID`] for
+/// every run mode, so the applet and the settings window still read and write the
+/// same settings.
+pub const SETTINGS_APP_ID: &str = "io.github.cosmic_nightlight.settings";
 
 /// Bumped if the on-disk schema ever changes incompatibly.
 const CONFIG_VERSION: u64 = 1;
