@@ -18,6 +18,7 @@ the screen — see [How it works](#how-it-works).
 
 - [Screenshots](#screenshots)
 - [Install](#install)
+  - [Try the flatpak build](#try-the-flatpak-build)
   - [Build from source (for development)](#build-from-source-for-development)
 - [Using it](#using-it)
 - [Known limitations](#known-limitations)
@@ -66,13 +67,53 @@ That's it — click the Night Light icon to toggle the tint or open its settings
 > and a polkit rule beside it (letting the tint be applied without a password
 > prompt for `wheel`/`sudo` members).
 >
-> **There is also a flatpak**, which is what makes a COSMIC Store listing
-> possible. No sandbox permission grants DRM master, so the sandboxed app cannot
-> tint the screen itself — it reaches that same helper on the host through
+> **A flatpak build exists too**, which is what makes a COSMIC Store listing
+> possible — but it is **not published yet**. It is going through submission to
+> [cosmic-flatpak](https://github.com/pop-os/cosmic-flatpak), the repository the
+> COSMIC Store draws from; until that lands, the `.deb` above is the way in. To
+> try the sandboxed build before then, see
+> [Try the flatpak build](#try-the-flatpak-build).
+>
+> No sandbox permission grants DRM master, so the sandboxed app cannot tint the
+> screen itself — it reaches that same helper on the host through
 > `flatpak-spawn` and `pkexec`, and installs it there by itself the first time
 > you turn the night light on. One password prompt, then none, with no setup step
 > to find. See [docs/flatpak-design.md](docs/flatpak-design.md) for why it is
 > built that way.
+
+### Try the flatpak build
+
+Not needed to use the app — the `.deb` above is the supported route. This is for
+trying the sandboxed build before it reaches the Store.
+
+Builds run offline, so every crate has to be declared up front in
+`cargo-sources.json`. That file is generated rather than committed (it is ~450KB
+and describes only external crates), so it has to be produced first:
+
+```sh
+sudo apt-get install flatpak flatpak-builder
+flatpak install flathub com.system76.Cosmic.BaseApp org.freedesktop.Sdk//25.08 \
+    org.freedesktop.Sdk.Extension.rust-stable//25.08
+
+cd flatpak
+python3 -m venv venv
+./venv/bin/pip install aiohttp toml tomlkit
+curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json
+
+flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.json
+flatpak run io.github.cosmic_nightlight --settings
+```
+
+The manifest is pinned to the latest release tag, so this builds that release
+rather than your checkout. To build the working tree instead, swap the `git`
+source for `{"type": "dir", "path": ".."}` — see
+[flatpak/README.md](flatpak/README.md).
+
+Remove it again with `flatpak uninstall io.github.cosmic_nightlight`. Note that
+if you got as far as letting it set itself up, that also put a helper and a
+polkit rule on the **host**, which uninstalling the flatpak does not remove —
+`./scripts/uninstall.sh` clears those.
 
 ### Build from source (for development)
 
