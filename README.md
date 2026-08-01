@@ -86,6 +86,18 @@ That's it — click the Night Light icon to toggle the tint or open its settings
 Not needed to use the app — the `.deb` above is the supported route. This is for
 trying the sandboxed build before it reaches the Store.
 
+Every release attaches a ready-built bundle, so there is nothing to compile:
+
+1. Download **`cosmic-nightlight-*.flatpak`** from the
+   [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+   page.
+2. `flatpak install --user ./cosmic-nightlight-*.flatpak`
+3. Add the applet to your panel exactly as above, or run
+   `flatpak run io.github.cosmic_nightlight --settings`.
+
+<details>
+<summary>Or build the bundle yourself from a checkout</summary>
+
 Builds run offline, so every crate has to be declared up front in
 `cargo-sources.json`. That file is generated rather than committed (it is ~450KB
 and describes only external crates), so it has to be produced first:
@@ -105,10 +117,11 @@ flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight
 flatpak run io.github.cosmic_nightlight --settings
 ```
 
-The manifest is pinned to the latest release tag, so this builds that release
-rather than your checkout. To build the working tree instead, swap the `git`
-source for `{"type": "dir", "path": ".."}` — see
-[flatpak/README.md](flatpak/README.md).
+The manifest is pinned to a release tag, so this builds that release rather than
+your checkout. To build the working tree instead, swap the `git` source for
+`{"type": "dir", "path": ".."}` — see [flatpak/README.md](flatpak/README.md).
+
+</details>
 
 Remove it again with `flatpak uninstall io.github.cosmic_nightlight`. Note that
 if you got as far as letting it set itself up, that also put a helper and a
