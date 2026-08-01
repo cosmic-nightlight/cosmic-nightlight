@@ -30,12 +30,20 @@ jobs:
       - name: Install flatpak tooling
         run: |
           sudo apt-get update
-          # elfutils supplies eu-strip, which flatpak-builder shells out to when
-          # it splits debuginfo into the .Debug ref. It is not on the runner, and
-          # its absence fails the build at the very end — after the whole Rust
-          # compile has succeeded — rather than up front.
+          # Beyond flatpak itself, two things a desktop has lying around and a
+          # runner does not — both of which fail *after* the entire Rust compile
+          # rather than up front, so they are worth naming explicitly:
+          #
+          #   elfutils         eu-strip, used to split debuginfo into .Debug.
+          #   librsvg2-common  the gdk-pixbuf SVG loader. `appstreamcli compose`
+          #                    renders our scalable icon, and without a loader
+          #                    for it that read fails, the component is dropped,
+          #                    and the compose exits non-zero.
+          #
+          # --no-install-recommends is what makes the second one necessary: the
+          # loader would otherwise arrive as a recommendation of something else.
           sudo apt-get install -y --no-install-recommends \
-            flatpak flatpak-builder elfutils
+            flatpak flatpak-builder elfutils librsvg2-common ca-certificates
           flatpak remote-add --if-not-exists --user \
             flathub https://flathub.org/repo/flathub.flatpakrepo
 
