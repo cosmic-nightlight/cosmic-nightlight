@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Build flatpak
+
+# Tag builds only. A flatpak build compiles libcosmic from scratch inside the
+# sandbox, which is far slower than the .deb, and nothing on main or in a pull
+# request consumes the result — the bundle is purely a release artifact.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-flatpak:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # required to attach the bundle to the Release
+    steps:
+      - uses: actions/checkout@v4
+
+      # An SDK, a BaseApp and a full libcosmic build do not comfortably fit
+      # beside the preinstalled toolchains this job never touches.
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+
+      - name: Install flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user \
+            flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Point the manifest at the ref being built
+        run: |
+          # A pin cannot name the commit it is part of, so re-pinning always
+          # lands *after* the tag — which means the manifest inside a tag still
+          # points at whatever preceded it. At v0.5.0 that was a development
+          # branch. Building the manifest as committed would therefore package
+          # the wrong source, silently and with nothing reporting an error, so
+          # the source is overridden here with the ref actually being built.
+          python3 - <<'PY'
+          import json, os
+
+          path = "flatpak/io.github.cosmic_nightlight.json"
+          manifest = json.load(open(path))
+          source = manifest["modules"][0]["sources"][0]
+
+          committed = source.get("tag") or source.get("branch")
+          ref_name, ref_type = os.environ["GITHUB_REF_NAME"], os.environ["GITHUB_REF_TYPE"]
+
+          source.pop("branch", None)
+          source.pop("tag", None)
+          if ref_type == "tag":
+              source["tag"] = ref_name
+          source["commit"] = os.environ["GITHUB_SHA"]
+
+          json.dump(manifest, open(path, "w"), indent=4)
+          print(json.dumps(source, indent=4))
+
+          # Not fatal: the bundle this job ships is correct either way. It
+          # matters for the *copy* over in cosmic-flatpak, which is pinned by
+          # hand and is what the COSMIC Store actually builds.
+          if ref_type == "tag" and committed != ref_name:
+              print(
+                  f"::warning::the committed manifest still pins {committed!r} — "
+                  f"re-pin it to {ref_name} before copying to cosmic-flatpak"
+              )
+          PY
+
+      - name: Build the flatpak
+        working-directory: flatpak
+        run: |
+          # Builds run offline, so every crate is declared up front. This file is
+          # generated rather than committed (see flatpak/README.md), so a clean
+          # checkout has to produce it before flatpak-builder can do anything.
+          python3 -m venv venv
+          ./venv/bin/pip install --quiet aiohttp toml tomlkit
+          curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+          ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json
+
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
+            --repo=repo build io.github.cosmic_nightlight.json
+
+      - name: Bundle it
+        run: |
+          mkdir -p dist
+          flatpak build-bundle flatpak/repo \
+            "dist/cosmic-nightlight-${GITHUB_REF_NAME#v}.flatpak" \
+            io.github.cosmic_nightlight master
+          ls -lh dist/
+
+      - name: Upload the bundle as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmic-nightlight-flatpak
+          path: dist/*.flatpak
+          if-no-files-found: error
+
+      - name: Attach the bundle to the Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The .deb workflow is what creates the Release, and it finishes long
+          # before this one, so the Release normally already exists. Wait rather
+          # than race it. Only the asset is uploaded, leaving the notes that job
+          # wrote alone — which `gh release edit` would not.
+          for _ in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            echo "waiting for the Release to be created…"
+            sleep 20
+          done
+          gh release upload "$GITHUB_REF_NAME" dist/*.flatpak --clobber
