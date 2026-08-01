@@ -4,9 +4,9 @@
 **Night Light** is an easy-to-use applet for the **COSMIC** desktop (Pop!_OS)
 that warms your screen's color temperature to cut blue light. It lives as an
 icon on your **panel or dock**: click it for a simple popup with an on/off
-toggle and a temperature slider, and open **Settings** for a custom schedule
-(warm between any two times you choose, to the minute), the night temperature,
-and brightness.
+toggle and a temperature slider, and open **Settings** to have it follow your
+real sunset and sunrise, or a custom schedule between any two times you choose,
+to the minute — along with the night temperature and brightness.
 It's built entirely with native COSMIC/libcosmic widgets, so it looks and
 behaves like a first-party part of the desktop rather than a bolted-on tool.
 
@@ -38,7 +38,7 @@ the screen — see [How it works](#how-it-works).
 <td align="center">
 <img src="docs/screenshots/settings_light.png#gh-light-mode-only" height="300" alt="Night Light settings window">
 <img src="docs/screenshots/settings_dark.png#gh-dark-mode-only" height="300" alt="Night Light settings window">
-<br><sub>Settings window — night temperature, brightness, and a to-the-minute schedule</sub>
+<br><sub>Settings window — a sunset-to-sunrise or to-the-minute schedule, night temperature, and brightness</sub>
 </td>
 </tr>
 </table>
@@ -61,10 +61,18 @@ The easy way — install the `.deb` from the COSMIC Store:
 
 That's it — click the Night Light icon to toggle the tint or open its settings.
 
-> Flatpak is **not** an option for this tool: the sandbox cannot grant the
-> root / DRM-master / VT-switch capabilities the workaround needs. That is also
-> why the `.deb` installs a small `pkexec` helper and a polkit rule (so the
-> tint can be applied without a password prompt for `wheel`/`sudo` members).
+> **Why the `.deb` needs a helper.** Warming the screen means writing gamma LUTs
+> to DRM, which needs DRM master, so the package installs a small `pkexec` helper
+> and a polkit rule beside it (letting the tint be applied without a password
+> prompt for `wheel`/`sudo` members).
+>
+> **There is also a flatpak**, which is what makes a COSMIC Store listing
+> possible. No sandbox permission grants DRM master, so the sandboxed app cannot
+> tint the screen itself — it reaches that same helper on the host through
+> `flatpak-spawn` and `pkexec`, and installs it there by itself the first time
+> you turn the night light on. One password prompt, then none, with no setup step
+> to find. See [docs/flatpak-design.md](docs/flatpak-design.md) for why it is
+> built that way.
 
 ### Build from source (for development)
 
@@ -89,12 +97,23 @@ AppStream metadata.
 **The applet.** The Night Light icon opens a popup with the on/off toggle, the
 temperature slider, and a **Night Light Settings…** button.
 
-**Settings.** The settings window covers the schedule (**Off**, or a **Custom
-Schedule** with **From**/**To** times), the night temperature, and brightness —
-which dims the screen while the night light is on. Open it from the popup, from the **Night Light Settings** launcher
-entry, or with `cosmic-nightlight --settings`.
+**Settings.** The settings window covers the schedule (**Off**, **Sunset to
+Sunrise**, or a **Custom Schedule** with **From**/**To** times), the night
+temperature, and brightness — which dims the screen while the night light is on.
+Open it from the popup, from the **Night Light Settings** launcher entry, or with
+`cosmic-nightlight --settings`.
 
-**The schedule.** **From** and **To** each pick an exact time — hour, minute,
+**Sunset to Sunrise.** The one that needs nothing set: the tint starts at the
+real sunset where you are and lifts at the real sunrise, moving with the season
+by itself. Your location comes from the time zone you have already configured —
+looked up in the tz database that is on disk anyway, with the solar math done in
+process. There is no location service, no network lookup, no permission prompt,
+and no coordinates to enter. (A time zone places you within a few hundred
+kilometers, which moves sunset by minutes.) If there is no location to work from,
+or the sun doesn't set where you are that day, it falls back to the **From**/**To**
+times below and says which of the two happened.
+
+**Custom Schedule.** **From** and **To** each pick an exact time — hour, minute,
 and AM/PM (or a 24-hour clock, following your COSMIC time setting) — and the
 **Schedule** row summarizes the result, e.g. *Warm from 9:37PM to 5:22AM*. A
 window that ends earlier in the day than it starts runs overnight; one
@@ -113,8 +132,17 @@ background service is required, and there is nothing to enable — the applet is
 part of your panel, so it comes up with your session and picks the schedule up
 from there.
 
-**Running without the applet.** If you'd rather not keep the applet on your
-panel, enable the headless scheduler as a systemd user service instead:
+**Running without the applet.** Nothing to set up by hand. If you have a schedule
+set and the applet is not on a panel, the settings window says so and offers two
+ways out: add the applet, or turn on **Run in Background**, under the Background
+heading. That starts the headless scheduler straight away and again at every
+login. It appears only when it is needed, and turning it off stops the running
+process too, within a few seconds. Add the applet back later and it retires
+itself — the background process stops and the setting goes away, since the applet
+covers it from then on.
+
+The systemd user unit is still there for anyone who prefers one, and is
+equivalent:
 
 ```sh
 systemctl --user enable --now cosmic-nightlight.service
@@ -123,9 +151,9 @@ systemctl --user enable --now cosmic-nightlight.service
 The `.deb` ships that unit; from a source install, copy
 `systemd/cosmic-nightlight.service` into `~/.config/systemd/user/` first. It is
 off by default and adds no behavior of its own — it just keeps a process around
-to do what the applet would have. Running it alongside the applet is harmless:
-they share a record of what is on screen and lock against each other, so a
-boundary still costs a single flicker.
+to do what the applet would have. Running any of these alongside the applet is
+harmless: they share a record of what is on screen and lock against each other,
+so a boundary still costs a single flicker.
 
 <details>
 <summary>Advanced: drive the helper directly</summary>
@@ -149,9 +177,10 @@ pkexec /usr/bin/cosmic-nightlight-helper --off                 # reset
   make the compositor reprogram the CRTC, dropping the LUT. A suspend/resume is
   detected and re-applied automatically; for the others, re-apply by hand (or
   wait for the next schedule boundary).
-- The schedule uses fixed clock times you pick (**From**/**To**, defaulting to
-  18:00 → 06:00), not your location's real sunset/sunrise. Tying it to your
-  location (geoclue / an astronomical calc) is a clear next step.
+- **Sunset to Sunrise is only as precise as your time zone.** It locates you by
+  the zone you have configured, not by GPS, so the times are those of the zone's
+  reference point — minutes off for most people, more if you are far from it
+  inside a wide zone. Set a **Custom Schedule** if you want exact times.
 - Requires `pkexec`/polkit and membership in `wheel` or `sudo`.
 
 ---

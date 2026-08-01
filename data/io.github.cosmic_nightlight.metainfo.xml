@@ -16,6 +16,7 @@
     </p>
     <ul>
       <li>Quick toggle and temperature slider directly from the panel popup</li>
+      <li>A Sunset to Sunrise schedule that follows the real sun where you are, worked out from your time zone with no location service and no network lookup</li>
       <li>Custom schedule support to set active hours to the exact minute</li>
       <li>Screen brightness dimming control while active</li>
       <li>Direct kernel DRM integration for screen color control</li>
@@ -35,21 +36,26 @@
       <image type="source">https://raw.githubusercontent.com/cosmic-nightlight/cosmic-nightlight/main/docs/screenshots/applet_dark.png</image>
     </screenshot>
     <screenshot>
-      <caption>Settings window for custom schedules and brightness</caption>
+      <caption>Settings window with the sunset-to-sunrise schedule, temperature, and brightness</caption>
       <image type="source">https://raw.githubusercontent.com/cosmic-nightlight/cosmic-nightlight/main/docs/screenshots/settings_dark.png</image>
     </screenshot>
   </screenshots>
 
   <releases>
-    <release version="0.5.0" date="2026-07-30">
+    <release version="0.5.0" date="2026-07-31">
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.5.0</url>
       <description>
         <p>
-          Night Light can now be installed as a flatpak, and sets itself up the first time you turn it on.
+          The schedule can now follow the real sun, and the app can be installed as a flatpak that sets itself up the first time you turn it on.
         </p>
         <ul>
+          <li>A new Sunset to Sunrise schedule starts the tint at real sunset and lifts it at real sunrise, moving with the season by itself</li>
+          <li>It works your location out from the time zone you have already set, so there is no location service, no network lookup, and nothing to type</li>
           <li>Turning the night light on for the first time installs what it needs and applies the change together, so it asks for a password once and then never again</li>
           <li>A settings row offers the same setup if that prompt was dismissed, and offers to update what it installed when a new release needs it</li>
+          <li>A Run in Background switch keeps the schedule for anyone who would rather not keep the applet on a panel, and appears only when the applet is absent</li>
+          <li>The temperature slider now runs the way it reads: dragging right warms the screen, with Less warm and More warm under the ends</li>
+          <li>Popups and windows follow the active theme, so the app frosts along with the rest of the desktop when frosted glass is on</li>
           <li>The app has an icon of its own and describes itself properly to software centers</li>
           <li>The note about the screen briefly flickering now appears in the settings window as well as the applet</li>
           <li>Uninstalling removes a flatpak install too, un-registers the panel applet, and resets the screen tint on the way out</li>

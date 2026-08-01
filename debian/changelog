@@ -1,5 +1,13 @@
 cosmic-nightlight (0.5.0-1) noble; urgency=medium
 
+  * Add a "Sunset to Sunrise" schedule that follows the real sun where the
+    machine is, beside Off and Custom Schedule. The location comes from the
+    configured time zone, looked up in the tz database already on disk and
+    turned into today's sunrise and sunset in process — no location daemon, no
+    network lookup, no permission, and no coordinates to type. A time zone
+    places you within a few hundred kilometers, which moves sunset by minutes.
+    With no location, or at a latitude where the sun does not set that day, it
+    falls back to the typed times and says which of the two happened.
   * The app can now ship as a flatpak, which is what makes a COSMIC Store
     listing possible. Setting the screen tint needs DRM master, which no sandbox
     permission grants, so the sandboxed app reaches a privileged helper on the
@@ -25,10 +33,41 @@ cosmic-nightlight (0.5.0-1) noble; urgency=medium
     Cargo.toml, debian/changelog and the AppStream metadata disagree. A stale
     metainfo version would otherwise show the previous version on the Store page
     while serving the new build, with nothing reporting an error.
+  * The temperature slider's track is now warmth rather than Kelvin, so dragging
+    right warms the screen and a fuller bar is a stronger tint — it used to do
+    the opposite. "Less warm" and "More warm" label the ends, since the Kelvin
+    number alone never said which way was warmer. The readout is unchanged.
+  * The applet popup takes its padding, corner radius and blur from the active
+    theme rather than fixed values of its own, so the app frosts along with the
+    rest of the desktop when frosted glass is turned on.
+  * Only a change the user just made can raise a password prompt. A schedule
+    boundary, a resume from suspend, or a snapshot read at startup no longer
+    puts one on screen on a host that has not been set up, and a force-on that
+    the missing setup makes undeliverable is dropped on the same rule.
+  * The applet's tick re-reads the stored settings before reconciling the
+    screen, so a drifted snapshot no longer makes it fight the settings window
+    for the tint on every tick. A slider being dragged still owns its handle.
+  * The settings window now notices when a schedule is set and nothing is around
+    to keep it — no applet on a panel, and this window about to close — and
+    offers the two ways out rather than leaving the screen stuck at whatever it
+    last was with nothing on screen explaining why.
+  * Add a "Run in Background" switch under a Background heading, which runs the
+    headless scheduler for anyone who would rather not keep the applet on a
+    panel, so that no longer means a terminal. It starts one immediately as well
+    as at each login, and turning it off stops the running one within a few
+    seconds. It appears only when the applet is absent, and retires itself —
+    stopping the process and removing the setting — if the applet is added back.
+  * A dismissed password prompt is now recorded where every part of the app can
+    see it, so turning the night light on with both the applet popup and the
+    settings window open asks once rather than twice.
+  * Everything privileged now waits on one lock, so cancelling a password prompt
+    also cancels the changes that queued up behind it instead of letting them
+    through as three more dialogs. Changing something after dismissing a prompt
+    still works immediately.
   * The note about the screen briefly flickering now appears under the
     temperature slider in the settings window, not just in the applet popup.
 
- -- Daniel Watts <danielcwtts@gmail.com>  Thu, 30 Jul 2026 18:00:00 -0500
+ -- Daniel Watts <danielcwtts@gmail.com>  Fri, 31 Jul 2026 23:00:00 -0500
 
 cosmic-nightlight (0.4.0-1) noble; urgency=medium
 
