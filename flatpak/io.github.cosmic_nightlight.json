@@ -45,7 +45,8 @@
                 {
                     "type": "git",
                     "url": "https://github.com/cosmic-nightlight/cosmic-nightlight.git",
-                    "branch": "flatpak-sandbox-support"
+                    "tag": "v0.5.0",
+                    "commit": "4833a96bb939ea23ae16e5cb53ee028780b1bd6e"
                 },
                 "cargo-sources.json"
             ]

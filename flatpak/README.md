@@ -61,6 +61,21 @@ flatpak install flathub com.system76.Cosmic.BaseApp org.freedesktop.Sdk//25.08 \
 flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.json
 ```
 
-To build the working tree rather than the pushed branch, swap the `git` source
-for `{"type": "dir", "path": ".."}`. Remember to swap it back — cosmic-flatpak
-needs the git source, pinned to a release tag rather than a branch.
+To build the working tree rather than the release, swap the `git` source for
+`{"type": "dir", "path": ".."}` — or use `io.github.cosmic_nightlight.local.json`,
+which is that same manifest with the swap already made and is gitignored.
+cosmic-flatpak needs the `git` source, so remember not to commit the swap.
+
+## Re-pinning for a release
+
+The `git` source carries both a `tag` and a `commit`, and **the commit is the one
+the tag resolves to, not the one that changes the manifest** — the pin cannot
+name the commit it is part of. So the order is: tag the release, then re-pin
+here, then copy to cosmic-flatpak.
+
+```bash
+git rev-parse v0.5.0^{}   # the commit to put in "commit"
+```
+
+Leaving a stale pin is quiet and expensive: the build succeeds and ships the
+*previous* release under the new version's metadata.
