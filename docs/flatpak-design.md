@@ -345,6 +345,7 @@ Installed on the host by the setup:
 --talk-name=com.system76.CosmicSettingsDaemon.Config.*
 --talk-name=org.freedesktop.Flatpak
 --filesystem=xdg-config/cosmic:rw
+--filesystem=xdg-config/autostart:create
 ```
 
 `--device=dri` is for libcosmic's GPU rendering, not for DRM — the sandbox never
@@ -363,6 +364,25 @@ The wildcard covers every app's watcher name, not just the theme's, but it opens
 nothing new: those services carry a change signal for a config under
 `~/.config/cosmic`, which `--filesystem=xdg-config/cosmic:rw` already reads and
 writes outright.
+
+`xdg-config/autostart` is for the "Start on login" toggle, which the settings
+window offers only to users whose applet is not on a panel — otherwise nothing is
+left running to keep the schedule once that window closes. `:create` is the
+narrowest form that works: it grants that one directory, creating it if the user
+has never had an autostart entry, and nothing above it.
+
+The alternative was `org.freedesktop.portal.Background`, which needs no
+filesystem permission at all and would be the more orthodox choice. It is worth
+revisiting, but it pulls in an `ashpd`/`zbus` dependency this crate does not
+otherwise have, and its consent dialog lands on top of an app the user is already
+actively configuring. Writing the entry directly keeps the dependency set as it
+is and puts the decision in the settings window where it was made. Either way the
+entry is ours to remove: see `MARKER` in `autostart.rs`.
+
+Reading the panel's own config to *find out* whether the applet is there needs
+nothing new — `--filesystem=xdg-config/cosmic:rw` already covers
+`com.system76.CosmicPanel*`, and the same inotify path our settings ride serves
+it, so the answer stays live while the user is off adding the applet.
 
 Note that the host-side install is **runtime behavior and invisible to the
 manifest**, and cosmic-flatpak's CI only checks that the manifest builds. That is

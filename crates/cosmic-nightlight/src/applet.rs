@@ -206,6 +206,10 @@ impl cosmic::Application for NightLightApplet {
                 self.show_current();
             }
             Message::Tick => {
+                // Before anything decides: the steps below reconcile the screen
+                // against this snapshot, so a stale one doesn't just draw wrong,
+                // it fights the settings window for the screen every tick.
+                self.resync();
                 // Re-renders so the icon and the "On/Off Until …" line pick up
                 // the schedule crossing a boundary — without it a popup opened
                 // at night keeps showing a moon through the next day — and puts
@@ -241,6 +245,12 @@ impl cosmic::Application for NightLightApplet {
                         Message::Surface(destroy_popup(id))
                     } else {
                         Message::Surface(app_popup::<NightLightApplet>(
+                            // Per-surface overrides for padding, corner radius
+                            // and blur. Defaulting all three leaves the popup
+                            // taking whatever the active theme says applet
+                            // surfaces should look like — including frosted
+                            // glass when it's turned on.
+                            |_| Default::default(),
                             move |state: &mut NightLightApplet| {
                                 let new_id = Id::unique();
                                 state.popup = Some(new_id);
@@ -304,9 +314,24 @@ impl NightLightApplet {
     /// The tick bounds that to once per [`TICK_INTERVAL`] no matter how the inputs
     /// behave; see [`show_current`](Self::show_current) for the change-driven half.
     fn reconcile(&mut self) {
-        backend::defer_schedule_without_setup(&self.config, &mut self.settings);
+        backend::defer_without_setup(&self.config, &mut self.settings);
         config::expire_override(&self.config, &mut self.settings);
         self.show_current();
+    }
+
+    /// Re-reads the stored settings, so a snapshot that has drifted from the
+    /// store is corrected instead of fought over. See [`config::resync`] for
+    /// what drift costs and why the tick can't just trust the watcher.
+    ///
+    /// The slider position follows only when it is not being dragged, exactly as
+    /// it does for an incoming config change — a drag owns the handle until it
+    /// is released.
+    fn resync(&mut self) {
+        config::resync(&self.config, &mut self.settings);
+
+        if !self.dragging {
+            self.temperature = self.settings.temperature as f32;
+        }
     }
 
     /// Puts the settings as they stand on the screen. Decides nothing and writes
@@ -328,16 +353,32 @@ impl NightLightApplet {
             .description(config::status_text(&self.settings, tint_on))
             .control(toggler(tint_on).on_toggle(Message::Toggle));
 
+        // The track runs in warmth rather than Kelvin, so dragging right warms
+        // the screen and a fuller bar is a stronger tint — see
+        // `config::MAX_WARMTH`. The end captions carry the direction, since the
+        // Kelvin readout counts *down* as the tint deepens.
+        let (less, more) = config::WARMTH_ENDS;
+        let temperature_slider = cosmic::widget::Column::new()
+            .spacing(2)
+            .width(Length::Fixed(200.0))
+            .push(
+                slider(
+                    0.0..=config::MAX_WARMTH,
+                    config::warmth_of(self.temperature),
+                    |warmth| Message::TemperatureChanged(config::kelvin_of(warmth)),
+                )
+                .step(50.0)
+                .on_release(Message::TemperatureCommitted),
+            )
+            .push(
+                cosmic::widget::Row::new()
+                    .push(widget::text::caption(less).width(Length::Fill))
+                    .push(widget::text::caption(more)),
+            );
+
         let temperature_row = settings::item(
             format!("Temperature: {}K", self.temperature as i32),
-            slider(
-                2500.0..=6500.0,
-                self.temperature,
-                Message::TemperatureChanged,
-            )
-            .step(50.0)
-            .on_release(Message::TemperatureCommitted)
-            .width(Length::Fixed(200.0)),
+            temperature_slider,
         );
 
         // The note is a footnote to the controls above it, not to the slider it

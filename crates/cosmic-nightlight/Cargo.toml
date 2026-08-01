@@ -17,6 +17,12 @@ libc.workspace = true
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"
+# Unpinned, so `Cargo.lock` is what decides. Frosted glass needs a libcosmic that
+# knows about the theme's `frosted_*` flags and drives `ext-background-effect-v1`
+# off them — anything from before that (roughly mid-June 2026) leaves every
+# surface flatly opaque while the rest of the desktop blurs, with nothing in this
+# crate to say why. Don't roll the lock file back past it.
+#
 # `applet` adds panel-applet support (status-bar icon + popup). We intentionally
 # omit `wgpu` so every surface renders with the tiny-skia software renderer —
 # the GPU renderer re-inits per layer-shell surface, which made the panel icon

@@ -11,11 +11,15 @@ use cosmic::app::{Core, Task};
 use cosmic::iced::{Alignment, Length, Limits, Size};
 use cosmic::{widget, Element};
 
+use crate::autostart;
 use crate::backend;
 use crate::config::{self, Schedule, SETTINGS_APP_ID};
+use crate::solar;
 use crate::TICK_INTERVAL;
 
-const SCHEDULE_OPTIONS: &[&str] = &["Off", "Custom Schedule"];
+/// Must stay in the same order as [`Schedule::ALL`], which is what the dropdown
+/// index means.
+const SCHEDULE_OPTIONS: &[&str] = &["Off", "Sunset to Sunrise", "Custom Schedule"];
 
 /// Labels for the AM/PM dropdown, indexed by `usize::from(hour >= 12)`.
 const MERIDIEM_OPTIONS: &[&str] = &["AM", "PM"];
@@ -38,6 +42,10 @@ const TIME_PART_WIDTH: f32 = 60.0;
 /// backlight there is no obvious way back from one. So the slider stops well
 /// short of it; the full range stays available on the helper's command line.
 const MIN_BRIGHTNESS: f32 = 0.5;
+
+/// Shared by both sliders so their tracks line up down the column, and so the
+/// temperature slider's end captions can be laid out against the same width.
+const SLIDER_WIDTH: f32 = 200.0;
 
 /// Below this, the schedule row's label and dropdown no longer fit
 /// side by side and start overlapping.
@@ -113,6 +121,15 @@ pub struct SettingsWindow {
     /// Set while a setup is running on behalf of a schedule the user just
     /// picked, holding the schedule to fall back to if it doesn't land.
     schedule_revert: Option<Schedule>,
+    /// Whether the applet is on a panel, or `None` where that can't be told.
+    /// Decides whether this window is the only thing keeping the schedule, and
+    /// so whether there is anything to offer. Re-derived on the tick, because
+    /// the fix for it happens in another application while this one sits open.
+    applet_present: Option<bool>,
+    /// Whether we have an autostart entry installed for the headless daemon.
+    autostart: bool,
+    /// Why the last autostart change didn't take, if it didn't.
+    autostart_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -136,6 +153,10 @@ pub enum Message {
     RunHostSetup,
     /// That setup finished, one way or the other.
     HostSetupFinished(Result<(), String>),
+    /// The "Start on login" toggle, or the banner's shortcut to it.
+    SetAutostart(bool),
+    /// The banner's primary action: hand off to COSMIC Settings' applet picker.
+    OpenAppletSettings,
 }
 
 /// Applies a toggle the user flipped, and reports back so the toggle can be put
@@ -187,7 +208,7 @@ impl cosmic::Application for SettingsWindow {
         let settings = config::Settings::load();
         let military = config::is_military_time();
 
-        let app = Self {
+        let mut app = Self {
             core,
             config: config::handler(),
             settings,
@@ -202,7 +223,14 @@ impl cosmic::Application for SettingsWindow {
             setup_busy: false,
             setup_error: None,
             schedule_revert: None,
+            applet_present: config::applet_on_panel(),
+            autostart: autostart::is_enabled(),
+            autostart_error: None,
         };
+
+        // Before the first render, so a setting the applet has made redundant is
+        // already gone rather than appearing and then vanishing a tick later.
+        app.retire_redundant_background();
 
         (app, Task::none())
     }
@@ -219,7 +247,7 @@ impl cosmic::Application for SettingsWindow {
                 //
                 // Everything else stays ungated. The app still works unset-up;
                 // it is scheduling specifically that cannot.
-                if chosen == Schedule::SunsetToSunrise && self.setup != backend::HostSetup::Ready {
+                if chosen != Schedule::Manual && self.setup != backend::HostSetup::Ready {
                     let previous = self.settings.schedule;
                     // Show the choice while the prompt is up, but don't persist
                     // it until the setup that makes it work has actually landed.
@@ -317,6 +345,10 @@ impl cosmic::Application for SettingsWindow {
                 self.show_current();
             }
             Message::Tick => {
+                // Before anything decides: the steps below reconcile the screen
+                // against this snapshot, so a stale one doesn't just draw wrong,
+                // it fights the applet for the screen every tick.
+                self.resync();
                 // Re-renders so the toggle and the "On/Off Until …" line pick up
                 // the schedule crossing a boundary while the window sits open,
                 // and puts that verdict on the screen.
@@ -335,6 +367,13 @@ impl cosmic::Application for SettingsWindow {
                 if !self.setup_busy {
                     self.setup = backend::host_setup();
                 }
+                // Adding the applet happens in COSMIC Settings, with this window
+                // still open beside it. Re-deriving here is what lets the banner
+                // acknowledge that rather than sitting there insisting the applet
+                // is missing until the window is reopened.
+                self.applet_present = config::applet_on_panel();
+                self.autostart = autostart::is_enabled();
+                self.retire_redundant_background();
             }
             Message::RunHostSetup => {
                 return self.start_host_setup(None);
@@ -357,6 +396,24 @@ impl cosmic::Application for SettingsWindow {
                     } else {
                         self.settings.schedule = previous;
                     }
+                }
+            }
+            Message::SetAutostart(enabled) => {
+                match autostart::set_enabled(enabled) {
+                    Ok(()) => self.autostart_error = None,
+                    Err(err) => self.autostart_error = Some(err),
+                }
+                // From the filesystem rather than from what we just asked for, so
+                // a write that failed leaves the toggle where it really is.
+                self.autostart = autostart::is_enabled();
+            }
+            Message::OpenAppletSettings => {
+                // Panel and dock have separate applet pages and we cannot know
+                // which one the user wants. The panel is where a status icon
+                // belongs and is the one that exists on a default install, so it
+                // is the better guess of the two.
+                if let Err(err) = backend::spawn_on_host("cosmic-settings", &["panel-applet"]) {
+                    eprintln!("cosmic-nightlight: {err}");
                 }
             }
         }
@@ -395,16 +452,7 @@ impl cosmic::Application for SettingsWindow {
                     "Temperature: {}K",
                     self.temperature as i32
                 ))
-                .control(
-                    widget::slider(
-                        2500.0..=6500.0,
-                        self.temperature,
-                        Message::TemperatureChanged,
-                    )
-                    .step(50.0)
-                    .on_release(Message::TemperatureCommitted)
-                    .width(Length::Fixed(200.0)),
-                ),
+                .control(self.temperature_slider()),
             )
             .add(
                 widget::settings::item::builder(format!(
@@ -422,39 +470,41 @@ impl cosmic::Application for SettingsWindow {
                     )
                     .step(0.01)
                     .on_release(Message::BrightnessCommitted)
-                    .width(Length::Fixed(200.0)),
+                    .width(Length::Fixed(SLIDER_WIDTH)),
                 ),
             );
 
-        let scheduled = self.settings.schedule == Schedule::SunsetToSunrise;
         let schedule_control = widget::dropdown(
             SCHEDULE_OPTIONS,
             Some(self.settings.schedule.index()),
             Message::ScheduleSelected,
         )
-        // Wide enough for the longest option ("Custom Schedule") so the
+        // Wide enough for the longest option ("Sunset to Sunrise") so the
         // popup menu (which is sized to the longest option but anchored
         // to this widget's left edge) doesn't extend past the window's
         // right edge and get clipped.
-        .width(Length::Fixed(200.0));
+        .width(Length::Fixed(SLIDER_WIDTH));
 
         // With no schedule there is no summary, and the row must carry no
         // description *at all* rather than an empty one: an empty caption still
         // takes up a line, which grows the row and leaves the "Schedule" label
         // sitting above the dropdown instead of level with it.
-        let schedule_row = if scheduled {
-            widget::settings::item::builder("Schedule")
-                .description(self.window_summary())
-                .control(schedule_control)
-        } else {
-            widget::settings::item("Schedule", schedule_control)
+        let schedule_row = match self.schedule_summary() {
+            Some(summary) => widget::settings::item::builder("Schedule")
+                .description(summary)
+                .control(schedule_control),
+            None => widget::settings::item("Schedule", schedule_control),
         };
 
         let mut schedule = widget::settings::section()
             .title("Schedule")
             .add(schedule_row);
 
-        if scheduled {
+        // The pickers appear exactly when the times they edit are the ones in
+        // force — which is `Custom` always, and `Sunset to Sunrise` only where
+        // it has no sun to follow and has fallen back to them. Showing them
+        // under a working solar schedule would offer edits that change nothing.
+        if self.uses_typed_times() {
             schedule = schedule
                 .add(widget::settings::item(
                     "From",
@@ -472,8 +522,14 @@ impl cosmic::Application for SettingsWindow {
         // thing to configure — and absent entirely on any install that doesn't
         // need it, which is every `.deb` and every flatpak already set up.
         sections.extend(self.host_setup_row());
+        sections.extend(self.no_scheduler_banner());
         sections.push(night_light.into());
+
         sections.push(schedule.into());
+        // After the schedule, because it is about what keeps that schedule
+        // running — but in a section of its own, since it configures this app's
+        // own lifetime rather than anything about the times above it.
+        sections.extend(self.background_section());
 
         let content = widget::settings::view_column(sections).width(Length::Fill);
 
@@ -587,6 +643,145 @@ impl SettingsWindow {
         )
     }
 
+    /// Whether a schedule is set that nothing will be around to act on.
+    ///
+    /// All three have to hold. `Manual` is excluded because it has no schedule to
+    /// miss — someone driving the toggle by hand has nothing wrong with their
+    /// setup, and telling them otherwise would be a notice they can never clear.
+    /// An unreadable panel config counts as the applet being present, per
+    /// [`config::applet_on_panel`].
+    fn no_scheduler(&self) -> bool {
+        self.settings.schedule != Schedule::Manual
+            && !self.applet_present.unwrap_or(true)
+            && !self.autostart
+    }
+
+    /// The banner shown when the schedule has nobody to run it, or `None`.
+    ///
+    /// This is the case the app used to fail silently: with the applet off the
+    /// panel, the schedule advances only while this window is open, so closing it
+    /// leaves the screen stuck at whatever it was and the next sunset never
+    /// arrives. Nothing on screen said so.
+    ///
+    /// Deliberately not dismissible, because every state that shows it has two
+    /// one-click ways out and both of them make it disappear for good. A dismiss
+    /// button would only offer a way to keep the broken setup *and* hide the
+    /// explanation for it.
+    fn no_scheduler_banner(&self) -> Option<Element<'_, Message>> {
+        if !self.no_scheduler() {
+            return None;
+        }
+
+        let actions = widget::Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(widget::button::suggested("Add to Panel").on_press(Message::OpenAppletSettings))
+            .push(
+                widget::button::standard("Run in Background").on_press(Message::SetAutostart(true)),
+            );
+
+        Some(
+            widget::settings::section()
+                .add(
+                    widget::settings::item::builder("Your schedule isn't running")
+                        .description(
+                            "Night Light keeps to its schedule through the applet on your \
+                             panel, or while this window is open. Add the applet, or let it \
+                             run in the background instead.",
+                        )
+                        .control(actions),
+                )
+                .into(),
+        )
+    }
+
+    /// Turns background running off once the applet is back on the panel to do
+    /// the job, so the setting retires itself instead of sitting there explaining
+    /// that it is redundant.
+    ///
+    /// Only on a confident `Some(true)`. A `None` means we could not read the
+    /// panel's config, and switching off the only thing keeping the schedule on a
+    /// guess is the one outcome here worth genuinely avoiding — everywhere else
+    /// an unknown costs the user a visible row, but here it would cost them the
+    /// schedule.
+    ///
+    /// Nothing is lost by doing this without asking, because there is no way to
+    /// ask for the state it removes: the row is reachable only while the applet is
+    /// absent, so "both at once" was never something a user could choose. What it
+    /// removes is a leftover from before they added the applet.
+    fn retire_redundant_background(&mut self) {
+        if self.applet_present != Some(true) || !self.autostart {
+            return;
+        }
+
+        match autostart::set_enabled(false) {
+            Ok(()) => {
+                self.autostart_error = None;
+                println!(
+                    "cosmic-nightlight: the applet is on the panel, so background running \
+                     is no longer needed and has been turned off"
+                );
+            }
+            // Leaves the row on screen, still saying it is not needed, now with
+            // the reason it is still there. Retried on each tick.
+            Err(err) => self.autostart_error = Some(err),
+        }
+        self.autostart = autostart::is_enabled();
+    }
+
+    /// The Background section, or `None` when it has nothing to say.
+    ///
+    /// Visible when it is actionable *or when it is on*. That second half is the
+    /// safety net against the bug [`crate::migrate`] cleans up after: a plain
+    /// hide-when-applet-present rule would take the only control over a daemon
+    /// that still starts every login, leaving it running with nowhere to switch it
+    /// off. Nothing here ever hides a background process that is still enabled.
+    ///
+    /// In the ordinary case that net is never reached, because
+    /// [`retire_redundant_background`](Self::retire_redundant_background) has
+    /// already turned the setting off by the time the applet is seen — the row
+    /// goes away rather than lingering to say it is unnecessary. What is left
+    /// visible is the case where turning it off *failed*, which is worth a row.
+    ///
+    /// Called "Run in Background" rather than "Start on login" because that is
+    /// what it does: it starts a background process immediately and arranges for
+    /// one at each login. The old name described only the half that happens
+    /// tomorrow, which is exactly the half a user turning it on today is not
+    /// asking for.
+    fn background_section(&self) -> Option<Element<'_, Message>> {
+        if self.applet_present.unwrap_or(true) && !self.autostart {
+            return None;
+        }
+
+        // Keyed to a confident `Some(true)`, not to the fail-open reading used
+        // just above. Telling someone the applet has them covered has to be
+        // grounded in having actually seen it; the worst version of this row is
+        // one that talks a user out of a scheduler they still need.
+        let description = if self.applet_present == Some(true) {
+            "Not needed: the Night Light applet is on your panel and already keeps the \
+             schedule. Turning this off stops the duplicate background process."
+        } else {
+            "Keeps the schedule running when this window is closed, and starts again at \
+             each login."
+        };
+
+        let description = match &self.autostart_error {
+            Some(error) => format!("{description}\n\nThat didn't work: {error}."),
+            None => description.to_string(),
+        };
+
+        Some(
+            widget::settings::section()
+                .title("Background")
+                .add(
+                    widget::settings::item::builder("Run in Background")
+                        .description(description)
+                        .control(widget::toggler(self.autostart).on_toggle(Message::SetAutostart)),
+                )
+                .into(),
+        )
+    }
+
     /// Pushes the current temperature and brightness to the screen, but only if a
     /// tint is up: with the night light off the screen shows a neutral ramp, which
     /// neither setting affects, so applying would cost a flicker for no change.
@@ -616,10 +811,37 @@ impl SettingsWindow {
         // they were still answering for it. `HostSetupFinished` settles that
         // choice either way, and the next tick picks up from there.
         if !self.setup_busy {
-            backend::defer_schedule_without_setup(&self.config, &mut self.settings);
+            backend::defer_without_setup(&self.config, &mut self.settings);
         }
         config::expire_override(&self.config, &mut self.settings);
         self.show_current();
+    }
+
+    /// Re-reads the stored settings, so a snapshot that has drifted from the
+    /// store is corrected instead of fought over. See [`config::resync`] for
+    /// what drift costs and why the tick can't just trust the watcher.
+    ///
+    /// Skipped while a setup is in flight, for the same reason the deferral in
+    /// [`reconcile`](Self::reconcile) is: `ScheduleSelected` shows the chosen
+    /// schedule without persisting it until the setup lands, so re-reading would
+    /// blank the dropdown under the user while the password prompt was still up.
+    ///
+    /// The slider positions follow only when they are not being dragged, exactly
+    /// as they do for an incoming config change — a drag owns its handle until
+    /// it is released.
+    fn resync(&mut self) {
+        if self.setup_busy {
+            return;
+        }
+
+        config::resync(&self.config, &mut self.settings);
+
+        if !self.temperature_dragging {
+            self.temperature = self.settings.temperature as f32;
+        }
+        if !self.brightness_dragging {
+            self.brightness = self.settings.brightness as f32;
+        }
     }
 
     /// Puts the settings as they stand on the screen. Decides nothing and writes
@@ -697,18 +919,80 @@ impl SettingsWindow {
         }
     }
 
-    /// One line describing the configured window, e.g.
-    /// `"Warm from 9:45PM to 5:30AM"`, so the effect of a minute-precise edit is
-    /// visible without opening the pickers.
-    fn window_summary(&self) -> String {
-        let from = config::format_time(self.settings.sunset_minutes, self.military);
-        let to = config::format_time(self.settings.sunrise_minutes, self.military);
+    /// The temperature slider, plus the captions that say which way is warmer.
+    ///
+    /// The track runs in warmth rather than Kelvin — see [`config::MAX_WARMTH`]
+    /// for why — so the Kelvin in the row's label is a readout of where the
+    /// handle sits, not the quantity being dragged. The captions are what carry
+    /// the direction: a bare "5300K" is exact and still says nothing about
+    /// which end is the orange one.
+    fn temperature_slider(&self) -> Element<'_, Message> {
+        let slider = widget::slider(
+            0.0..=config::MAX_WARMTH,
+            config::warmth_of(self.temperature),
+            |warmth| Message::TemperatureChanged(config::kelvin_of(warmth)),
+        )
+        .step(50.0)
+        .on_release(Message::TemperatureCommitted);
 
-        if self.settings.sunset_minutes == self.settings.sunrise_minutes {
-            return format!("Warm all day from {from}");
+        let (less, more) = config::WARMTH_ENDS;
+        // The left caption takes the slack rather than a spacer sitting between
+        // the two, which keeps the right one pinned to the track's end.
+        let ends = widget::Row::new()
+            .push(widget::text::caption(less).width(Length::Fill))
+            .push(widget::text::caption(more));
+
+        widget::Column::new()
+            .spacing(2)
+            .width(Length::Fixed(SLIDER_WIDTH))
+            .push(slider)
+            .push(ends)
+            .into()
+    }
+
+    /// Whether the times in the pickers are the ones actually in force.
+    ///
+    /// True for `Custom`, and for `Solar` only when it has fallen back to them —
+    /// no location to compute from, or a latitude with no sunrise today.
+    fn uses_typed_times(&self) -> bool {
+        match self.settings.schedule {
+            Schedule::Manual => false,
+            Schedule::Custom => true,
+            Schedule::Solar => solar::today().is_none(),
+        }
+    }
+
+    /// One line under the schedule dropdown describing the window in force, so
+    /// the effect of a minute-precise edit — or of today's sun — is visible
+    /// without opening the pickers. `None` when nothing is scheduled.
+    fn schedule_summary(&self) -> Option<String> {
+        let (sunset, sunrise) = self.settings.window()?;
+        let from = config::format_time(sunset, self.military);
+        let to = config::format_time(sunrise, self.military);
+
+        // A working solar schedule needs no more explaining than a custom one:
+        // the dropdown above already says it follows the sun, so the line's job
+        // is only to show what that works out to today. Saying so again ran the
+        // caption onto a second line for nothing.
+        //
+        // The two fallbacks do need words, and they name the cause rather than
+        // just the symptom: the pickers appear alongside them, and without a
+        // reason their turning up under "Sunset to Sunrise" reads as a bug.
+        if self.settings.schedule == Schedule::Solar && solar::today().is_none() {
+            return Some(
+                match solar::have_location() {
+                    true => "The sun doesn't set here today — using the times below",
+                    false => "No location for your time zone — using the times below",
+                }
+                .to_owned(),
+            );
         }
 
-        format!("Warm from {from} to {to}")
+        if sunset == sunrise {
+            return Some(format!("Warm all day from {from}"));
+        }
+
+        Some(format!("Warm from {from} to {to}"))
     }
 }
 

@@ -12,6 +12,8 @@
 use chrono::{Local, Timelike};
 use cosmic::cosmic_config::{Config, ConfigGet, ConfigSet};
 
+use crate::solar;
+
 /// Config namespace; also the applet's application/desktop id. Every run mode
 /// shares this namespace, so it is what [`handler`] opens regardless of which
 /// one is running.
@@ -59,12 +61,14 @@ pub const MINUTES_PER_DAY: u32 = 24 * 60;
 pub enum Schedule {
     /// Tint follows the manual on/off toggle only.
     Manual,
-    /// Tint turns on after sunset and off after sunrise.
-    SunsetToSunrise,
+    /// Tint follows the real sun where the machine is — see [`crate::solar`].
+    Solar,
+    /// Tint follows a window the user typed in, the same every day.
+    Custom,
 }
 
 impl Schedule {
-    pub const ALL: [Schedule; 2] = [Schedule::Manual, Schedule::SunsetToSunrise];
+    pub const ALL: [Schedule; 3] = [Schedule::Manual, Schedule::Solar, Schedule::Custom];
 
     /// Index into [`Schedule::ALL`], for the settings dropdown.
     pub fn index(self) -> usize {
@@ -74,13 +78,21 @@ impl Schedule {
     fn as_key(self) -> &'static str {
         match self {
             Schedule::Manual => "manual",
-            Schedule::SunsetToSunrise => "sunset",
+            Schedule::Solar => "solar",
+            Schedule::Custom => "custom",
         }
     }
 
     fn from_key(key: &str) -> Self {
         match key {
-            "sunset" => Schedule::SunsetToSunrise,
+            "solar" => Schedule::Solar,
+            // `"sunset"` is what the one scheduled mode was stored as before
+            // there were two of them. It named itself after sunset but ran off
+            // hand-typed times, which is exactly what `Custom` is now — so it
+            // has to read as `Custom`, not as the mode that inherited the name.
+            // Reading it wrong would silently move every existing schedule onto
+            // the real sun and abandon the times its owner set.
+            "custom" | "sunset" => Schedule::Custom,
             _ => Schedule::Manual,
         }
     }
@@ -126,7 +138,7 @@ pub struct Settings {
     pub schedule: Schedule,
     /// A schedule parked because the host setup it depends on is not in place,
     /// waiting to be restored once it is. `None` when nothing is parked. See
-    /// `backend::defer_schedule_without_setup`.
+    /// `backend::defer_without_setup`.
     pub deferred_schedule: Option<Schedule>,
     /// When the tint turns off, as minutes since local midnight.
     pub sunrise_minutes: u32,
@@ -191,6 +203,31 @@ impl Settings {
         settings
     }
 
+    /// The `(sunset, sunrise)` window the schedule is working to right now, as
+    /// minutes since local midnight, or `None` when nothing is scheduled.
+    ///
+    /// This is the one place the two scheduled modes differ, so every caller
+    /// that wants to know *when* — the tint decision, the status line, the
+    /// settings summary — goes through here rather than reading the stored
+    /// times, which are only half the answer once [`Schedule::Solar`] exists.
+    pub fn window(&self) -> Option<(u32, u32)> {
+        let typed = (self.sunset_minutes, self.sunrise_minutes);
+        match self.schedule {
+            Schedule::Manual => None,
+            Schedule::Custom => Some(typed),
+            // No location to compute from, or a latitude where the sun doesn't
+            // rise or set today. Falling back to the typed window keeps a
+            // schedule the user asked for doing *something* — the alternative is
+            // a mode that silently never fires. The settings window says which
+            // of the two is happening, and offers the pickers to edit.
+            Schedule::Solar => Some(
+                solar::today()
+                    .map(|sun| (sun.sunset_minutes, sun.sunrise_minutes))
+                    .unwrap_or(typed),
+            ),
+        }
+    }
+
     /// Whether the *schedule alone* (ignoring any manual override) wants the
     /// tint on right now. Manual mode has no time schedule, so its baseline is
     /// always off — the tint there is driven purely by the override.
@@ -202,11 +239,9 @@ impl Settings {
     /// minutes since midnight. Split out so the schedule logic is testable
     /// without waiting for the clock.
     fn schedule_wants_tint_at(&self, minute_of_day: u32) -> bool {
-        match self.schedule {
-            Schedule::Manual => false,
-            Schedule::SunsetToSunrise => {
-                is_night_at(minute_of_day, self.sunrise_minutes, self.sunset_minutes)
-            }
+        match self.window() {
+            Some((sunset, sunrise)) => is_night_at(minute_of_day, sunrise, sunset),
+            None => false,
         }
     }
 
@@ -239,6 +274,30 @@ impl Settings {
             Override::Auto => false,
         }
     }
+}
+
+/// Re-reads the store over `settings`, correcting a snapshot that has drifted
+/// away from it.
+///
+/// The two GUIs cache their snapshot and refresh it from [`subscription`], which
+/// is the quick path but not a guaranteed one: a notification that never arrives
+/// — a watcher that failed to install, a write that landed in a way inotify
+/// didn't report — leaves that cache wrong for as long as the process lives, and
+/// nothing else ever puts it back.
+///
+/// A wrong cache is not merely a display fault. Every run mode reconciles the
+/// *screen* against its own snapshot on its tick, so two processes holding
+/// snapshots that disagree take turns applying opposite states, and the screen
+/// flickers between tinted and clear on the tick for as long as both are
+/// running. That is the bug this exists to close.
+///
+/// So the tick re-reads rather than trusting that it was told. The daemon has
+/// always worked this way — it loads afresh every pass, which is why it was
+/// never the process holding a stale view — and this is the GUIs doing the same.
+/// Unlike the deciding steps it sits in front of, it writes nothing, so it is
+/// safe to repeat and cannot feed a change back to the watchers that woke it.
+pub fn resync(handler: &Option<Config>, settings: &mut Settings) {
+    *settings = Settings::load_from(handler);
 }
 
 /// Clears a manual override back to `Auto` once the schedule has caught up to it,
@@ -445,6 +504,58 @@ fn report(key: &str, result: Result<(), cosmic::cosmic_config::Error>) {
     }
 }
 
+/// Whether our applet is configured on any COSMIC panel or dock.
+///
+/// `None` means the question could not be answered — the panel's config was
+/// missing or in a shape we don't understand, which is what a non-COSMIC session
+/// or a future schema looks like. Callers must read that as "assume it is
+/// there": everything keyed off this offers the user a background scheduler they
+/// would not otherwise need, and pushing that on someone whose applet is already
+/// running is worse than staying quiet.
+///
+/// Read rather than watched. It is two small files, re-read on the tick every
+/// other part of the window already runs on, and the answer only changes when
+/// the user is off in COSMIC Settings adding the applet.
+///
+/// `com.system76.CosmicPanel`'s `entries` names the panels that exist (`Panel`,
+/// `Dock`, or whatever the user has built); each has a config of its own holding
+/// the applet ids it shows. Those ids are desktop-file basenames, so ours is
+/// [`APP_ID`] — flatpak's export preserves it, so this works sandboxed too.
+///
+/// None of this is a documented interface. It is cosmic-panel's private config,
+/// which is the reason for the fail-open above rather than for not asking.
+pub fn applet_on_panel() -> Option<bool> {
+    let entries = Config::new("com.system76.CosmicPanel", 1)
+        .ok()?
+        .get::<Vec<String>>("entries")
+        .ok()?;
+
+    Some(entries.iter().any(|entry| {
+        let Ok(panel) = Config::new(&format!("com.system76.CosmicPanel.{entry}"), 1) else {
+            return false;
+        };
+
+        // Both keys are stored wrapped in `Option`, and the wings are a
+        // (left, right) pair. A panel that has never been touched may be
+        // missing either one, which is not the same as it being empty.
+        let center = panel
+            .get::<Option<Vec<String>>>("plugins_center")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let (left, right) = panel
+            .get::<Option<(Vec<String>, Vec<String>)>>("plugins_wings")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+
+        [center, left, right]
+            .iter()
+            .flatten()
+            .any(|id| id == APP_ID)
+    }))
+}
+
 /// Returns whether the system is configured to use 24-hour time.
 pub fn is_military_time() -> bool {
     cosmic::cosmic_config::Config::new("com.system76.CosmicAppletTime", 1)
@@ -478,6 +589,42 @@ pub fn format_time(minutes: u32, military: bool) -> String {
 /// how long the bounce lasts depends on the GPU and how fast it modesets.
 pub const FLICKER_NOTE: &str = "Night light changes may briefly flicker the screen";
 
+/// The ends of the temperature range, in Kelvin. [`MIN_KELVIN`] is a deep amber
+/// and [`MAX_KELVIN`] is near enough untinted.
+pub const MIN_KELVIN: f32 = 2500.0;
+pub const MAX_KELVIN: f32 = 6500.0;
+
+/// The temperature slider's own range, which is *warmth* rather than Kelvin —
+/// how far the tint sits from neutral.
+///
+/// Kelvin runs the wrong way for a slider. It descends as the screen warms, so
+/// putting it on the track directly made dragging right *weaken* the night
+/// light, against both the convention that right means more and the way GNOME's
+/// equivalent reads. Worse, iced fills a slider from its range minimum, so the
+/// filled portion grew as the tint got weaker — the bar said "lots" while the
+/// screen showed "barely any".
+///
+/// Running the track in warmth fixes both at once, and costs only the mapping
+/// below: dragging right warms the screen, and a fuller bar is a stronger tint.
+/// The label still reads out the Kelvin, which is the number worth knowing and
+/// the one GNOME declines to show at all.
+pub const MAX_WARMTH: f32 = MAX_KELVIN - MIN_KELVIN;
+
+/// Where a temperature sits on the warmth track.
+pub fn warmth_of(kelvin: f32) -> f32 {
+    (MAX_KELVIN - kelvin).clamp(0.0, MAX_WARMTH)
+}
+
+/// The temperature a warmth track position means.
+pub fn kelvin_of(warmth: f32) -> f32 {
+    (MAX_KELVIN - warmth).clamp(MIN_KELVIN, MAX_KELVIN)
+}
+
+/// The captions under the temperature slider, left and right. The Kelvin number
+/// is exact but says nothing about which way is warmer, and "2500" reading as
+/// *more* orange than "6500" is not something to make anyone infer.
+pub const WARMTH_ENDS: (&str, &str) = ("Less warm", "More warm");
+
 /// The line under the "Night Light" toggle, shared by the applet popup and the
 /// settings window. On a schedule it names the time the current state runs out;
 /// with no schedule there is nothing to count down to.
@@ -485,16 +632,15 @@ pub const FLICKER_NOTE: &str = "Night light changes may briefly flicker the scre
 /// `tint_on` is passed in rather than recomputed so the caller's toggle and this
 /// text can't disagree if the clock ticks over a boundary between the two.
 pub fn status_text(settings: &Settings, tint_on: bool) -> String {
-    match settings.schedule {
-        Schedule::Manual => if tint_on { "On" } else { "Off" }.to_owned(),
-        Schedule::SunsetToSunrise => {
-            let military = is_military_time();
-            if tint_on {
-                format!("On Until {}", format_time(settings.sunrise_minutes, military))
-            } else {
-                format!("Off Until {}", format_time(settings.sunset_minutes, military))
-            }
-        }
+    let Some((sunset, sunrise)) = settings.window() else {
+        return if tint_on { "On" } else { "Off" }.to_owned();
+    };
+
+    let military = is_military_time();
+    if tint_on {
+        format!("On Until {}", format_time(sunrise, military))
+    } else {
+        format!("Off Until {}", format_time(sunset, military))
     }
 }
 
@@ -502,13 +648,65 @@ pub fn status_text(settings: &Settings, tint_on: bool) -> String {
 mod tests {
     use super::*;
 
+    /// `Custom` rather than `Solar` throughout, so the window under test is the
+    /// one written here. `Solar` asks the sky what time it is, which is not
+    /// something a test of the schedule logic should depend on.
     fn scheduled(sunset_minutes: u32, sunrise_minutes: u32) -> Settings {
         Settings {
-            schedule: Schedule::SunsetToSunrise,
+            schedule: Schedule::Custom,
             sunset_minutes,
             sunrise_minutes,
             ..Settings::default()
         }
+    }
+
+    /// The pre-3-mode config stored its one scheduled mode as `"sunset"`, and
+    /// that mode ran off hand-typed times. Reading it back as anything but
+    /// `Custom` would move every existing schedule onto the real sun and throw
+    /// away the times its owner set.
+    #[test]
+    fn the_legacy_schedule_key_still_means_custom() {
+        assert_eq!(Schedule::from_key("sunset"), Schedule::Custom);
+        assert_eq!(Schedule::from_key("custom"), Schedule::Custom);
+        assert_eq!(Schedule::from_key("solar"), Schedule::Solar);
+        assert_eq!(Schedule::from_key("manual"), Schedule::Manual);
+        assert_eq!(Schedule::from_key("nonsense"), Schedule::Manual);
+    }
+
+    /// Every variant has to survive a round trip through the store, and the
+    /// dropdown index has to agree with `ALL` or picking one option would
+    /// select another.
+    #[test]
+    fn schedules_round_trip_through_their_keys() {
+        for schedule in Schedule::ALL {
+            assert_eq!(Schedule::from_key(schedule.as_key()), schedule);
+            assert_eq!(Schedule::ALL[schedule.index()], schedule);
+        }
+    }
+
+    /// `Manual` is the only mode with no window; the other two must produce one
+    /// or the tint would never come on.
+    #[test]
+    fn only_manual_has_no_window() {
+        let base = scheduled(21 * 60, 5 * 60);
+        assert_eq!(
+            Settings {
+                schedule: Schedule::Manual,
+                ..base
+            }
+            .window(),
+            None
+        );
+        assert_eq!(base.window(), Some((21 * 60, 5 * 60)), "custom");
+        assert!(
+            Settings {
+                schedule: Schedule::Solar,
+                ..base
+            }
+            .window()
+            .is_some(),
+            "solar falls back to the typed window when it has no sun"
+        );
     }
 
     #[test]
@@ -553,6 +751,72 @@ mod tests {
         };
         assert!(!settings.schedule_wants_tint_at(23 * 60));
         assert!(!settings.schedule_wants_tint_at(12 * 60));
+    }
+
+    /// The regression this exists for. A GUI that missed a config notification
+    /// kept reconciling the *screen* against its stale snapshot, so it and the
+    /// other process took turns applying opposite states and the screen flicked
+    /// between tinted and clear once a tick for as long as both were running.
+    /// Re-reading on the tick is what stops a missed notification from becoming
+    /// permanent.
+    #[test]
+    fn a_drifted_snapshot_is_put_right() {
+        let (keys, handler) = scratch_store("resync");
+
+        store_schedule(&handler, Schedule::Custom);
+        store_override(&handler, Override::Auto);
+        store_temperature(&handler, 3800);
+
+        // What a GUI is left holding when the notification for those never
+        // arrives: an override forcing the tint on, over a schedule that by
+        // itself would leave it off.
+        let mut stale = Settings {
+            schedule: Schedule::Manual,
+            tint_override: Override::On,
+            temperature: 5300,
+            ..Settings::default()
+        };
+        assert!(stale.tint_on(), "the stale snapshot forces the tint on");
+
+        resync(&handler, &mut stale);
+
+        assert_eq!(stale.schedule, Schedule::Custom);
+        assert_eq!(stale.tint_override, Override::Auto);
+        assert_eq!(stale.temperature, 3800);
+        assert_eq!(
+            stale,
+            Settings::load_from(&handler),
+            "a resync must leave nothing of the stale snapshot behind"
+        );
+
+        let _ = std::fs::remove_dir_all(keys);
+    }
+
+    /// A resync must not write. The tick calls it right before two steps that do
+    /// persist what they decide, and a config write wakes every watcher — so a
+    /// resync that wrote would answer each notification with another one.
+    #[test]
+    fn a_resync_writes_nothing() {
+        use std::os::unix::fs::MetadataExt;
+
+        let (keys, handler) = scratch_store("resync-writes");
+        store_temperature(&handler, 3800);
+        store_schedule(&handler, Schedule::Custom);
+
+        let inode = |key: &str| std::fs::metadata(keys.join(key)).map(|m| m.ino()).ok();
+        let before = (inode(KEY_TEMPERATURE), inode(KEY_SCHEDULE));
+
+        let mut settings = Settings::default();
+        resync(&handler, &mut settings);
+        resync(&handler, &mut settings);
+
+        assert_eq!(
+            (inode(KEY_TEMPERATURE), inode(KEY_SCHEDULE)),
+            before,
+            "resync must only read"
+        );
+
+        let _ = std::fs::remove_dir_all(keys);
     }
 
     #[test]
@@ -670,7 +934,7 @@ mod tests {
     }
 
     /// The same guarantee for the two keys that drove the loop in practice: the
-    /// schedule and its parked companion, which `defer_schedule_without_setup`
+    /// schedule and its parked companion, which `defer_without_setup`
     /// writes as a pair on every pass that changes anything.
     #[test]
     fn an_unchanged_schedule_pair_is_never_rewritten() {
@@ -679,11 +943,11 @@ mod tests {
         let (keys, handler) = scratch_store("schedule");
         let inode = |key: &str| std::fs::metadata(keys.join(key)).map(|m| m.ino()).ok();
 
-        store_schedule(&handler, Schedule::SunsetToSunrise);
+        store_schedule(&handler, Schedule::Solar);
         store_deferred_schedule(&handler, None);
         let before = (inode(KEY_SCHEDULE), inode(KEY_DEFERRED_SCHEDULE));
 
-        store_schedule(&handler, Schedule::SunsetToSunrise);
+        store_schedule(&handler, Schedule::Solar);
         store_deferred_schedule(&handler, None);
         assert_eq!(
             (inode(KEY_SCHEDULE), inode(KEY_DEFERRED_SCHEDULE)),
@@ -704,6 +968,40 @@ mod tests {
         assert_ne!(inode(KEY_SCHEDULE), before.0, "a real change must write");
 
         let _ = std::fs::remove_dir_all(keys);
+    }
+
+    /// The slider runs in warmth and reads out in Kelvin, so the two have to be
+    /// exact inverses — a rounding slip here would drift the temperature every
+    /// time the window rebuilt the slider from the stored value.
+    #[test]
+    fn warmth_and_kelvin_are_inverses() {
+        let mut kelvin = MIN_KELVIN;
+        while kelvin <= MAX_KELVIN {
+            let round_tripped = kelvin_of(warmth_of(kelvin));
+            assert!(
+                (round_tripped - kelvin).abs() < 0.001,
+                "{kelvin}K came back as {round_tripped}K"
+            );
+            kelvin += 50.0;
+        }
+    }
+
+    /// Dragging right has to warm the screen. That is the whole reason the track
+    /// is in warmth rather than Kelvin, so it is worth a test that fails loudly
+    /// if anyone ever "fixes" the mapping back.
+    #[test]
+    fn more_warmth_means_a_lower_temperature() {
+        assert!(kelvin_of(0.0) > kelvin_of(MAX_WARMTH));
+        assert_eq!(kelvin_of(0.0), MAX_KELVIN, "the left end is barely tinted");
+        assert_eq!(kelvin_of(MAX_WARMTH), MIN_KELVIN, "the right end is amber");
+    }
+
+    /// A hand-edited config can hold anything; the slider must not be handed a
+    /// position outside its own track.
+    #[test]
+    fn out_of_range_temperatures_are_clamped_onto_the_track() {
+        assert_eq!(warmth_of(9000.0), 0.0);
+        assert_eq!(warmth_of(1000.0), MAX_WARMTH);
     }
 
     #[test]

@@ -27,6 +27,14 @@
 //! whichever process was asking, so all of them have to hear about it. See
 //! [`backoff_path`].
 //!
+//! Which of those password prompts may appear at all is decided by who asked.
+//! [`apply_now`] carries a change the user just made and may spend a prompt on
+//! it; [`reconcile`] carries a verdict nobody asked for — a schedule boundary, a
+//! resume, a snapshot loaded at startup — and may not. So an unset-up host is
+//! quiet until someone touches a control, and the settings that outlive an
+//! uninstall cannot put a dialog on the screen of their own accord. See
+//! [`would_prompt`] and [`defer_without_setup`].
+//!
 //! [`reconcile`] also notices a resume from suspend, whose modeset drops the
 //! gamma LUT we wrote, and discards the record so the tint is pushed again.
 //! Every run mode reconciles, so this happens whether or not the daemon is the
@@ -77,9 +85,34 @@ pub type TintState = Option<u32>;
 /// which no sandbox permission grants — so it has to live on the host and be
 /// reached through `flatpak-spawn --host`. And because our `/usr` is the flatpak
 /// runtime rather than the host's, we cannot stat the host's copy directly.
-fn in_flatpak() -> bool {
+pub fn in_flatpak() -> bool {
     static IN_FLATPAK: OnceLock<bool> = OnceLock::new();
     *IN_FLATPAK.get_or_init(|| std::path::Path::new("/.flatpak-info").exists())
+}
+
+/// Launches a host program and returns immediately, without waiting for it.
+///
+/// For handing the user off to another application, where the point is that they
+/// go and do something there — so the child outliving us is correct, and a
+/// window that blocked until they were done would be a bug.
+///
+/// Sandboxed this needs `flatpak-spawn --host`: the program lives on the host,
+/// not in the runtime, and reaching it needs no permission we don't already hold
+/// for the helper.
+pub fn spawn_on_host(program: &str, args: &[&str]) -> Result<(), String> {
+    let mut command = if in_flatpak() {
+        let mut command = Command::new("flatpak-spawn");
+        command.arg("--host").arg(program);
+        command
+    } else {
+        Command::new(program)
+    };
+
+    command
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("could not start {program}: {err}"))
 }
 
 /// Runs `test <flag> <path>` on the host, for probing paths our own filesystem
@@ -369,33 +402,60 @@ fn probe_host_setup() -> HostSetup {
     }
 }
 
+/// Whether a privileged call would put a password prompt on the screen right
+/// now.
+///
+/// [`HostSetup::Ready`] is exactly the state in which it would not: a helper
+/// sitting at a path the polkit rule whitelists, speaking a command line this
+/// build still knows. Every other answer routes the call through the setup
+/// program instead — see [`privileged_program`] — whose path inside the flatpak
+/// no rule can name, so it asks. Unsandboxed there is nothing to install and the
+/// answer is always `Ready`, which is why none of this touches the `.deb`.
+fn would_prompt() -> bool {
+    host_setup() != HostSetup::Ready
+}
+
+/// Stands the stored settings down to what the host can actually deliver:
+/// parking a schedule with no setup under it until the setup lands, and dropping
+/// a force-on the same missing setup makes undeliverable.
+///
+/// Both exist because the config outlives the app. It lives in the user's own
+/// `~/.config/cosmic`, which survives uninstalling the flatpak, so reinstalling
+/// brings back settings that were fine under the previous install and have
+/// nothing underneath them now.
+///
+/// Every run mode does this on its tick, next to [`config::expire_override`], so
+/// it happens whichever part of the app is running.
+pub fn defer_without_setup(
+    handler: &Option<cosmic::cosmic_config::Config>,
+    settings: &mut config::Settings,
+) {
+    // One probe for both halves. Unset-up it costs round trips out of the
+    // sandbox, and asking twice a tick would double them for one answer.
+    let ready = host_setup() == HostSetup::Ready;
+    defer_schedule(handler, settings, ready);
+    drop_undeliverable_override(handler, settings, ready);
+}
+
 /// Parks a schedule that has no host setup under it, and restores it once the
 /// setup lands.
 ///
 /// A schedule is the one setting that acts while nobody is watching, which makes
 /// it the one that must not outlive the helper that lets it act silently.
 /// Choosing a schedule in the settings window is already gated on the setup, but
-/// a schedule can also arrive *already stored*: the config lives in the user's
-/// own `~/.config/cosmic`, which survives uninstalling the flatpak. Reinstalling
-/// therefore brings back a schedule with nothing underneath it, and left alone it
-/// would fire a password prompt at sunset with the user away from the screen —
-/// exactly what the setup exists to prevent.
+/// a schedule can also arrive *already stored* — see [`defer_without_setup`] —
+/// and left alone it would fire a password prompt at sunset with the user away
+/// from the screen, exactly what the setup exists to prevent.
 ///
 /// So the schedule drops to `Manual` and is remembered rather than discarded: the
 /// user gets their schedule back when the setup completes instead of having to
 /// notice it was silently turned off and pick it again.
-///
-/// Every run mode does this on its tick, next to [`config::expire_override`], so
-/// it happens whichever part of the app is running.
-pub fn defer_schedule_without_setup(
+fn defer_schedule(
     handler: &Option<cosmic::cosmic_config::Config>,
     settings: &mut config::Settings,
+    ready: bool,
 ) {
-    let Some(next) = deferral(
-        host_setup() == HostSetup::Ready,
-        settings.schedule,
-        settings.deferred_schedule,
-    ) else {
+    let Some(next) = deferral(ready, settings.schedule, settings.deferred_schedule) else {
         return;
     };
 
@@ -405,6 +465,70 @@ pub fn defer_schedule_without_setup(
     config::store_deferred_schedule(handler, next.deferred);
 }
 
+/// Drops a stored force-on the host has no way to act on, so the app comes up
+/// describing the screen the user is actually looking at.
+///
+/// An override survives an uninstall exactly as a schedule does, and a reinstall
+/// inherits it the same way. [`reconcile`] will not spend a password prompt
+/// putting it back up, which is what keeps the reinstall quiet — but left
+/// standing it would leave the applet showing a moon over an untinted screen,
+/// and a toggle offering to turn *off* a night light that was never on. That
+/// click goes through [`apply_now`], which does prompt, so the stale setting
+/// would have cost a password prompt after all, just later and for no change.
+///
+/// Unlike the schedule this is dropped rather than parked. An override is a
+/// decision about *right now*, taken in a session that has since ended; handing
+/// it back at the end of a setup hours later is not what its owner asked for,
+/// and by then they will have set whatever they meant with the toggle anyway.
+fn drop_undeliverable_override(
+    handler: &Option<cosmic::cosmic_config::Config>,
+    settings: &mut config::Settings,
+    ready: bool,
+) {
+    // The free test first, so a settled tick — which is every tick but the one
+    // that changes something — reaches neither the lock nor the record.
+    if !undeliverable_override(ready, settings.tint_override) {
+        return;
+    }
+    // Then the lock, and only then the record, in that order. An apply in flight
+    // is one the user is answering for as we ask: its override was written by a
+    // toggle a moment ago and its record is not written yet, so the test below
+    // would read it as stale state and take the tint away from under someone
+    // part-way through typing a password for it. Asking the lock first also
+    // closes the gap the other way round, since an applier holds it across its
+    // own `record_applied` — a lock that is free means the record it wrote is
+    // already there to be read.
+    if apply_in_flight() {
+        return;
+    }
+    // A tint already on screen is the one thing that makes a force-on
+    // deliverable without the setup, and it is reachable: a host the setup
+    // cannot write to — `/usr/local` read-only, say — falls back to the bundled
+    // helper, which works and charges a password prompt per change. Someone who
+    // has just paid one to warm their screen must not have it taken away on the
+    // next tick, and be charged a second prompt to put it back.
+    if applied().flatten().is_some() {
+        return;
+    }
+
+    settings.tint_override = config::Override::Auto;
+    config::store_override(handler, config::Override::Auto);
+}
+
+/// Whether a stored override asks for something this host has no way to deliver.
+///
+/// Only a force-*on* ever does. `Off` and `Auto` ask for nothing privileged that
+/// the schedule deferral above hasn't already covered, and `Auto` is the value
+/// the drop writes — rewriting it would have every tick waking the config watch
+/// in the other two processes.
+///
+/// Split from the config writes, and from the two records the caller consults
+/// around it, so the rule can be tested without a host to probe or a store to
+/// write to.
+fn undeliverable_override(ready: bool, tint_override: config::Override) -> bool {
+    !ready && tint_override == config::Override::On
+}
+
 /// The schedule and its parked companion after a deferral pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ScheduleDeferral {
@@ -412,9 +536,9 @@ struct ScheduleDeferral {
     deferred: Option<config::Schedule>,
 }
 
-/// What [`defer_schedule_without_setup`] should write, or `None` when the two
-/// values already agree with the host — which is every tick but the one that
-/// changes something, so the common path writes nothing.
+/// What [`defer_schedule`] should write, or `None` when the two values already
+/// agree with the host — which is every tick but the one that changes something,
+/// so the common path writes nothing.
 ///
 /// Split from the config writes so the decision can be tested without a host to
 /// probe or a config store to write to.
@@ -760,6 +884,20 @@ fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> boo
 /// Also re-pushes the tint after a resume from suspend; see
 /// [`discard_record_if_resumed`].
 ///
+/// **Never prompts for a password.** Nobody asked for this apply — it is a
+/// schedule boundary, a resume, or a snapshot loaded at startup — so there is
+/// nobody owed a dialog, and quite possibly nobody at the screen at all. Without
+/// the host setup under it this therefore stands down and reports
+/// [`Reconcile::Pending`], leaving the first prompt to be spent by [`apply_now`]
+/// on a change the user made with their own hands.
+///
+/// That is what keeps a reinstall quiet. The config lives in the user's own
+/// `~/.config/cosmic` and outlives the flatpak, so a reinstalled app comes back
+/// up holding settings that were fine under the previous install and have
+/// nothing under them now — and putting them on the screen used to open a polkit
+/// dialog seconds after startup, with nothing on screen to say what had asked
+/// for it.
+///
 /// Blocks like [`apply_now`] when there is work to do.
 pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
     with_apply_lock(|| {
@@ -771,6 +909,13 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
             return Reconcile::UpToDate;
         }
         if backing_off(state) {
+            return Reconcile::Pending;
+        }
+        // Asked here rather than at the top because this is the only branch that
+        // can reach pkexec: a screen that already matches, or a state we are
+        // backing off from, pays nothing for the question.
+        if would_prompt() {
+            println!("backend: not applying unasked — the host setup would prompt for a password");
             return Reconcile::Pending;
         }
         match apply_unlocked(state, brightness) {
@@ -956,6 +1101,30 @@ fn with_apply_lock<T>(f: impl FnOnce() -> T) -> T {
         libc::flock(lock.as_raw_fd(), libc::LOCK_EX);
     }
     f()
+}
+
+/// Whether one of our processes is part-way through an apply right now.
+///
+/// A non-blocking probe of the same lock [`with_apply_lock`] takes: whoever is
+/// applying holds it across the whole privileged call, so failing to take it
+/// means a change is in flight — most likely with a password prompt up, waiting
+/// on the user.
+///
+/// Only ever consulted in order to *decline* to act, because that is the only
+/// honest reading of it: taking the lock says nothing was in flight a moment
+/// ago, not that nothing will be a moment later. Nothing here waits, since the
+/// callers are GUI event loops and the wait is as long as a person takes to type
+/// a password. Without a runtime directory to lock in we answer "no", which is
+/// the same way [`with_apply_lock`] fails open.
+fn apply_in_flight() -> bool {
+    let Some(lock) = lock_file() else {
+        return false;
+    };
+    // SAFETY: `lock` owns a live file descriptor for the whole call, and `flock`
+    // only ever inspects the descriptor. A lock we do take is released when
+    // `lock` is dropped at the end of this function.
+    let taken = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    !taken
 }
 
 /// Opens (creating if needed) the file the apply lock is taken on. `None` when
@@ -1456,12 +1625,35 @@ mod tests {
     #[test]
     fn a_schedule_without_a_setup_is_parked_not_dropped() {
         assert_eq!(
-            deferral(false, Schedule::SunsetToSunrise, None),
+            deferral(false, Schedule::Solar, None),
             Some(ScheduleDeferral {
                 schedule: Schedule::Manual,
-                deferred: Some(Schedule::SunsetToSunrise),
+                deferred: Some(Schedule::Solar),
             })
         );
+    }
+
+    /// Both scheduled modes make the same promise — to change the screen while
+    /// nobody is watching — so both need the setup and both get parked without
+    /// it. Only `Manual`, which acts on a click that someone is present for, can
+    /// run unset-up.
+    #[test]
+    fn every_scheduled_mode_needs_the_setup() {
+        for schedule in [Schedule::Solar, Schedule::Custom] {
+            assert_eq!(
+                deferral(false, schedule, None),
+                Some(ScheduleDeferral {
+                    schedule: Schedule::Manual,
+                    deferred: Some(schedule),
+                }),
+                "{schedule:?} should be parked without a setup"
+            );
+            assert_eq!(
+                deferral(true, schedule, None),
+                None,
+                "{schedule:?} should be left alone once set up"
+            );
+        }
     }
 
     /// The parked schedule is the user's, so completing the setup gives it back
@@ -1469,9 +1661,9 @@ mod tests {
     #[test]
     fn completing_the_setup_restores_the_parked_schedule() {
         assert_eq!(
-            deferral(true, Schedule::Manual, Some(Schedule::SunsetToSunrise)),
+            deferral(true, Schedule::Manual, Some(Schedule::Solar)),
             Some(ScheduleDeferral {
-                schedule: Schedule::SunsetToSunrise,
+                schedule: Schedule::Solar,
                 deferred: None,
             })
         );
@@ -1483,7 +1675,7 @@ mod tests {
     #[test]
     fn a_settled_schedule_writes_nothing() {
         assert_eq!(deferral(false, Schedule::Manual, None), None);
-        assert_eq!(deferral(true, Schedule::SunsetToSunrise, None), None);
+        assert_eq!(deferral(true, Schedule::Solar, None), None);
         assert_eq!(deferral(true, Schedule::Manual, None), None);
     }
 
@@ -1492,9 +1684,43 @@ mod tests {
     #[test]
     fn a_parked_schedule_survives_ticks_without_a_setup() {
         assert_eq!(
-            deferral(false, Schedule::Manual, Some(Schedule::SunsetToSunrise)),
+            deferral(false, Schedule::Manual, Some(Schedule::Solar)),
             None
         );
+    }
+
+    /// The other half of the reinstall case, and the one that was missed. A
+    /// force-on outlives the flatpak just as a schedule does, and the schedule
+    /// deferral above does nothing about it — so the app came back up with the
+    /// night light "on", reconciled the screen against it seconds after startup,
+    /// and put a password prompt in front of whoever happened to be working.
+    #[test]
+    fn a_force_on_without_a_setup_is_dropped() {
+        assert!(undeliverable_override(false, config::Override::On));
+    }
+
+    /// Only a force-on is undeliverable. `Off` asks for nothing privileged that
+    /// the schedule deferral hasn't already covered, and `Auto` is the value
+    /// this drops *to* — rewriting it would have every tick waking the config
+    /// watch in the other two processes.
+    #[test]
+    fn nothing_else_is_ever_dropped() {
+        for tint_override in [config::Override::Auto, config::Override::Off] {
+            assert!(
+                !undeliverable_override(false, tint_override),
+                "{tint_override:?} should survive an unset-up host"
+            );
+        }
+        for tint_override in [
+            config::Override::Auto,
+            config::Override::On,
+            config::Override::Off,
+        ] {
+            assert!(
+                !undeliverable_override(true, tint_override),
+                "a set-up host delivers {tint_override:?}"
+            );
+        }
     }
 
     /// The regression this exists for. `/etc/polkit-1/rules.d` is `0750

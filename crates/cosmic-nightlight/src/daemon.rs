@@ -6,7 +6,7 @@
 //! [`TICK_INTERVAL`] and reconciles the screen against it.
 //!
 //! Each pass is the same sequence of calls the applet and the settings window
-//! make on their own tick — [`backend::defer_schedule_without_setup`], then
+//! make on their own tick — [`backend::defer_without_setup`], then
 //! [`config::expire_override`], then [`backend::reconcile`] — so the schedule is
 //! honored whenever *any* part of the app is running. This mode
 //! adds no behavior of its own; it exists only to cover the case where none of
@@ -21,6 +21,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::autostart;
 use crate::backend;
 use crate::config;
 use crate::TICK_INTERVAL;
@@ -32,10 +33,30 @@ const POLL_INTERVAL: Duration = TICK_INTERVAL;
 const SESSION_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_READY_POLL: Duration = Duration::from_millis(500);
 
-/// Runs the daemon loop forever. Applies a change only when the desired tint
-/// actually differs from what's already applied, so we don't trigger a VT
-/// bounce on every poll.
-pub fn run() {
+/// Runs the daemon loop. Applies a change only when the desired tint actually
+/// differs from what's already applied, so we don't trigger a VT bounce on every
+/// poll.
+///
+/// `managed` marks the daemon as belonging to the settings window's "Run in
+/// Background" switch, which makes it answerable to that switch: it stands down
+/// if another managed daemon already has the job, and stops when the switch is
+/// turned off. An unmanaged daemon — the systemd unit, or one run by hand — runs
+/// until it is stopped the same way it was started, and ignores all of this.
+pub fn run(managed: bool) {
+    // Before the VT wait, so a duplicate started by a login that raced the
+    // window costs nothing rather than sitting out the timeout first.
+    let _slot = if managed {
+        match autostart::claim_slot() {
+            autostart::Slot::Taken => {
+                println!("cosmic-nightlight: another background process is already running");
+                return;
+            }
+            autostart::Slot::Free(guard) => guard,
+        }
+    } else {
+        None
+    };
+
     println!("cosmic-nightlight: running in daemon mode");
 
     // At login the daemon can start before the compositor owns its VT. Doing a
@@ -46,10 +67,37 @@ pub fn run() {
     let handler = config::handler();
 
     loop {
+        // The switch is the autostart entry itself, so turning it off in the
+        // settings window is what ends this loop. Checked here rather than
+        // signalled, because sandboxed the two are in separate PID namespaces
+        // and neither can find the other to signal it.
+        if managed && !autostart::is_enabled() {
+            println!("cosmic-nightlight: background running was turned off, exiting");
+            return;
+        }
+
+        // The applet can be added back at any time, including in a session where
+        // the settings window is never opened to notice. Left alone this would
+        // then start a second scheduler at every login forever, invisibly — the
+        // settings row that could turn it off is only shown while the applet is
+        // absent. So the redundant one stands down and takes its autostart entry
+        // with it. Only on a confident `Some(true)`: see the settings window's
+        // `retire_redundant_background`, which does the same on the same terms.
+        if managed && config::applet_on_panel() == Some(true) {
+            println!(
+                "cosmic-nightlight: the applet is on the panel, so background running is no \
+                 longer needed and has been turned off"
+            );
+            if let Err(err) = autostart::set_enabled(false) {
+                eprintln!("cosmic-nightlight: {err}");
+            }
+            return;
+        }
+
         let mut settings = config::Settings::load_from(&handler);
         // Before the override expiry, which reads the schedule to decide whether
         // the override has been caught up to.
-        backend::defer_schedule_without_setup(&handler, &mut settings);
+        backend::defer_without_setup(&handler, &mut settings);
         config::expire_override(&handler, &mut settings);
         let desired = settings.tint_on().then_some(settings.temperature);
 

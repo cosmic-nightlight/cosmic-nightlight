@@ -16,6 +16,7 @@
         "--talk-name=com.system76.CosmicSettingsDaemon",
         "--talk-name=com.system76.CosmicSettingsDaemon.Config.*",
         "--filesystem=xdg-config/cosmic:rw",
+        "--filesystem=xdg-config/autostart:create",
         "--talk-name=org.freedesktop.Flatpak"
     ],
     "build-options": {
