@@ -119,8 +119,9 @@ flatpak run io.github.cosmic_nightlight --settings
 ```
 
 The manifest is pinned to a release tag, so this builds that release rather than
-your checkout. To build the working tree instead, swap the `git` source for
-`{"type": "dir", "path": ".."}` — see [flatpak/README.md](flatpak/README.md).
+your checkout. To build the working tree instead, derive a local manifest from
+it with `python3 generate-local-manifest.py` and build that — see
+[flatpak/README.md](flatpak/README.md).
 
 </details>
 
