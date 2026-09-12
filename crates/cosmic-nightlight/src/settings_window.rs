@@ -981,8 +981,8 @@ impl SettingsWindow {
         if self.settings.schedule == Schedule::Solar && solar::today().is_none() {
             return Some(
                 match solar::have_location() {
-                    true => "The sun doesn't set here today — using the times below",
-                    false => "No location for your time zone — using the times below",
+                    true => "The sun doesn't set here today, using the times below",
+                    false => "No location for your time zone, using the times below",
                 }
                 .to_owned(),
             );
