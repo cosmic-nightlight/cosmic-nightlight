@@ -45,8 +45,8 @@
                 {
                     "type": "git",
                     "url": "https://github.com/cosmic-nightlight/cosmic-nightlight.git",
-                    "tag": "v0.5.0",
-                    "commit": "4833a96bb939ea23ae16e5cb53ee028780b1bd6e"
+                    "tag": "v0.5.1",
+                    "commit": "72d09d9956d77a21ab069d58b791acffb0ac64a5"
                 },
                 "cargo-sources.json"
             ]
