@@ -1025,6 +1025,57 @@ impl Request {
         }
     }
 
+    /// Folds a newer request into this one, for the worker's drain loop.
+    ///
+    /// Usually the newer request simply wins: the earlier ones describe states
+    /// the user has already moved on from, which is the whole point of draining.
+    ///
+    /// A [`Request::Force`] overtaken by a [`Request::Reconcile`] is the one
+    /// pairing that is not that. It is not the user moving on — it is the config
+    /// write the `Force` was queued beside arriving back as a watcher
+    /// notification, and it takes that shape on every single change: the commit
+    /// stores the setting and queues the apply, the store wakes our own
+    /// subscription, and the resulting `ConfigUpdated` reconciles. Both requests
+    /// carry the same freshly-stored values; only their intent differs.
+    ///
+    /// Letting the `Reconcile` win dropped the change. `Reconcile` applies
+    /// nothing when the record already matches, and the record holds only the
+    /// temperature ([`record_applied`]), so a brightness-only change found its
+    /// temperature unchanged and returned `UpToDate` without touching the
+    /// screen. That left the stored settings describing one screen and the user
+    /// looking at another, and it stayed that way: every later tick reconciles
+    /// the same snapshot against the same record and lands on `UpToDate` again,
+    /// so nothing short of a temperature change or a resume discarding the
+    /// record ever put it right.
+    ///
+    /// Only reachable with an apply already in flight — otherwise the worker has
+    /// taken the `Force` before the watcher gets a word in — which is to say
+    /// while the user is adjusting both sliders in the same second.
+    ///
+    /// So the newer *values* win, as they should. What survives is everything
+    /// that made the `Force` a `Force`: the intent to apply regardless of the
+    /// record, the moment the user asked (which dates the ask against a refusal
+    /// arriving in the meantime — see [`apply_now`]), and the report owed to
+    /// whoever is waiting to hear whether it landed.
+    fn superseded_by(self, newer: Request) -> Request {
+        match (self, newer) {
+            (
+                Request::Force {
+                    report,
+                    requested_at,
+                    ..
+                },
+                Request::Reconcile(state, brightness),
+            ) => Request::Force {
+                state,
+                brightness,
+                report,
+                requested_at,
+            },
+            (_, newer) => newer,
+        }
+    }
+
     fn run(self) {
         match self {
             Request::Force {
@@ -1072,8 +1123,10 @@ fn run_worker(receiver: Receiver<Request>) {
         // states the user has already moved on from. Dropping a superseded
         // `Force` drops its report unanswered, which is the intended signal:
         // its outcome would describe a screen that request never got to set.
+        // See [`Request::superseded_by`] for the one pairing where the newer
+        // request is not the user moving on, and does not get to win outright.
         while let Ok(newer) = receiver.try_recv() {
-            request = newer;
+            request = request.superseded_by(newer);
         }
         request.run();
     }
@@ -2020,5 +2073,151 @@ mod tests {
         }
         assert_eq!(delay, MAX_RETRY_DELAY);
         assert_eq!(auth, MAX_AUTH_RETRY_DELAY);
+    }
+
+    /// Pulls the parts back out of a request, so a fold can be asserted on
+    /// without `Request` needing to be comparable — it holds a boxed callback,
+    /// which is neither `Debug` nor `PartialEq`.
+    fn as_force(request: Request) -> (TintState, f32, Option<Report>, SystemTime) {
+        match request {
+            Request::Force {
+                state,
+                brightness,
+                report,
+                requested_at,
+            } => (state, brightness, report, requested_at),
+            Request::Reconcile(state, brightness) => {
+                panic!("expected a forced apply, got a reconcile of {state:?} at {brightness}")
+            }
+        }
+    }
+
+    /// The queue as a brightness change actually fills it: the commit stores the
+    /// setting and queues the apply, and the store wakes our own config
+    /// subscription, whose `ConfigUpdated` reconciles the very same values. With
+    /// an apply already in flight both are sitting there when the worker drains.
+    ///
+    /// The reconcile used to win, and a reconcile whose temperature matches the
+    /// record applies nothing at all — so the brightness the user just chose
+    /// never reached the screen, and no later tick put it there either.
+    #[test]
+    fn a_reconcile_does_not_cancel_an_apply_the_user_asked_for() {
+        let asked = Request::Force {
+            state: Some(3500),
+            brightness: 1.0,
+            report: None,
+            requested_at: t0(),
+        };
+
+        let (state, brightness, _, _) =
+            as_force(asked.superseded_by(Request::Reconcile(Some(3500), 0.6)));
+
+        assert_eq!(state, Some(3500));
+        assert_eq!(
+            brightness, 0.6,
+            "the newer values still win, only the intent is kept"
+        );
+    }
+
+    /// The fold has to keep the moment the *user* asked, not the moment it was
+    /// folded: that timestamp is what decides whether a password prompt refused
+    /// in the meantime has already answered this request. See [`apply_now`].
+    #[test]
+    fn a_folded_apply_keeps_the_moment_the_user_asked() {
+        let asked = Request::Force {
+            state: None,
+            brightness: 1.0,
+            report: None,
+            requested_at: t0(),
+        };
+
+        let (_, _, _, requested_at) =
+            as_force(asked.superseded_by(Request::Reconcile(Some(4000), 1.0)));
+
+        assert_eq!(requested_at, t0());
+    }
+
+    /// A toggle is put back when its apply doesn't land, which it only hears
+    /// about through the report. Folding has to carry that along, or flipping the
+    /// toggle while another apply is in flight leaves it describing a screen it
+    /// may never have set.
+    #[test]
+    fn a_folded_apply_still_answers_its_caller() {
+        let (tx, rx) = mpsc::channel();
+        let asked = Request::Force {
+            state: Some(3500),
+            brightness: 1.0,
+            report: Some(Box::new(move |ok| {
+                let _ = tx.send(ok);
+            })),
+            requested_at: t0(),
+        };
+
+        let (_, _, report, _) = as_force(asked.superseded_by(Request::Reconcile(Some(3500), 0.6)));
+
+        report.expect("the report survives the fold")(true);
+        assert_eq!(rx.try_recv(), Ok(true));
+    }
+
+    /// Two reconciles in a row is the ordinary case for a window that both
+    /// applies and ticks; the fold has to survive being applied repeatedly.
+    #[test]
+    fn folding_repeatedly_keeps_the_latest_values() {
+        let asked = Request::Force {
+            state: Some(3500),
+            brightness: 1.0,
+            report: None,
+            requested_at: t0(),
+        };
+
+        let folded = asked
+            .superseded_by(Request::Reconcile(Some(3500), 0.6))
+            .superseded_by(Request::Reconcile(Some(2700), 0.4));
+        let (state, brightness, _, requested_at) = as_force(folded);
+
+        assert_eq!(state, Some(2700));
+        assert_eq!(brightness, 0.4);
+        assert_eq!(requested_at, t0());
+    }
+
+    /// Nothing above changes what the drain loop is for. A newer apply is the
+    /// user moving on, so it wins outright — values, timestamp and all.
+    #[test]
+    fn a_newer_apply_supersedes_an_older_one() {
+        let asked = Request::Force {
+            state: Some(3500),
+            brightness: 1.0,
+            report: None,
+            requested_at: t0(),
+        };
+        let newer_at = t0() + Duration::from_secs(5);
+
+        let (state, brightness, _, requested_at) = as_force(asked.superseded_by(Request::Force {
+            state: None,
+            brightness: 0.5,
+            report: None,
+            requested_at: newer_at,
+        }));
+
+        assert_eq!(state, None);
+        assert_eq!(brightness, 0.5);
+        assert_eq!(requested_at, newer_at);
+    }
+
+    /// And an apply queued *after* a reconcile still replaces it, which is the
+    /// direction that was never in question.
+    #[test]
+    fn an_apply_supersedes_the_reconcile_before_it() {
+        let pending = Request::Reconcile(Some(3500), 1.0);
+
+        let (state, brightness, _, _) = as_force(pending.superseded_by(Request::Force {
+            state: Some(2700),
+            brightness: 0.5,
+            report: None,
+            requested_at: t0(),
+        }));
+
+        assert_eq!(state, Some(2700));
+        assert_eq!(brightness, 0.5);
     }
 }
