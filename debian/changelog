@@ -1,3 +1,25 @@
+cosmic-nightlight (0.5.1-1) noble; urgency=medium
+
+  * Fix a brightness change being dropped when it was made while another change
+    was still being applied — moving both sliders in the same second. The stored
+    setting and the screen then disagreed, and stayed that way until the
+    temperature changed or the machine resumed from suspend: every later check
+    compared the same two unchanged values and concluded there was nothing to
+    do.
+  * Every string the app can show now comes from a message catalog rather than
+    from the code, so a language can be added without touching Rust and without
+    building the app. English is still the only one, so nothing on screen
+    changes; what changes is that the next one is a file. Anything a translation
+    leaves out falls back to English per message, so a partial translation is
+    useful on the day it is started. See docs/translating.md.
+  * The flatpak manifest for building the working tree is now derived from the
+    release manifest by flatpak/generate-local-manifest.py rather than kept as a
+    hand-edited copy that had to be held in step with it. The instructions for
+    regenerating cargo-sources.json were also wrong in a way that failed
+    quietly, and now say to regenerate before each build.
+
+ -- Daniel Watts <danielcwtts@gmail.com>  Sat, 12 Sep 2026 12:00:00 -0500
+
 cosmic-nightlight (0.5.0-1) noble; urgency=medium
 
   * Add a "Sunset to Sunrise" schedule that follows the real sun where the

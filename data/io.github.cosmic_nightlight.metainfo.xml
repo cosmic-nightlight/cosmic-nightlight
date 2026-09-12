@@ -51,6 +51,19 @@
   </screenshots>
 
   <releases>
+    <release version="0.5.1" date="2026-09-12">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.5.1</url>
+      <description>
+        <p>
+          A fix for a brightness change that could go missing, and the groundwork for translations.
+        </p>
+        <ul>
+          <li>Changing brightness while another change was still being applied no longer leaves the screen and the saved setting disagreeing</li>
+          <li>Every word the app shows now comes from a message catalog, so a language can be added without touching the code</li>
+          <li>English is still the only language, so nothing on screen changes yet</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-07-31">
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.5.0</url>
       <description>
