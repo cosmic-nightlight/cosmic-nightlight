@@ -52,41 +52,60 @@ host; it must be installed again. The helper itself can remain in `/usr/local/bi
 
 ## Generating cargo-sources.json
 
-Builds run offline, so every crate has to be declared up front. `Cargo.lock` is
-committed, and the one git dependency (libcosmic) is handled by the generator.
+Builds run offline, so every crate has to be declared up front. The generator
+reads the committed `Cargo.lock`, including registry crates and git dependencies.
+Run the commands in this section and the build section from `flatpak/`.
+
+Set up the generator once:
 
 ```bash
 python3 -m venv venv
 ./venv/bin/pip install aiohttp toml tomlkit
 curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+```
+
+Regenerate before each build using the lockfile for the source being built:
+
+```bash
 ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json
 ```
 
-Regenerate whenever a *dependency* changes. `Cargo.lock` also records our own
-crates' version numbers, and a release bump rewrites those three lines without
-affecting the file — it only ever describes external crates. Check what actually
-moved before spending the download:
-
-```bash
-git diff <last-release>..HEAD -- ../Cargo.lock | grep -E '^[+-]name'
-```
-
-Empty output means the existing `cargo-sources.json` is still good. The output is
-~450KB and is not committed here; cosmic-flatpak carries its own copy.
+Do not infer freshness from a diff against a release tag: the ignored generated
+file may predate that tag, and a committed diff excludes working-tree changes.
+Checking only package names also misses version and git revision changes.
+`cargo-sources.json` is not committed here; cosmic-flatpak carries its own copy.
 
 ## Building locally
 
 ```bash
-sudo apt-get install flatpak-builder just
+sudo apt-get install flatpak-builder
 flatpak install flathub com.system76.Cosmic.BaseApp org.freedesktop.Sdk//25.08 \
     org.freedesktop.Sdk.Extension.rust-stable//25.08
+```
+
+To build the working tree, regenerate the dependency sources and derive the
+local manifest before every build. Stop if either generation command fails:
+
+```bash
+./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json &&
+python3 generate-local-manifest.py &&
+flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.local.json
+```
+
+The script copies the main manifest and replaces the app's git source with the
+working directory, excluding build artifacts. This preserves permissions and
+build commands without maintaining a second manifest by hand. The generated
+`io.github.cosmic_nightlight.local.json` is gitignored.
+
+To build the pinned release instead, generate `cargo-sources.json` from the
+`Cargo.lock` at the main manifest's pinned commit, then run:
+
+```bash
 flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.json
 ```
 
-To build the working tree rather than the release, swap the `git` source for
-`{"type": "dir", "path": ".."}` — or use `io.github.cosmic_nightlight.local.json`,
-which is that same manifest with the swap already made and is gitignored.
-cosmic-flatpak needs the `git` source, so remember not to commit the swap.
+CI regenerates dependency sources and sets the main manifest's source to the ref
+being built. cosmic-flatpak uses the main manifest's git pin.
 
 ## Re-pinning for a release
 
