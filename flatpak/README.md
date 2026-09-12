@@ -28,6 +28,28 @@ Until the setup has been run the app still works — pkexec just prompts for a
 password on every schedule transition instead of none, because no rule names the
 path inside the flatpak. That is the whole of what the setup buys.
 
+## Repeated password prompts on Fedora Atomic
+
+Fedora Atomic redirects `/usr/local` to `/var/usrlocal`. `pkexec` resolves
+symlinks before passing the executable path to polkit, so the rule must also
+allow `/var/usrlocal/bin/cosmic-nightlight-helper`. Older rules only allowed
+the `/usr/bin` and `/usr/local/bin` paths: setup could succeed, yet every tint
+change still required authentication, including automatic applies at login or
+after resume.
+
+For an existing installation, install the corrected rule from this checkout:
+
+```bash
+sudo install -o root -g root -m 0644 polkit/49-cosmic-nightlight.rules \
+    /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
+pkexec /usr/local/bin/cosmic-nightlight-helper --version
+```
+
+Polkit reloads rule changes automatically. The version command should print the
+helper version without a password prompt and does not change the display.
+Updating the Flatpak alone does not replace the rule previously copied to the
+host; it must be installed again. The helper itself can remain in `/usr/local/bin`.
+
 ## Generating cargo-sources.json
 
 Builds run offline, so every crate has to be declared up front. `Cargo.lock` is

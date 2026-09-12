@@ -6,15 +6,17 @@
 //
 // pkexec authorizes program launches through the generic
 // "org.freedesktop.policykit.exec" action; action.lookup("program")
-// returns the absolute path of the program being run.
+// returns the canonical path of the program being run. Fedora Atomic redirects
+// /usr/local to /var/usrlocal, so allow that root-owned location as well.
 //
-// Install to /etc/polkit-1/rules.d/ (see scripts/install-polkit-rule.sh).
+// Install to /etc/polkit-1/rules.d/ (see scripts/install.sh).
 
 polkit.addRule(function (action, subject) {
     var program = action.lookup("program");
     var is_helper =
         program == "/usr/bin/cosmic-nightlight-helper" ||
-        program == "/usr/local/bin/cosmic-nightlight-helper";
+        program == "/usr/local/bin/cosmic-nightlight-helper" ||
+        program == "/var/usrlocal/bin/cosmic-nightlight-helper";
     if (
         action.id == "org.freedesktop.policykit.exec" &&
         is_helper &&
