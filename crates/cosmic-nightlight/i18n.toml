@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MPL-2.0
+#
+# Localization config, read at build time by `i18n-embed-fl`'s `fl!` macro and
+# at run time by the loader in `src/i18n.rs`.
+#
+# `fallback_language` names the catalog every message must exist in. It is what
+# makes `fl!("some-id")` a compile error when the id is missing from
+# `i18n/en/cosmic_nightlight.ftl`, and what a partly-translated locale falls
+# back to per message — so a half-finished translation shows English for the
+# lines it hasn't reached rather than a blank or an error.
+fallback_language = "en"
+
+[fluent]
+# Catalogs live at `i18n/<language>/<domain>.ftl`.
+assets_dir = "i18n"
+
+# Set explicitly because the two macros that read this file disagree about the
+# default. `fl!` (i18n-embed-fl) takes the package name verbatim, dash and all,
+# while `fluent_language_loader!` (i18n-embed-impl) takes it via i18n-config's
+# `module_name()`, which rewrites `-` to `_`. Leaving it unset gets a build that
+# demands `cosmic-nightlight.ftl` and a binary that then looks for
+# `cosmic_nightlight.ftl` at run time. Naming it once settles both.
+#
+# This, not the crate name, is what the catalog files must be called.
+domain = "cosmic_nightlight"

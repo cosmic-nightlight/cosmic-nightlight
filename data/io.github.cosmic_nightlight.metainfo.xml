@@ -4,6 +4,15 @@
   <id>io.github.cosmic_nightlight</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MPL-2.0</project_license>
+  <!-- Translations of the four blocks below — name, summary, description and the
+       screenshot captions — go inline here rather than in the Fluent catalogs,
+       because software centers read this file without running anything of ours.
+       Each translated element repeats its tag with an xml:lang attribute
+       (`<name xml:lang="de">…</name>`) beside the untagged English original,
+       which stays as the fallback. See docs/translating.md.
+
+       Release descriptions are deliberately left untranslated: they are a
+       historical record that would need retranslating every release. -->
   <name>Night Light for COSMIC</name>
   <summary>Warm screen color temperature to reduce eye strain on a schedule</summary>
 

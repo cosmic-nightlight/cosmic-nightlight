@@ -946,9 +946,12 @@ name = "cosmic-nightlight"
 version = "0.5.0"
 dependencies = [
  "chrono",
+ "i18n-embed",
+ "i18n-embed-fl",
  "libc",
  "libcosmic",
  "nightlight-core",
+ "rust-embed",
 ]
 
 [[package]]

@@ -21,6 +21,7 @@ the screen — see [How it works](#how-it-works).
   - [Try the flatpak build](#try-the-flatpak-build)
   - [Build from source (for development)](#build-from-source-for-development)
 - [Using it](#using-it)
+- [Translating](#translating)
 - [Known limitations](#known-limitations)
 - [How it works](#how-it-works)
 - [Architecture](#architecture)
@@ -223,6 +224,17 @@ pkexec /usr/bin/cosmic-nightlight-helper --off                 # reset
 
 (Use `/usr/local/bin/...` if you installed via `scripts/install.sh`.)
 </details>
+
+## Translating
+
+The app is English-only so far, but everything needed to add a language is in
+place. A translation is one file — a copy of
+[`crates/cosmic-nightlight/i18n/en/cosmic_nightlight.ftl`](crates/cosmic-nightlight/i18n/en/cosmic_nightlight.ftl)
+with the values translated — and it needs no Rust and no build. Partial
+translations are welcome: anything missing falls back to English.
+
+See [docs/translating.md](docs/translating.md) for how, including the two
+packaging files that carry the name and description your software center shows.
 
 ## Known limitations
 

@@ -15,6 +15,22 @@ chrono.workspace = true
 # For `flock`, which serializes gamma applies across our processes.
 libc.workspace = true
 
+# Localization. All three are already in the tree underneath libcosmic, which
+# localizes itself the same way, so declaring them here pulls in no new crates
+# and leaves `Cargo.lock` alone — what it adds to the binary is the catalogs.
+#
+# `fluent-system` is the message format; `desktop-requester` is what reads
+# `LANG`/`LC_MESSAGES` to find out which language to ask for.
+i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
+# The `fl!` proc macro, which resolves message ids against `i18n.toml`'s
+# fallback catalog at compile time.
+i18n-embed-fl = "0.10"
+# `debug-embed` makes debug builds carry the catalogs the way release builds do.
+# Without it rust-embed reads them off disk relative to the crate directory, so
+# a debug binary run from anywhere else comes up with no translations — a
+# confusing way to lose an afternoon.
+rust-embed = { version = "8", features = ["debug-embed"] }
+
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"
 # Unpinned, so `Cargo.lock` is what decides. Frosted glass needs a libcosmic that

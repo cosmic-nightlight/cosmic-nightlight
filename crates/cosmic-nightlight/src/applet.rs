@@ -21,6 +21,7 @@ use cosmic::Element;
 
 use crate::backend;
 use crate::config::{self, APP_ID};
+use crate::fl;
 use crate::TICK_INTERVAL;
 
 /// Runs the application as a COSMIC panel applet.
@@ -281,7 +282,7 @@ impl cosmic::Application for NightLightApplet {
 
         Element::from(self.core.applet.applet_tooltip::<Message>(
             button,
-            "Night Light",
+            fl!("app-name"),
             self.popup.is_some(),
             Message::Surface,
             None,
@@ -349,7 +350,7 @@ impl NightLightApplet {
     fn popup_content(&self) -> Element<'_, Message> {
         let tint_on = self.settings.tint_on();
 
-        let toggle = settings::item::builder("Night Light")
+        let toggle = settings::item::builder(fl!("app-name"))
             .description(config::status_text(&self.settings, tint_on))
             .control(toggler(tint_on).on_toggle(Message::Toggle));
 
@@ -357,7 +358,7 @@ impl NightLightApplet {
         // the screen and a fuller bar is a stronger tint — see
         // `config::MAX_WARMTH`. The end captions carry the direction, since the
         // Kelvin readout counts *down* as the tint deepens.
-        let (less, more) = config::WARMTH_ENDS;
+        let (less, more) = config::warmth_ends();
         let temperature_slider = cosmic::widget::Column::new()
             .spacing(2)
             .width(Length::Fixed(200.0))
@@ -377,7 +378,10 @@ impl NightLightApplet {
             );
 
         let temperature_row = settings::item(
-            format!("Temperature: {}K", self.temperature as i32),
+            fl!(
+                "temperature",
+                kelvin = (self.temperature as i32).to_string()
+            ),
             temperature_slider,
         );
 
@@ -388,13 +392,13 @@ impl NightLightApplet {
         let temperature = cosmic::widget::Column::new()
             .spacing(2)
             .push(temperature_row)
-            .push(widget::text::caption(config::FLICKER_NOTE));
+            .push(widget::text::caption(config::flicker_note()));
 
         // Match the native COSMIC applets (e.g. the keyboard applet's "Keyboard
         // Settings...") — a flat, full-width `AppletMenu` row that highlights on
         // hover, sitting below a divider rather than a standalone button.
         let settings_button =
-            cosmic::applet::menu_button(widget::text::body("Night Light Settings..."))
+            cosmic::applet::menu_button(widget::text::body(fl!("applet-settings-button")))
                 .on_press(Message::OpenSettings);
 
         // No `list_column` card — native applet popups lay controls out flat,

@@ -1,4 +1,9 @@
 [Desktop Entry]
+# Translations go in this file, not in the Fluent catalogs: the desktop and the
+# software centers read this entry directly, before anything of ours has run.
+# Add a suffixed line beside each of Name, GenericName, Comment and Keywords —
+# `Name[de]=...` — and leave the unsuffixed lines as the English fallback. See
+# docs/translating.md.
 Type=Application
 Name=Night Light
 GenericName=Color Temperature

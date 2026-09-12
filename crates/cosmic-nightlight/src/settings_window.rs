@@ -14,15 +14,27 @@ use cosmic::{widget, Element};
 use crate::autostart;
 use crate::backend;
 use crate::config::{self, Schedule, SETTINGS_APP_ID};
+use crate::fl;
 use crate::solar;
 use crate::TICK_INTERVAL;
 
+/// Labels for the schedule dropdown.
+///
 /// Must stay in the same order as [`Schedule::ALL`], which is what the dropdown
-/// index means.
-const SCHEDULE_OPTIONS: &[&str] = &["Off", "Sunset to Sunrise", "Custom Schedule"];
+/// index means — the catalog names each one separately rather than listing them
+/// together, so that reordering this list is the only way to reorder the menu.
+fn schedule_labels() -> Vec<String> {
+    vec![
+        fl!("schedule-off"),
+        fl!("schedule-solar"),
+        fl!("schedule-custom"),
+    ]
+}
 
 /// Labels for the AM/PM dropdown, indexed by `usize::from(hour >= 12)`.
-const MERIDIEM_OPTIONS: &[&str] = &["AM", "PM"];
+fn meridiem_labels() -> Vec<String> {
+    vec![fl!("meridiem-am"), fl!("meridiem-pm")]
+}
 
 /// Width of each part of a time picker. Fixed so that the `From` and `To` rows
 /// line up regardless of how wide their current values happen to render.
@@ -33,6 +45,10 @@ const MERIDIEM_OPTIONS: &[&str] = &["AM", "PM"];
 /// dropdown left-aligns its label and right-aligns its caret, so surplus width
 /// all lands in the middle and reads as three loose controls rather than one
 /// time.
+///
+/// Only the meridiem is translated, and it is the one part that could outgrow
+/// this. Check the time pickers when adding a language whose AM/PM runs longer
+/// than two characters.
 const TIME_PART_WIDTH: f32 = 60.0;
 
 /// Floor for the brightness slider.
@@ -79,7 +95,7 @@ pub enum TimePart {
     Hour(usize),
     /// Index into `minute_labels`, which is the minute itself.
     Minute(usize),
-    /// Index into [`MERIDIEM_OPTIONS`].
+    /// Index into `meridiem_labels`.
     Meridiem(usize),
 }
 
@@ -105,9 +121,12 @@ pub struct SettingsWindow {
     /// the pickers show an AM/PM dropdown.
     military: bool,
     /// Pre-built dropdown labels, owned by `self` so the dropdowns' borrows
-    /// outlive `view`.
+    /// outlive `view`. The last two are looked up rather than computed, but they
+    /// are held for the same reason: a dropdown borrows its options.
     hour_labels: Vec<String>,
     minute_labels: Vec<String>,
+    schedule_labels: Vec<String>,
+    meridiem_labels: Vec<String>,
     /// Whether the flatpak build still wants its one-time host setup, which
     /// decides whether the setup row exists at all. Held rather than re-derived
     /// per render because answering costs round trips out of the sandbox; the
@@ -219,6 +238,8 @@ impl cosmic::Application for SettingsWindow {
             military,
             hour_labels: hour_labels(military),
             minute_labels: (0..60).map(|minute| format!("{minute:02}")).collect(),
+            schedule_labels: schedule_labels(),
+            meridiem_labels: meridiem_labels(),
             setup: backend::host_setup(),
             setup_busy: false,
             setup_error: None,
@@ -439,29 +460,29 @@ impl cosmic::Application for SettingsWindow {
             .header(
                 widget::Column::new()
                     .spacing(2)
-                    .push(widget::text::heading("Night Light"))
-                    .push(widget::text::caption(config::FLICKER_NOTE)),
+                    .push(widget::text::heading(fl!("app-name")))
+                    .push(widget::text::caption(config::flicker_note())),
             )
             .add(
-                widget::settings::item::builder("Night Light")
+                widget::settings::item::builder(fl!("app-name"))
                     .description(config::status_text(&self.settings, tint_on))
                     .control(widget::toggler(tint_on).on_toggle(Message::Toggle)),
             )
             .add(
-                widget::settings::item::builder(format!(
-                    "Temperature: {}K",
-                    self.temperature as i32
+                widget::settings::item::builder(fl!(
+                    "temperature",
+                    kelvin = (self.temperature as i32).to_string()
                 ))
                 .control(self.temperature_slider()),
             )
             .add(
-                widget::settings::item::builder(format!(
-                    "Brightness: {}%",
-                    (self.brightness * 100.0).round() as i32
+                widget::settings::item::builder(fl!(
+                    "brightness",
+                    percent = ((self.brightness * 100.0).round() as i32).to_string()
                 ))
                 // Brightness rides on the tint, so it does nothing while the
                 // night light is off — say so, or setting it by day looks broken.
-                .description("Dims the screen while the night light is on")
+                .description(fl!("brightness-description"))
                 .control(
                     widget::slider(
                         MIN_BRIGHTNESS..=1.0,
@@ -475,14 +496,16 @@ impl cosmic::Application for SettingsWindow {
             );
 
         let schedule_control = widget::dropdown(
-            SCHEDULE_OPTIONS,
+            &self.schedule_labels,
             Some(self.settings.schedule.index()),
             Message::ScheduleSelected,
         )
         // Wide enough for the longest option ("Sunset to Sunrise") so the
         // popup menu (which is sized to the longest option but anchored
         // to this widget's left edge) doesn't extend past the window's
-        // right edge and get clipped.
+        // right edge and get clipped. A translation with a longer option than
+        // that gets a wider menu than this, and the clipping comes back — worth
+        // a look when adding one.
         .width(Length::Fixed(SLIDER_WIDTH));
 
         // With no schedule there is no summary, and the row must carry no
@@ -490,14 +513,14 @@ impl cosmic::Application for SettingsWindow {
         // takes up a line, which grows the row and leaves the "Schedule" label
         // sitting above the dropdown instead of level with it.
         let schedule_row = match self.schedule_summary() {
-            Some(summary) => widget::settings::item::builder("Schedule")
+            Some(summary) => widget::settings::item::builder(fl!("schedule"))
                 .description(summary)
                 .control(schedule_control),
-            None => widget::settings::item("Schedule", schedule_control),
+            None => widget::settings::item(fl!("schedule"), schedule_control),
         };
 
         let mut schedule = widget::settings::section()
-            .title("Schedule")
+            .title(fl!("schedule"))
             .add(schedule_row);
 
         // The pickers appear exactly when the times they edit are the ones in
@@ -507,17 +530,17 @@ impl cosmic::Application for SettingsWindow {
         if self.uses_typed_times() {
             schedule = schedule
                 .add(widget::settings::item(
-                    "From",
+                    fl!("schedule-from"),
                     self.time_picker(Bound::Sunset, self.settings.sunset_minutes),
                 ))
                 .add(widget::settings::item(
-                    "To",
+                    fl!("schedule-to"),
                     self.time_picker(Bound::Sunrise, self.settings.sunrise_minutes),
                 ));
         }
 
         let mut sections: Vec<Element<'_, Message>> =
-            vec![widget::text::title2("Night Light Settings").into()];
+            vec![widget::text::title2(fl!("settings-title")).into()];
         // Above the settings proper, because it is a thing to do rather than a
         // thing to configure — and absent entirely on any install that doesn't
         // need it, which is every `.deb` and every flatpak already set up.
@@ -602,34 +625,33 @@ impl SettingsWindow {
             // the program's path, and a flatpak's path carries the commit hash,
             // so no polkit action can be written to match it — see
             // docs/flatpak-design.md. This row is the only place the reason fits.
-            backend::HostSetup::Needed => (
-                "Set up Night Light",
-                "Turning on the night light needs a one-time system permission.",
-            ),
+            backend::HostSetup::Needed => (fl!("setup-title"), fl!("setup-description")),
             backend::HostSetup::Outdated => (
-                "Update the installed helper",
-                "The helper Night Light installed was put there by an older version and no \
-                 longer understands this one. Running the setup again replaces it.",
+                fl!("setup-outdated-title"),
+                fl!("setup-outdated-description"),
             ),
         };
 
         let action = if matches!(self.setup, backend::HostSetup::Outdated) {
-            "Update"
+            fl!("setup-action-update")
         } else {
-            "Set Up"
+            fl!("setup-action")
         };
 
         // No `on_press` while busy, which is what makes the button inert — the
         // prompt is a separate process and clicking again would stack another.
         let button = if self.setup_busy {
-            widget::button::standard("Working…")
+            widget::button::standard(fl!("setup-working"))
         } else {
             widget::button::suggested(action).on_press(Message::RunHostSetup)
         };
 
         let description = match &self.setup_error {
-            Some(error) => format!("{description}\n\nThat didn't work: {error}."),
-            None => description.to_string(),
+            Some(error) => format!(
+                "{description}\n\n{}",
+                fl!("action-failed", error = error.as_str())
+            ),
+            None => description,
         };
 
         Some(
@@ -675,20 +697,20 @@ impl SettingsWindow {
         let actions = widget::Row::new()
             .spacing(8)
             .align_y(Alignment::Center)
-            .push(widget::button::suggested("Add to Panel").on_press(Message::OpenAppletSettings))
             .push(
-                widget::button::standard("Run in Background").on_press(Message::SetAutostart(true)),
+                widget::button::suggested(fl!("banner-add-to-panel"))
+                    .on_press(Message::OpenAppletSettings),
+            )
+            .push(
+                widget::button::standard(fl!("background-toggle"))
+                    .on_press(Message::SetAutostart(true)),
             );
 
         Some(
             widget::settings::section()
                 .add(
-                    widget::settings::item::builder("Your schedule isn't running")
-                        .description(
-                            "Night Light keeps to its schedule through the applet on your \
-                             panel, or while this window is open. Add the applet, or let it \
-                             run in the background instead.",
-                        )
+                    widget::settings::item::builder(fl!("banner-title"))
+                        .description(fl!("banner-description"))
                         .control(actions),
                 )
                 .into(),
@@ -758,23 +780,24 @@ impl SettingsWindow {
         // grounded in having actually seen it; the worst version of this row is
         // one that talks a user out of a scheduler they still need.
         let description = if self.applet_present == Some(true) {
-            "Not needed: the Night Light applet is on your panel and already keeps the \
-             schedule. Turning this off stops the duplicate background process."
+            fl!("background-description-redundant")
         } else {
-            "Keeps the schedule running when this window is closed, and starts again at \
-             each login."
+            fl!("background-description")
         };
 
         let description = match &self.autostart_error {
-            Some(error) => format!("{description}\n\nThat didn't work: {error}."),
-            None => description.to_string(),
+            Some(error) => format!(
+                "{description}\n\n{}",
+                fl!("action-failed", error = error.as_str())
+            ),
+            None => description,
         };
 
         Some(
             widget::settings::section()
-                .title("Background")
+                .title(fl!("background"))
                 .add(
-                    widget::settings::item::builder("Run in Background")
+                    widget::settings::item::builder(fl!("background-toggle"))
                         .description(description)
                         .control(widget::toggler(self.autostart).on_toggle(Message::SetAutostart)),
                 )
@@ -887,7 +910,7 @@ impl SettingsWindow {
         if !self.military {
             picker = picker.push(
                 widget::dropdown(
-                    MERIDIEM_OPTIONS,
+                    &self.meridiem_labels,
                     Some(usize::from(hour >= 12)),
                     move |index| Message::TimeSelected(bound, TimePart::Meridiem(index)),
                 )
@@ -935,7 +958,7 @@ impl SettingsWindow {
         .step(50.0)
         .on_release(Message::TemperatureCommitted);
 
-        let (less, more) = config::WARMTH_ENDS;
+        let (less, more) = config::warmth_ends();
         // The left caption takes the slack rather than a spacer sitting between
         // the two, which keeps the right one pinned to the track's end.
         let ends = widget::Row::new()
@@ -979,20 +1002,21 @@ impl SettingsWindow {
         // just the symptom: the pickers appear alongside them, and without a
         // reason their turning up under "Sunset to Sunrise" reads as a bug.
         if self.settings.schedule == Schedule::Solar && solar::today().is_none() {
-            return Some(
-                match solar::have_location() {
-                    true => "The sun doesn't set here today, using the times below",
-                    false => "No location for your time zone, using the times below",
-                }
-                .to_owned(),
-            );
+            return Some(match solar::have_location() {
+                true => fl!("schedule-no-sunset"),
+                false => fl!("schedule-no-location"),
+            });
         }
 
         if sunset == sunrise {
-            return Some(format!("Warm all day from {from}"));
+            return Some(fl!("schedule-summary-all-day", from = from.as_str()));
         }
 
-        Some(format!("Warm from {from} to {to}"))
+        Some(fl!(
+            "schedule-summary-window",
+            from = from.as_str(),
+            to = to.as_str()
+        ))
     }
 }
 

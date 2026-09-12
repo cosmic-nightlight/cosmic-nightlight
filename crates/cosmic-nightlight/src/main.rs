@@ -9,13 +9,15 @@
 //!   `--managed` ties it to the settings window's "Run in Background" switch,
 //!   so that turning that off stops it (see [`autostart`]).
 //!
-//! All three share state through [`config`] (`cosmic_config`).
+//! All three share state through [`config`] (`cosmic_config`), and all three
+//! read their user-facing strings through [`i18n`].
 
 mod applet;
 mod autostart;
 mod backend;
 mod config;
 mod daemon;
+mod i18n;
 mod migrate;
 mod settings_window;
 mod solar;
@@ -32,6 +34,11 @@ use std::time::Duration;
 pub const TICK_INTERVAL: Duration = Duration::from_secs(15);
 
 fn main() -> cosmic::iced::Result {
+    // Before anything that could put a word on screen, and before the argument
+    // parsing that decides which mode does it — every mode below gets its
+    // strings from the catalog this chooses.
+    i18n::init();
+
     let args: Vec<String> = std::env::args().collect();
 
     migrate::remove_autostart_entries();

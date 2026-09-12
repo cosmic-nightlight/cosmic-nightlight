@@ -12,6 +12,7 @@
 use chrono::{Local, Timelike};
 use cosmic::cosmic_config::{Config, ConfigGet, ConfigSet};
 
+use crate::fl;
 use crate::solar;
 
 /// Config namespace; also the applet's application/desktop id. Every run mode
@@ -327,28 +328,35 @@ pub fn expire_override(handler: &Option<Config>, settings: &mut Settings) {
 /// resulting file change wakes up the other process's subscription.
 pub fn subscription() -> cosmic::iced::Subscription<Settings> {
     cosmic::iced::Subscription::run(|| {
-        cosmic::iced::stream::channel(10, |mut output: cosmic::iced::futures::channel::mpsc::Sender<Settings>| async move {
-            use cosmic::iced::futures::{SinkExt, StreamExt};
+        cosmic::iced::stream::channel(
+            10,
+            |mut output: cosmic::iced::futures::channel::mpsc::Sender<Settings>| async move {
+                use cosmic::iced::futures::{SinkExt, StreamExt};
 
-            let Some(config) = handler() else {
-                std::future::pending::<()>().await;
-                unreachable!();
-            };
+                let Some(config) = handler() else {
+                    std::future::pending::<()>().await;
+                    unreachable!();
+                };
 
-            let _ = output.send(Settings::load_from(&Some(config.clone()))).await;
+                let _ = output
+                    .send(Settings::load_from(&Some(config.clone())))
+                    .await;
 
-            let (tx, mut rx) = cosmic::iced::futures::channel::mpsc::channel(10);
-            let Ok(_watcher) = config.watch(move |_, _keys| {
-                let _ = tx.clone().try_send(());
-            }) else {
-                std::future::pending::<()>().await;
-                unreachable!();
-            };
+                let (tx, mut rx) = cosmic::iced::futures::channel::mpsc::channel(10);
+                let Ok(_watcher) = config.watch(move |_, _keys| {
+                    let _ = tx.clone().try_send(());
+                }) else {
+                    std::future::pending::<()>().await;
+                    unreachable!();
+                };
 
-            while rx.next().await.is_some() {
-                let _ = output.send(Settings::load_from(&Some(config.clone()))).await;
-            }
-        })
+                while rx.next().await.is_some() {
+                    let _ = output
+                        .send(Settings::load_from(&Some(config.clone())))
+                        .await;
+                }
+            },
+        )
     })
 }
 
@@ -473,7 +481,10 @@ pub fn store_sunset_minutes(handler: &Option<Config>, value: u32) {
 // this crate deliberately does not depend on directly.
 
 fn set_str_if_changed(config: &Config, key: &str, value: &str) {
-    if config.get::<String>(key).is_ok_and(|stored| stored == value) {
+    if config
+        .get::<String>(key)
+        .is_ok_and(|stored| stored == value)
+    {
         return;
     }
     report(key, config.set(key, value));
@@ -572,8 +583,12 @@ pub fn format_time(minutes: u32, military: bool) -> String {
         format!("{hour:02}:{minute:02}")
     } else {
         let h12 = if hour % 12 == 0 { 12 } else { hour % 12 };
-        let ampm = if hour < 12 { "AM" } else { "PM" };
-        format!("{h12}:{minute:02}{ampm}")
+        let meridiem = if hour < 12 {
+            fl!("meridiem-am")
+        } else {
+            fl!("meridiem-pm")
+        };
+        format!("{h12}:{minute:02}{meridiem}")
     }
 }
 
@@ -587,7 +602,9 @@ pub fn format_time(minutes: u32, military: bool) -> String {
 /// lock (see `backend`), which the user sees as a flicker; saying so up front
 /// keeps it from reading as a fault. "May" is accuracy rather than softening —
 /// how long the bounce lasts depends on the GPU and how fast it modesets.
-pub const FLICKER_NOTE: &str = "Night light changes may briefly flicker the screen";
+pub fn flicker_note() -> String {
+    fl!("flicker-note")
+}
 
 /// The ends of the temperature range, in Kelvin. [`MIN_KELVIN`] is a deep amber
 /// and [`MAX_KELVIN`] is near enough untinted.
@@ -623,7 +640,9 @@ pub fn kelvin_of(warmth: f32) -> f32 {
 /// The captions under the temperature slider, left and right. The Kelvin number
 /// is exact but says nothing about which way is warmer, and "2500" reading as
 /// *more* orange than "6500" is not something to make anyone infer.
-pub const WARMTH_ENDS: (&str, &str) = ("Less warm", "More warm");
+pub fn warmth_ends() -> (String, String) {
+    (fl!("warmth-less"), fl!("warmth-more"))
+}
 
 /// The line under the "Night Light" toggle, shared by the applet popup and the
 /// settings window. On a schedule it names the time the current state runs out;
@@ -633,14 +652,18 @@ pub const WARMTH_ENDS: (&str, &str) = ("Less warm", "More warm");
 /// text can't disagree if the clock ticks over a boundary between the two.
 pub fn status_text(settings: &Settings, tint_on: bool) -> String {
     let Some((sunset, sunrise)) = settings.window() else {
-        return if tint_on { "On" } else { "Off" }.to_owned();
+        return if tint_on {
+            fl!("status-on")
+        } else {
+            fl!("status-off")
+        };
     };
 
     let military = is_military_time();
     if tint_on {
-        format!("On Until {}", format_time(sunrise, military))
+        fl!("status-on-until", time = format_time(sunrise, military))
     } else {
-        format!("Off Until {}", format_time(sunset, military))
+        fl!("status-off-until", time = format_time(sunset, military))
     }
 }
 
