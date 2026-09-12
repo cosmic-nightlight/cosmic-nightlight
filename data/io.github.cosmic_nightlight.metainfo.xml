@@ -55,9 +55,12 @@
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.5.1</url>
       <description>
         <p>
-          A fix for a brightness change that could go missing, and the groundwork for translations.
+          The flatpak build now works on Fedora Atomic, and every release carries a ready-built bundle.
         </p>
         <ul>
+          <li>Fixes repeated password prompts on Fedora Atomic, where setup reported success and every change asked for a password anyway</li>
+          <li>An existing Atomic install needs the corrected permission rule copied to the host again, which updating alone does not do</li>
+          <li>Every release now attaches a ready-built flatpak bundle, so trying the sandboxed build is a download rather than a compile</li>
           <li>Changing brightness while another change was still being applied no longer leaves the screen and the saved setting disagreeing</li>
           <li>Every word the app shows now comes from a message catalog, so a language can be added without touching the code</li>
           <li>English is still the only language, so nothing on screen changes yet</li>

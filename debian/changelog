@@ -1,5 +1,22 @@
 cosmic-nightlight (0.5.1-1) noble; urgency=medium
 
+  * Fix repeated password prompts on Fedora Atomic, where the setup reported
+    success and every tint change then asked for a password anyway — including
+    the automatic ones at login and after resume, which are the case the setup
+    exists to remove. Atomic redirects /usr/local to /var/usrlocal and pkexec
+    resolves symlinks before handing the path to polkit, so the rule never
+    matched what polkit was asked about. It now allows the resolved path, which
+    is root-owned on those hosts. An existing install needs the corrected rule
+    copied to the host again; updating the flatpak does not replace it. See
+    docs/fedora-atomic-password-prompts.md.
+  * Every release now attaches a ready-built flatpak bundle. The sandboxed
+    build previously existed nowhere a user could reach — the release page
+    carried only the .deb, and it is not in the COSMIC Store yet — so trying it
+    meant generating cargo-sources.json and compiling libcosmic by hand. Built
+    by CI on the tag, so it cannot go stale against the .deb beside it.
+  * The flatpak manifest is pinned to a release tag rather than to the merged
+    branch the sandbox work was done on, so a Store build cannot pick up
+    whatever later lands on that branch under a released version's metadata.
   * Fix a brightness change being dropped when it was made while another change
     was still being applied — moving both sliders in the same second. The stored
     setting and the screen then disagreed, and stayed that way until the
@@ -17,6 +34,14 @@ cosmic-nightlight (0.5.1-1) noble; urgency=medium
     hand-edited copy that had to be held in step with it. The instructions for
     regenerating cargo-sources.json were also wrong in a way that failed
     quietly, and now say to regenerate before each build.
+  * The flatpak CI build installs elfutils and a gdk-pixbuf SVG loader, each of
+    which a desktop has lying around and a runner does not, and each of which
+    failed the build on the last step of the module after the whole Rust
+    compile had succeeded.
+  * Add an attended test for the dismissed-prompt backoff, which only
+    misbehaves against a real polkit: it stashes the host helper and rule, runs
+    the flatpak's daemon against one dismissed dialog, and reads the verdict
+    out of the log.
 
  -- Daniel Watts <danielcwtts@gmail.com>  Sat, 12 Sep 2026 12:00:00 -0500
 
