@@ -919,9 +919,14 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
         // Only defers when *every* connected display is off, so a closed lid
         // with an external monitor still applies to the monitor.
         if every_connected_display_asleep() {
-            println!("backend: deferring an unasked apply — every connected display is asleep");
+            // Logged once per stretch of sleep, not on every tick: a display
+            // can stay asleep all night.
+            if !DEFERRING_WHILE_ASLEEP.swap(true, Ordering::Relaxed) {
+                println!("backend: deferring an unasked apply — every connected display is asleep");
+            }
             return Reconcile::Pending;
         }
+        DEFERRING_WHILE_ASLEEP.store(false, Ordering::Relaxed);
         if backing_off(state) {
             return Reconcile::Pending;
         }
@@ -953,10 +958,15 @@ pub enum Reconcile {
     UpToDate,
     /// The wanted state was applied.
     Applied,
-    /// Not applied: either the attempt failed, or we are still backing off from
-    /// an earlier failure. Worth trying again later.
+    /// Not applied: the attempt failed, we are still backing off from an
+    /// earlier failure, the host setup would prompt for a password, or every
+    /// connected display is asleep. Worth trying again later.
     Pending,
 }
+
+/// Set while [`reconcile`] is holding off because every display is asleep, so
+/// the deferral is logged once rather than on every tick.
+static DEFERRING_WHILE_ASLEEP: AtomicBool = AtomicBool::new(false);
 
 /// Whether to hold off an unasked apply because every connected display is
 /// already asleep. See the deferral in [`reconcile`] for why.
@@ -1769,8 +1779,9 @@ mod tests {
         ]));
     }
 
-    /// An empty port also reads `Off`; on its own it must not defer the apply,
-    /// or a machine with nothing plugged in would never tint.
+    /// An empty port can read `Off` (some drivers report `On` instead); on its
+    /// own it must not defer the apply, or a machine with nothing plugged in
+    /// would never tint.
     #[test]
     fn disconnected_ports_do_not_count_as_asleep() {
         assert!(!every_connected_display_asleep_from([(
