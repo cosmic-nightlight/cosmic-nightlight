@@ -908,6 +908,20 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
         if applied() == Some(state) {
             return Reconcile::UpToDate;
         }
+        // Do not bounce the VT to apply a schedule change while every display is
+        // asleep. The bounce wakes the panel — logind revokes the compositor's
+        // DRM master and, on switch-back, cosmic-comp re-modesets with DPMS on —
+        // and because nothing reports that wake as activity, cosmic-idle never
+        // re-arms its timer and the panel stays lit until real input arrives.
+        // Deferring until a display is awake means there is nothing to wake and
+        // nothing to strand; the reconcile tick retries, and a resume re-pushes
+        // via discard_record_if_resumed.
+        // Only defers when *every* connected display is off, so a closed lid
+        // with an external monitor still applies to the monitor.
+        if every_connected_display_asleep() {
+            println!("backend: deferring an unasked apply — every connected display is asleep");
+            return Reconcile::Pending;
+        }
         if backing_off(state) {
             return Reconcile::Pending;
         }
@@ -942,6 +956,71 @@ pub enum Reconcile {
     /// Not applied: either the attempt failed, or we are still backing off from
     /// an earlier failure. Worth trying again later.
     Pending,
+}
+
+/// Whether to hold off an unasked apply because every connected display is
+/// already asleep. See the deferral in [`reconcile`] for why.
+///
+/// Reads the world-readable `/sys/class/drm/<card>-<connector>/` attributes:
+/// `status` to tell connected connectors from empty ports, `dpms` for the
+/// panel's power state (`drivers/gpu/drm/drm_sysfs.c`, `DEVICE_ATTR_RO`). A
+/// connector that has lost its CRTC reads `Off`
+/// (`drivers/gpu/drm/drm_atomic_helper.c`, `disable_outputs`), which is how
+/// smithay blanks.
+///
+/// Fails open: if sysfs is missing or unreadable we report "not asleep" and let
+/// the apply proceed, so an unusual layout never silently suppresses a tint.
+fn every_connected_display_asleep() -> bool {
+    let entries = match std::fs::read_dir("/sys/class/drm") {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+    let mut states = Vec::new();
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        // Connector directories are `cardN-<connector>` (e.g. `card0-eDP-1`);
+        // the bare `cardN` node has no dash and is not a connector.
+        match dir.file_name().and_then(|n| n.to_str()) {
+            Some(name) if name.starts_with("card") && name.contains('-') => {}
+            _ => continue,
+        }
+        let status = match sysfs_trim(&dir.join("status")) {
+            Some(status) => status,
+            None => continue,
+        };
+        let connected = status == "connected";
+        let dpms = sysfs_trim(&dir.join("dpms")).unwrap_or_default();
+        states.push((connected, dpms));
+    }
+    every_connected_display_asleep_from(states)
+}
+
+/// Reads a sysfs attribute and trims it, or `None` if unreadable.
+fn sysfs_trim(path: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
+}
+
+/// The decision, split from the sysfs read so it can be tested without a GPU.
+///
+/// `true` only when at least one connector is connected and *every* connected
+/// one reports DPMS `Off`. A single lit display — an external monitor beside a
+/// closed lid — returns `false` so the apply still lands on it. No connected
+/// connector at all returns `false`, so an unreadable sysfs fails open.
+fn every_connected_display_asleep_from(
+    connectors: impl IntoIterator<Item = (bool, String)>,
+) -> bool {
+    let mut any_connected = false;
+    for (connected, dpms) in connectors {
+        if connected {
+            any_connected = true;
+            if dpms != "Off" {
+                return false;
+            }
+        }
+    }
+    any_connected
 }
 
 /// Queues an [`apply_now`] on a background thread.
@@ -1671,6 +1750,53 @@ mod tests {
     use super::*;
 
     use crate::config::Schedule;
+
+    /// A closed lid (eDP asleep) with an external monitor lit must still apply
+    /// to the monitor, so one awake display is enough to proceed.
+    #[test]
+    fn one_awake_display_is_enough_to_apply() {
+        assert!(!every_connected_display_asleep_from([
+            (true, "Off".to_string()),
+            (true, "On".to_string()),
+        ]));
+    }
+
+    #[test]
+    fn all_connected_displays_off_defers() {
+        assert!(every_connected_display_asleep_from([
+            (true, "Off".to_string()),
+            (true, "Off".to_string()),
+        ]));
+    }
+
+    /// An empty port also reads `Off`; on its own it must not defer the apply,
+    /// or a machine with nothing plugged in would never tint.
+    #[test]
+    fn disconnected_ports_do_not_count_as_asleep() {
+        assert!(!every_connected_display_asleep_from([(
+            false,
+            "Off".to_string()
+        )]));
+    }
+
+    /// No connected connector at all — an absent or unreadable sysfs — fails
+    /// open so a tint is never silently lost.
+    #[test]
+    fn no_connectors_at_all_does_not_defer() {
+        assert!(!every_connected_display_asleep_from([]));
+    }
+
+    /// Only `Off` counts as asleep. `Standby`/`Suspend`/`PreAuth` are not fully
+    /// dark, so we do not treat them as a reason to defer.
+    #[test]
+    fn a_non_off_power_state_counts_as_awake() {
+        for state in ["Standby", "Suspend", "PreAuth", "On"] {
+            assert!(
+                !every_connected_display_asleep_from([(true, state.to_string())]),
+                "{state} should not read as asleep"
+            );
+        }
+    }
 
     /// The reinstall case: the config outlives the flatpak, so a schedule comes
     /// back with no helper under it and must not be left standing to prompt for
