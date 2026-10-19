@@ -909,8 +909,8 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
             return Reconcile::UpToDate;
         }
         // Do not bounce the VT to apply a schedule change while every display is
-        // asleep. The bounce wakes the panel — logind revokes the compositor's
-        // DRM master and, on switch-back, cosmic-comp re-modesets with DPMS on —
+        // asleep. The bounce wakes the panel (logind revokes the compositor's
+        // DRM master and, on switch-back, cosmic-comp re-modesets with DPMS on),
         // and because nothing reports that wake as activity, cosmic-idle never
         // re-arms its timer and the panel stays lit until real input arrives.
         // Deferring until a display is awake means there is nothing to wake and
@@ -922,7 +922,7 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
             // Logged once per stretch of sleep, not on every tick: a display
             // can stay asleep all night.
             if !DEFERRING_WHILE_ASLEEP.swap(true, Ordering::Relaxed) {
-                println!("backend: deferring an unasked apply — every connected display is asleep");
+                println!("backend: deferring an unasked apply: every connected display is asleep");
             }
             return Reconcile::Pending;
         }
@@ -1015,9 +1015,9 @@ fn sysfs_trim(path: &std::path::Path) -> Option<String> {
 /// The decision, split from the sysfs read so it can be tested without a GPU.
 ///
 /// `true` only when at least one connector is connected and *every* connected
-/// one reports DPMS `Off`. A single lit display — an external monitor beside a
-/// closed lid — returns `false` so the apply still lands on it. No connected
-/// connector at all returns `false`, so an unreadable sysfs fails open.
+/// one reports DPMS `Off`. A single lit display, such as an external monitor
+/// beside a closed lid, returns `false` so the apply still lands on it. No
+/// connected connector at all returns `false`, so an unreadable sysfs fails open.
 fn every_connected_display_asleep_from(
     connectors: impl IntoIterator<Item = (bool, String)>,
 ) -> bool {
@@ -1790,7 +1790,7 @@ mod tests {
         )]));
     }
 
-    /// No connected connector at all — an absent or unreadable sysfs — fails
+    /// No connected connector at all (an absent or unreadable sysfs) fails
     /// open so a tint is never silently lost.
     #[test]
     fn no_connectors_at_all_does_not_defer() {
