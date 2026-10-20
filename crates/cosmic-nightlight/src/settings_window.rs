@@ -15,6 +15,7 @@ use crate::autostart;
 use crate::backend;
 use crate::config::{self, Schedule, SETTINGS_APP_ID};
 use crate::fl;
+use crate::shortcut;
 use crate::solar;
 use crate::TICK_INTERVAL;
 
@@ -150,6 +151,11 @@ pub struct SettingsWindow {
     autostart: bool,
     /// Why the last autostart change didn't take, if it didn't.
     autostart_error: Option<String>,
+    /// Whether the keyboard shortcut is bound. Re-read on the tick, since it is
+    /// changed or removed in COSMIC Settings rather than here.
+    shortcut: shortcut::State,
+    /// Why the last attempt to add the shortcut didn't take, if it didn't.
+    shortcut_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -181,6 +187,11 @@ pub enum Message {
     /// The banner's primary action: put the applet on the panel, or failing that
     /// hand off to COSMIC Settings' applet picker.
     AddToPanel,
+    /// The shortcut row's button while there is no shortcut: bind one.
+    AddShortcut,
+    /// The shortcut row's button once there is one: COSMIC Settings is where it
+    /// is changed or removed.
+    OpenKeyboardSettings,
 }
 
 /// Applies a toggle the user flipped, and reports back so the toggle can be put
@@ -252,6 +263,8 @@ impl cosmic::Application for SettingsWindow {
             applet_present: config::applet_on_panel(),
             autostart: autostart::is_enabled(),
             autostart_error: None,
+            shortcut: shortcut::state(),
+            shortcut_error: None,
         };
 
         // Before the first render, so a setting the applet has made redundant is
@@ -395,6 +408,7 @@ impl cosmic::Application for SettingsWindow {
                 self.applet_present = config::applet_on_panel();
                 self.autostart = autostart::is_enabled();
                 self.retire_redundant_background();
+                self.shortcut = shortcut::state();
             }
             Message::RunHostSetup => {
                 return self.start_host_setup(None);
@@ -441,6 +455,21 @@ impl cosmic::Application for SettingsWindow {
                     }
                 }
             },
+            Message::AddShortcut => match shortcut::add() {
+                Ok(keys) => {
+                    self.shortcut = shortcut::State::Bound(keys);
+                    self.shortcut_error = None;
+                }
+                Err(err) => {
+                    eprintln!("cosmic-nightlight: could not add the keyboard shortcut: {err}");
+                    self.shortcut_error = Some(err);
+                }
+            },
+            Message::OpenKeyboardSettings => {
+                if let Err(err) = backend::spawn_on_host("cosmic-settings", &["keyboard"]) {
+                    eprintln!("cosmic-nightlight: {err}");
+                }
+            }
         }
 
         Task::none()
@@ -498,7 +527,8 @@ impl cosmic::Application for SettingsWindow {
                     .on_release(Message::BrightnessCommitted)
                     .width(Length::Fixed(SLIDER_WIDTH)),
                 ),
-            );
+            )
+            .add_maybe(self.shortcut_row());
 
         let schedule_control = widget::dropdown(
             &self.schedule_labels,
@@ -805,6 +835,38 @@ impl SettingsWindow {
                         .description(description)
                         .control(widget::toggler(self.autostart).on_toggle(Message::SetAutostart)),
                 )
+                .into(),
+        )
+    }
+
+    /// The keyboard shortcut row: one button that adds it, and once it exists, one
+    /// that opens COSMIC Settings to change it. Choosing the key is left to COSMIC
+    /// Settings, which already does that well. Absent when the shortcut config
+    /// can't be read, since nothing could be offered safely.
+    fn shortcut_row(&self) -> Option<Element<'_, Message>> {
+        let (description, button) = match &self.shortcut {
+            shortcut::State::Unavailable => return None,
+            shortcut::State::Unbound => (
+                fl!("shortcut-description-unset"),
+                widget::button::standard(fl!("shortcut-add")).on_press(Message::AddShortcut),
+            ),
+            shortcut::State::Bound(keys) => (
+                fl!("shortcut-description-set", keys = keys.as_str()),
+                widget::button::standard(fl!("shortcut-change"))
+                    .on_press(Message::OpenKeyboardSettings),
+            ),
+        };
+        let description = match &self.shortcut_error {
+            Some(error) => format!(
+                "{description}\n\n{}",
+                fl!("action-failed", error = error.as_str())
+            ),
+            None => description,
+        };
+        Some(
+            widget::settings::item::builder(fl!("shortcut"))
+                .description(description)
+                .control(button)
                 .into(),
         )
     }

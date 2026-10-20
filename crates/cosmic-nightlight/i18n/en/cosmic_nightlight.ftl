@@ -118,6 +118,17 @@ banner-title = Your schedule isn't running
 banner-description = Night Light keeps to its schedule through the applet on your panel, or while this window is open. Add the applet, or let it run in the background instead.
 banner-add-to-panel = Add to Panel
 
+## The keyboard shortcut row
+
+shortcut = Keyboard Shortcut
+shortcut-description-unset = Turn Night Light on and off with a key.
+# { $keys } is a key combination such as "Super+Shift+N".
+shortcut-description-set = { $keys } turns Night Light on and off.
+shortcut-add = Add
+shortcut-change = Change…
+# The shortcut's name, as it is listed in COSMIC Settings.
+shortcut-name = Toggle Night Light
+
 ## The Background section
 
 background = Background

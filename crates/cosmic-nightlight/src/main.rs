@@ -22,6 +22,7 @@ mod daemon;
 mod i18n;
 mod migrate;
 mod settings_window;
+mod shortcut;
 mod solar;
 mod toggle;
 

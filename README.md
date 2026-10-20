@@ -128,10 +128,10 @@ To build the `.deb`, see [PACKAGING.md](PACKAGING.md). For packagers:
 the screen while the night light is on). Open it from the applet, from your app
 launcher, or with `cosmic-nightlight --settings`.
 
-**Keyboard shortcut.** To turn it on and off with a key, add a custom shortcut
-in **COSMIC Settings → Input Devices → Keyboard → Keyboard Shortcuts** that runs
-`cosmic-nightlight --toggle` (or `flatpak run io.github.cosmic_nightlight --toggle`
-for the flatpak).
+**Keyboard shortcut.** Click **Add** next to **Keyboard Shortcut** in Settings,
+and Super+Shift+N turns Night Light on and off. (If that key is taken, it picks
+another and shows you which.) Change or remove it in COSMIC Settings, under
+Keyboard, like any other shortcut.
 
 **Schedules:**
 - **Off**: you turn it on and off yourself.
