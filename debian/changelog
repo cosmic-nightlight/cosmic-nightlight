@@ -1,5 +1,10 @@
 cosmic-nightlight (0.5.2-1) UNRELEASED; urgency=medium
 
+  * Fix the screen staying on after it went to sleep, when a scheduled change
+    came while it was asleep. The change now waits until the display is back
+    on.
+  * Fix the screen flickering twice when turning Night Light on or off with
+    both the applet and the settings window open.
   * Add to Panel now puts the applet on your panel in one click, instead of
     sending you to COSMIC Settings to do it.
 
