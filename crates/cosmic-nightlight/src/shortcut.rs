@@ -236,7 +236,7 @@ impl Binding {
             && self.keycode == other.keycode
     }
 
-    /// The combination as COSMIC Settings writes it, e.g. `Super+Shift+N`.
+    /// The combination as COSMIC Settings shows it, e.g. `Super+Shift+n`.
     fn label(&self) -> String {
         let mut parts: Vec<String> = [
             Modifier::Super,
@@ -248,13 +248,10 @@ impl Binding {
         .filter(|modifier| self.modifiers.contains(modifier))
         .map(|modifier| format!("{modifier:?}"))
         .collect();
-        // One letter is shown in capitals, as on the keycap; a named key such as
-        // `Escape` already reads the way COSMIC Settings shows it.
+        // As stored, which is how COSMIC Settings prints it too (`Shift+j`), so
+        // the two places show the same shortcut the same way.
         if let Some(key) = &self.key {
-            parts.push(match key.chars().count() {
-                1 => key.to_uppercase(),
-                _ => key.clone(),
-            });
+            parts.push(key.clone());
         }
         parts.join("+")
     }
@@ -345,7 +342,7 @@ mod tests {
             "Night Light",
         )
         .expect("adds");
-        assert_eq!(label, "Super+Shift+N");
+        assert_eq!(label, "Super+Shift+n");
 
         let reread = parse(&written(&custom));
         assert_eq!(reread.0.len(), 5);
@@ -355,7 +352,7 @@ mod tests {
         }
         assert_eq!(
             state_of(&reread, "cosmic-nightlight --toggle"),
-            State::Bound("Super+Shift+N".into())
+            State::Bound("Super+Shift+n".into())
         );
     }
 
@@ -371,7 +368,7 @@ mod tests {
             "Night Light",
         )
         .expect("adds");
-        assert_eq!(label, "Super+Alt+N");
+        assert_eq!(label, "Super+Alt+n");
     }
 
     #[test]

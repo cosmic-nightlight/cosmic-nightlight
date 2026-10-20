@@ -189,7 +189,7 @@ pub enum Message {
     AddToPanel,
     /// The shortcut row's button while there is no shortcut: bind one.
     AddShortcut,
-    /// The shortcut row's button once there is one: COSMIC Settings is where it
+    /// The shortcut row itself, once there is one: COSMIC Settings is where it
     /// is changed or removed.
     OpenKeyboardSettings,
 }
@@ -527,8 +527,8 @@ impl cosmic::Application for SettingsWindow {
                     .on_release(Message::BrightnessCommitted)
                     .width(Length::Fixed(SLIDER_WIDTH)),
                 ),
-            )
-            .add_maybe(self.shortcut_row());
+            );
+        let night_light = self.with_shortcut_row(night_light);
 
         let schedule_control = widget::dropdown(
             &self.schedule_labels,
@@ -839,36 +839,44 @@ impl SettingsWindow {
         )
     }
 
-    /// The keyboard shortcut row: one button that adds it, and once it exists, one
-    /// that opens COSMIC Settings to change it. Choosing the key is left to COSMIC
-    /// Settings, which already does that well. Absent when the shortcut config
-    /// can't be read, since nothing could be offered safely.
-    fn shortcut_row(&self) -> Option<Element<'_, Message>> {
-        let (description, button) = match &self.shortcut {
-            shortcut::State::Unavailable => return None,
-            shortcut::State::Unbound => (
-                fl!("shortcut-description-unset"),
-                widget::button::standard(fl!("shortcut-add")).on_press(Message::AddShortcut),
-            ),
-            shortcut::State::Bound(keys) => (
-                fl!("shortcut-description-set", keys = keys.as_str()),
-                widget::button::standard(fl!("shortcut-change"))
-                    .on_press(Message::OpenKeyboardSettings),
-            ),
-        };
+    /// Adds the keyboard shortcut row, laid out like a shortcut in COSMIC
+    /// Settings: before there is one, an Add button; after, the key on the right
+    /// with a chevron, and the whole row opens COSMIC Settings, which is where it
+    /// is changed or removed. Choosing a key is left to COSMIC Settings, which
+    /// already does that well. Left out when the shortcut config can't be read,
+    /// since nothing could be offered safely.
+    fn with_shortcut_row<'a>(
+        &'a self,
+        section: widget::settings::Section<'a, Message>,
+    ) -> widget::settings::Section<'a, Message> {
         let description = match &self.shortcut_error {
             Some(error) => format!(
-                "{description}\n\n{}",
+                "{}\n\n{}",
+                fl!("shortcut-description"),
                 fl!("action-failed", error = error.as_str())
             ),
-            None => description,
+            None => fl!("shortcut-description"),
         };
-        Some(
-            widget::settings::item::builder(fl!("shortcut"))
-                .description(description)
-                .control(button)
-                .into(),
-        )
+        let row = widget::settings::item::builder(fl!("shortcut")).description(description);
+
+        match &self.shortcut {
+            shortcut::State::Unavailable => section,
+            shortcut::State::Unbound => section.add(row.control(
+                widget::button::standard(fl!("shortcut-add")).on_press(Message::AddShortcut),
+            )),
+            shortcut::State::Bound(keys) => section.add(
+                widget::list::button(
+                    row.control(
+                        widget::Row::new()
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                            .push(widget::text::body(keys.clone()))
+                            .push(widget::icon::from_name("go-next-symbolic").size(16)),
+                    ),
+                )
+                .on_press(Message::OpenKeyboardSettings),
+            ),
+        }
     }
 
     /// Pushes the current temperature and brightness to the screen, but only if a
