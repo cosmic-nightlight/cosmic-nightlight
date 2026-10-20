@@ -69,6 +69,16 @@ const SLIDER_WIDTH: f32 = 200.0;
 const MIN_WIDTH: f32 = 400.0;
 const MIN_HEIGHT: f32 = 300.0;
 
+/// COSMIC Settings' arguments for the panel's applet picker. Each page is a
+/// list of argument lists, tried in order; see
+/// [`backend::spawn_on_host_falling_back`].
+const PANEL_APPLET_PAGE: &[&[&str]] = &[&["panel-applet"]];
+
+/// COSMIC Settings' arguments for the custom shortcuts page, where ours is
+/// listed. Versions without that subcommand (pop-os/cosmic-settings#2252) get
+/// the keyboard page instead, two clicks short of it.
+const CUSTOM_SHORTCUTS_PAGE: &[&[&str]] = &[&["keyboard", "shortcuts", "custom"], &["keyboard"]];
+
 /// Runs the settings window.
 pub fn run() -> cosmic::iced::Result {
     let settings = cosmic::app::Settings::default()
@@ -195,7 +205,7 @@ pub enum Message {
     /// An activation token came back for opening a COSMIC Settings page, or
     /// didn't (`None`); see [`SettingsWindow::open_cosmic_settings`].
     LaunchCosmicSettings {
-        page: &'static str,
+        page: &'static [&'static [&'static str]],
         token: Option<String>,
     },
 }
@@ -456,7 +466,7 @@ impl cosmic::Application for SettingsWindow {
                     eprintln!("cosmic-nightlight: could not add the applet: {err}");
                     // Panel and dock have separate applet pages, and the panel
                     // is the one we tried to add to, so it is the one to open.
-                    return self.open_cosmic_settings("panel-applet");
+                    return self.open_cosmic_settings(PANEL_APPLET_PAGE);
                 }
             },
             Message::AddShortcut => match shortcut::add() {
@@ -470,11 +480,11 @@ impl cosmic::Application for SettingsWindow {
                 }
             },
             Message::OpenKeyboardSettings => {
-                return self.open_cosmic_settings("keyboard");
+                return self.open_cosmic_settings(CUSTOM_SHORTCUTS_PAGE);
             }
             Message::LaunchCosmicSettings { page, token } => {
                 if let Err(err) =
-                    backend::spawn_on_host("cosmic-settings", &[page], token.as_deref())
+                    backend::spawn_on_host_falling_back("cosmic-settings", page, token)
                 {
                     eprintln!("cosmic-nightlight: {err}");
                 }
@@ -860,7 +870,7 @@ impl SettingsWindow {
     ///
     /// No token (an older compositor, or one that refuses) still launches, just
     /// without the raise.
-    fn open_cosmic_settings(&self, page: &'static str) -> Task<Message> {
+    fn open_cosmic_settings(&self, page: &'static [&'static [&'static str]]) -> Task<Message> {
         cosmic::iced::platform_specific::shell::commands::activation::request_token(
             // The app being activated, which the token is for, not us.
             Some("com.system76.CosmicSettings".to_string()),
