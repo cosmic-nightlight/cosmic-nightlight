@@ -862,6 +862,10 @@ fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> boo
             println!("backend: skipping an apply the user already declined");
             return false;
         }
+        if answered_since(recorded_on_disk(), record_modified(), state, requested_at) {
+            println!("backend: skipping an apply another process just made");
+            return true;
+        }
         match apply_unlocked(state, brightness) {
             Ok(()) => {
                 record_applied(state);
@@ -874,6 +878,29 @@ fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> boo
             }
         }
     })
+}
+
+/// Whether another of our processes has already put `state` on the screen since
+/// the user asked for it, so a forced apply would only repeat it.
+///
+/// This is the usual shape of a toggle with both GUIs open. The window that was
+/// clicked stores the setting and queues its forced apply, the store wakes the
+/// other window's config watcher, and that window's reconcile tends to reach the
+/// apply lock first. It applies the new state and records it, and without this
+/// check the forced apply then ran the same helper call a second time, costing
+/// a second flicker for every flip.
+///
+/// Requiring the record to be newer than the request is what keeps forcing
+/// useful. A record that is wrong because a modeset wiped the LUT was written
+/// before the user asked, so toggling off and on still re-applies for real. A
+/// record whose time can't be read counts as old, which errs toward applying.
+fn answered_since(
+    record: Option<TintState>,
+    written: Option<SystemTime>,
+    state: TintState,
+    requested_at: SystemTime,
+) -> bool {
+    record == Some(state) && written.is_some_and(|written| written >= requested_at)
 }
 
 /// Brings the displays in line with `state`, doing nothing if they already show
@@ -1395,10 +1422,14 @@ fn clock_sample() -> &'static Mutex<Option<(Instant, SystemTime)>> {
 /// Whether the record was written at or after `instant`. A record we can't stat
 /// counts as not written, so we re-apply rather than trust it.
 fn record_written_since(instant: SystemTime) -> bool {
+    record_modified().is_some_and(|modified| modified >= instant)
+}
+
+/// When the record was last written, or `None` if it can't be stat'ed.
+fn record_modified() -> Option<SystemTime> {
     applied_state_path()
         .and_then(|path| std::fs::metadata(path).ok())
         .and_then(|meta| meta.modified().ok())
-        .is_some_and(|modified| modified >= instant)
 }
 
 /// Forgets what is on screen, so the next [`reconcile`] applies unconditionally.
@@ -1807,6 +1838,56 @@ mod tests {
                 "{state} should not read as asleep"
             );
         }
+    }
+
+    /// The two-window toggle: the other window applied the state after the click
+    /// and recorded it, so the clicked window's forced apply has nothing to add.
+    #[test]
+    fn a_forced_apply_skips_a_state_applied_since_the_ask() {
+        let asked = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let written = asked + Duration::from_millis(200);
+        assert!(answered_since(
+            Some(Some(2600)),
+            Some(written),
+            Some(2600),
+            asked
+        ));
+        assert!(answered_since(Some(None), Some(written), None, asked));
+    }
+
+    /// A record from before the click may be wrong, since a modeset can wipe the
+    /// LUT without our knowing, and forcing is how the user puts that right.
+    #[test]
+    fn a_forced_apply_still_runs_against_an_older_record() {
+        let asked = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let written = asked - Duration::from_secs(60);
+        assert!(!answered_since(
+            Some(Some(2600)),
+            Some(written),
+            Some(2600),
+            asked
+        ));
+        assert!(!answered_since(Some(Some(2600)), None, Some(2600), asked));
+    }
+
+    /// A fresh record of some other state is no answer to this request.
+    #[test]
+    fn a_forced_apply_runs_when_the_fresh_record_differs() {
+        let asked = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let written = asked + Duration::from_millis(200);
+        assert!(!answered_since(
+            Some(None),
+            Some(written),
+            Some(2600),
+            asked
+        ));
+        assert!(!answered_since(
+            Some(Some(3400)),
+            Some(written),
+            Some(2600),
+            asked
+        ));
+        assert!(!answered_since(None, Some(written), Some(2600), asked));
     }
 
     /// The reinstall case: the config outlives the flatpak, so a schedule comes
