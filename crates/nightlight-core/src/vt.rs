@@ -120,6 +120,10 @@ pub fn with_master_window<T>(
     };
     let spare = query_free_vt(fd)?;
 
+    // Declared before `_restore` so it drops after it: WirePlumber resumes only
+    // once we are back on the session VT. See `wireplumber` for why.
+    let _bluetooth = crate::wireplumber::hold();
+
     // Arm the restore *before* leaving, not after arriving. `activate` is two
     // ioctls, and a failure of the second (VT_WAITACTIVE, which a signal can
     // interrupt) leaves the switch already under way — so a guard armed only on
