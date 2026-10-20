@@ -50,6 +50,9 @@ It exists because COSMIC doesn't support the usual night light tools
    page.
 2. Open it with the **COSMIC Store** and click **Install**
    (or run `sudo apt install ./cosmic-nightlight_*.deb`).
+
+   On Fedora 44 or newer, download **`cosmic-nightlight-*.rpm`** instead and
+   run `sudo dnf install ./cosmic-nightlight-*.rpm`.
 3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**)
    **→ Configure applets → Add applet → Night Light**.
 
