@@ -100,12 +100,32 @@ pub fn in_flatpak() -> bool {
 /// not in the runtime, and reaching it needs no permission we don't already hold
 /// for the helper.
 pub fn spawn_on_host(program: &str, args: &[&str]) -> Result<(), String> {
+    spawn_on_host_activated(program, args, None)
+}
+
+/// [`spawn_on_host`], passing on an xdg-activation token so the program's window
+/// is let to the front. The token travels in `XDG_ACTIVATION_TOKEN`, which
+/// `flatpak-spawn --host` does not forward from our own environment, so
+/// sandboxed it goes on the command line instead.
+pub fn spawn_on_host_activated(
+    program: &str,
+    args: &[&str],
+    activation_token: Option<&str>,
+) -> Result<(), String> {
     let mut command = if in_flatpak() {
         let mut command = Command::new("flatpak-spawn");
-        command.arg("--host").arg(program);
+        command.arg("--host");
+        if let Some(token) = activation_token {
+            command.arg(format!("--env=XDG_ACTIVATION_TOKEN={token}"));
+        }
+        command.arg(program);
         command
     } else {
-        Command::new(program)
+        let mut command = Command::new(program);
+        if let Some(token) = activation_token {
+            command.env("XDG_ACTIVATION_TOKEN", token);
+        }
+        command
     };
 
     command

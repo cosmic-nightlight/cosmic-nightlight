@@ -192,6 +192,12 @@ pub enum Message {
     /// The shortcut row itself, once there is one: COSMIC Settings is where it
     /// is changed or removed.
     OpenKeyboardSettings,
+    /// An activation token came back for opening a COSMIC Settings page, or
+    /// didn't (`None`); see [`SettingsWindow::open_cosmic_settings`].
+    LaunchCosmicSettings {
+        page: &'static str,
+        token: Option<String>,
+    },
 }
 
 /// Applies a toggle the user flipped, and reports back so the toggle can be put
@@ -450,9 +456,7 @@ impl cosmic::Application for SettingsWindow {
                     eprintln!("cosmic-nightlight: could not add the applet: {err}");
                     // Panel and dock have separate applet pages, and the panel
                     // is the one we tried to add to, so it is the one to open.
-                    if let Err(err) = backend::spawn_on_host("cosmic-settings", &["panel-applet"]) {
-                        eprintln!("cosmic-nightlight: {err}");
-                    }
+                    return self.open_cosmic_settings("panel-applet");
                 }
             },
             Message::AddShortcut => match shortcut::add() {
@@ -466,7 +470,12 @@ impl cosmic::Application for SettingsWindow {
                 }
             },
             Message::OpenKeyboardSettings => {
-                if let Err(err) = backend::spawn_on_host("cosmic-settings", &["keyboard"]) {
+                return self.open_cosmic_settings("keyboard");
+            }
+            Message::LaunchCosmicSettings { page, token } => {
+                if let Err(err) =
+                    backend::spawn_on_host_activated("cosmic-settings", &[page], token.as_deref())
+                {
                     eprintln!("cosmic-nightlight: {err}");
                 }
             }
@@ -837,6 +846,27 @@ impl SettingsWindow {
                 )
                 .into(),
         )
+    }
+
+    /// Opens a page of COSMIC Settings in front of everything else.
+    ///
+    /// Wayland gives no app the power to raise another's window. What it has
+    /// instead is an activation token: we ask the compositor for one on behalf of
+    /// our window, which it grants because the user just clicked in it, and the
+    /// program we launch hands it back to be let to the front. Launched without
+    /// one, an already-open COSMIC Settings switches to the page but stays behind
+    /// whatever was above it. libcosmic forwards `XDG_ACTIVATION_TOKEN` to the
+    /// running instance, so setting it on the launch is all that takes.
+    ///
+    /// No token (an older compositor, or one that refuses) still launches, just
+    /// without the raise.
+    fn open_cosmic_settings(&self, page: &'static str) -> Task<Message> {
+        cosmic::iced::platform_specific::shell::commands::activation::request_token(
+            // The app being activated, which the token is for, not us.
+            Some("com.system76.CosmicSettings".to_string()),
+            self.core.main_window_id(),
+        )
+        .map(move |token| cosmic::Action::App(Message::LaunchCosmicSettings { page, token }))
     }
 
     /// Adds the keyboard shortcut row, laid out like a shortcut in COSMIC
