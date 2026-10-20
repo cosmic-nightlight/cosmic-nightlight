@@ -53,6 +53,9 @@ It exists because COSMIC doesn't support the usual night light tools
 
    On Fedora 44 or newer, download **`cosmic-nightlight-*.rpm`** instead and
    run `sudo dnf install ./cosmic-nightlight-*.rpm`.
+
+   On Arch Linux, download **`cosmic-nightlight-*.pkg.tar.zst`** instead and
+   run `sudo pacman -U ./cosmic-nightlight-*.pkg.tar.zst`.
 3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**)
    **→ Configure applets → Add applet → Night Light**.
 
@@ -115,7 +118,7 @@ You'll need a Rust toolchain and `libdrm-dev`:
 ./scripts/uninstall.sh         # remove it all again
 ```
 
-To build the `.deb`, see [PACKAGING.md](PACKAGING.md). For packagers:
+To build the `.deb`, `.rpm` or Arch package, see [PACKAGING.md](PACKAGING.md). For packagers:
 [docs/flatpak-design.md](docs/flatpak-design.md) explains the flatpak setup, and
 [docs/cosmic-store.md](docs/cosmic-store.md) covers the COSMIC Store listing.
 

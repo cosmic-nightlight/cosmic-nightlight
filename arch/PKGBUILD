@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: MPL-2.0
+#
+# Arch Linux packaging for cosmic-nightlight.
+#
+# .github/workflows/build-arch.yml builds this inside an Arch container. To build
+# it by hand on Arch, run `makepkg -si` in this directory: it downloads the
+# tagged source from GitHub. To build the working tree instead, put an archive
+# of it here under the name makepkg would download, and makepkg uses that:
+#
+#   pkgver=$(sed -n 's/^pkgver=//p' arch/PKGBUILD)
+#   git archive --prefix="cosmic-nightlight-$pkgver/" \
+#       -o arch/"cosmic-nightlight-$pkgver.tar.gz" HEAD
+#   (cd arch && makepkg -si)
+#
+# The pkgver below is one of the places the release version is written. Keep it
+# in step with Cargo.toml, debian/changelog, the metainfo and the RPM spec;
+# scripts/check-version.sh checks all of them at once.
+
+pkgname=cosmic-nightlight
+pkgver=0.5.1
+pkgrel=1
+pkgdesc='Night light and screen tint for the COSMIC desktop'
+arch=('x86_64')
+url='https://github.com/cosmic-nightlight/cosmic-nightlight'
+license=('MPL-2.0')
+depends=(
+    'gcc-libs'
+    'glibc'
+    'libdrm'
+    'libxkbcommon'
+    'wayland'
+    'fontconfig'
+    'expat'
+    # The privileged helper is reached through pkexec, which polkit provides.
+    'polkit'
+)
+makedepends=('cargo' 'git')
+# makepkg's LTO flags are meant for C and break the C parts some crates build.
+# No separate debug package, matching the .rpm.
+options=('!lto' '!debug')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+# The CI build swaps in an archive of the checkout under the same name, which
+# no fixed checksum could match.
+sha256sums=('SKIP')
+
+prepare() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo build --frozen --release -p nightlight-helper -p cosmic-nightlight
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo test --frozen --release -p nightlight-core
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+
+    install -Dm0755 target/release/cosmic-nightlight-helper \
+        "$pkgdir/usr/bin/cosmic-nightlight-helper"
+    install -Dm0755 target/release/cosmic-nightlight \
+        "$pkgdir/usr/bin/cosmic-nightlight"
+
+    install -Dm0644 data/io.github.cosmic_nightlight.desktop \
+        "$pkgdir/usr/share/applications/io.github.cosmic_nightlight.desktop"
+    install -Dm0644 data/io.github.cosmic_nightlight.settings.desktop \
+        "$pkgdir/usr/share/applications/io.github.cosmic_nightlight.settings.desktop"
+    install -Dm0644 data/io.github.cosmic_nightlight.metainfo.xml \
+        "$pkgdir/usr/share/metainfo/io.github.cosmic_nightlight.metainfo.xml"
+    install -Dm0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg"
+    install -Dm0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png \
+        "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png"
+    install -Dm0644 polkit/49-cosmic-nightlight.rules \
+        "$pkgdir/usr/share/polkit-1/rules.d/49-cosmic-nightlight.rules"
+
+    # Ship the user service but leave it disabled, as the .deb and .rpm do. The
+    # applet keeps to the schedule on its own, so the daemon only covers the case
+    # of the applet not being on the panel. Pacman never enables units anyway.
+    # Taken from debian/ rather than systemd/, which points ExecStart at
+    # /usr/local/bin and so names the wrong path for a packaged build.
+    install -Dm0644 debian/cosmic-nightlight.user.service \
+        "$pkgdir/usr/lib/systemd/user/cosmic-nightlight.service"
+
+    install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm0644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
