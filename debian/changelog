@@ -7,6 +7,8 @@ cosmic-nightlight (0.5.2-1) UNRELEASED; urgency=medium
     both the applet and the settings window open.
   * Add to Panel now puts the applet on your panel in one click, instead of
     sending you to COSMIC Settings to do it.
+  * The settings window now notices at once when you add or remove the
+    applet from your panel, instead of up to 15 seconds later.
 
  -- Daniel Watts <danielcwtts@gmail.com>  Mon, 19 Oct 2026 20:52:27 -0500
 

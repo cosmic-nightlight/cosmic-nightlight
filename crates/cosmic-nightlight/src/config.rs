@@ -524,9 +524,9 @@ fn report(key: &str, result: Result<(), cosmic::cosmic_config::Error>) {
 /// would not otherwise need, and pushing that on someone whose applet is already
 /// running is worse than staying quiet.
 ///
-/// Read rather than watched. It is two small files, re-read on the tick every
-/// other part of the window already runs on, and the answer only changes when
-/// the user is off in COSMIC Settings adding the applet.
+/// The settings window learns of changes from [`panel_subscription`], which
+/// calls this whenever cosmic-panel's config changes, and also re-reads it on
+/// its tick in case a watch failed to install or missed a write.
 ///
 /// `com.system76.CosmicPanel`'s `entries` names the panels that exist (`Panel`,
 /// `Dock`, or whatever the user has built); each has a config of its own holding
@@ -565,6 +565,75 @@ pub fn applet_on_panel() -> Option<bool> {
             .flatten()
             .any(|id| id == APP_ID)
     }))
+}
+
+/// Emits [`applet_on_panel`] on startup and again whenever the answer changes,
+/// so the settings window's banner follows the applet being added to or removed
+/// from a panel in COSMIC Settings as it happens, rather than on its next tick.
+///
+/// cosmic-panel keeps the list of panels in one config and each panel's applets
+/// in a config of its own, and a `cosmic_config` watch only covers the config it
+/// was made from. So there is one watch on the list and one per panel, and the
+/// set is rebuilt whenever the list changes. That is what keeps a dock created
+/// after the window opened from going unwatched.
+///
+/// A single save in COSMIC Settings arrives as several file events, so the ones
+/// already queued are taken together and answered with one read. Only a change
+/// in the answer is sent on, which keeps edits that don't touch our applet,
+/// like reordering the others, from reaching the window at all.
+pub fn panel_subscription() -> cosmic::iced::Subscription<Option<bool>> {
+    cosmic::iced::Subscription::run(|| {
+        cosmic::iced::stream::channel(
+            10,
+            |mut output: cosmic::iced::futures::channel::mpsc::Sender<Option<bool>>| async move {
+                use cosmic::iced::futures::{SinkExt, StreamExt};
+
+                let Ok(panels) = Config::new("com.system76.CosmicPanel", 1) else {
+                    std::future::pending::<()>().await;
+                    unreachable!();
+                };
+
+                let (tx, mut rx) = cosmic::iced::futures::channel::mpsc::channel(10);
+                let watch = |config: &Config| {
+                    let tx = tx.clone();
+                    config
+                        .watch(move |_, _keys| {
+                            let _ = tx.clone().try_send(());
+                        })
+                        .ok()
+                };
+
+                let mut watched_entries: Option<Vec<String>> = None;
+                let mut _watchers = Vec::new();
+                let mut last = None;
+                loop {
+                    let entries = panels.get::<Vec<String>>("entries").unwrap_or_default();
+                    if watched_entries.as_ref() != Some(&entries) {
+                        _watchers = std::iter::once(Some(panels.clone()))
+                            .chain(entries.iter().map(|entry| {
+                                Config::new(&format!("com.system76.CosmicPanel.{entry}"), 1).ok()
+                            }))
+                            .flatten()
+                            .filter_map(|config| watch(&config))
+                            .collect();
+                        watched_entries = Some(entries);
+                    }
+
+                    let present = applet_on_panel();
+                    if last != Some(present) {
+                        last = Some(present);
+                        let _ = output.send(present).await;
+                    }
+
+                    if rx.next().await.is_none() {
+                        break;
+                    }
+                    while rx.try_recv().is_ok() {}
+                }
+                std::future::pending::<()>().await;
+            },
+        )
+    })
 }
 
 /// Puts the applet on the panel by writing it into cosmic-panel's config, the
