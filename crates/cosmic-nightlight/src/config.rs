@@ -567,6 +567,59 @@ pub fn applet_on_panel() -> Option<bool> {
     }))
 }
 
+/// Puts the applet on the panel by writing it into cosmic-panel's config, the
+/// same keys COSMIC Settings writes when the user adds an applet by hand.
+/// cosmic-panel watches them and shows the applet straight away.
+///
+/// Doing nothing counts as success when the applet is already on any panel or
+/// dock. An `Err` means nothing was written, and the caller should send the user
+/// to COSMIC Settings to add it there instead.
+///
+/// The wings have to be read successfully before anything is written. On a panel
+/// the user has never edited they exist only as a system default, and inside the
+/// flatpak that default can be out of sight. Treating an unreadable value as
+/// empty would replace every applet the user has with ours alone.
+pub fn add_applet_to_panel() -> Result<(), String> {
+    if applet_on_panel() == Some(true) {
+        return Ok(());
+    }
+
+    let entries: Vec<String> = Config::new("com.system76.CosmicPanel", 1)
+        .and_then(|config| config.get("entries"))
+        .map_err(|err| format!("could not read the list of panels: {err}"))?;
+    let entry = pick_panel(&entries).ok_or("there is no panel to add it to")?;
+
+    let panel = Config::new(&format!("com.system76.CosmicPanel.{entry}"), 1)
+        .map_err(|err| format!("could not open the config of panel {entry}: {err}"))?;
+    let wings: Option<(Vec<String>, Vec<String>)> = panel
+        .get("plugins_wings")
+        .map_err(|err| format!("could not read the applets of panel {entry}: {err}"))?;
+
+    panel
+        .set("plugins_wings", Some(with_applet(wings)))
+        .map_err(|err| format!("could not write the applets of panel {entry}: {err}"))
+}
+
+/// The panel to add the applet to: `Panel` when it exists, as that is where a
+/// status icon belongs and the one a default install has, otherwise the first.
+fn pick_panel(entries: &[String]) -> Option<&str> {
+    entries
+        .iter()
+        .find(|entry| *entry == "Panel")
+        .or_else(|| entries.first())
+        .map(String::as_str)
+}
+
+/// The wings with [`APP_ID`] added at the start of the right one, so it sits
+/// beside the other status applets rather than after the power button.
+fn with_applet(wings: Option<(Vec<String>, Vec<String>)>) -> (Vec<String>, Vec<String>) {
+    let (left, mut right) = wings.unwrap_or_default();
+    if !left.iter().chain(&right).any(|id| id == APP_ID) {
+        right.insert(0, APP_ID.to_string());
+    }
+    (left, right)
+}
+
 /// Returns whether the system is configured to use 24-hour time.
 pub fn is_military_time() -> bool {
     cosmic::cosmic_config::Config::new("com.system76.CosmicAppletTime", 1)
@@ -1035,5 +1088,38 @@ mod tests {
         assert_eq!(format_time(21 * 60 + 45, false), "9:45PM");
         assert_eq!(format_time(21 * 60 + 45, true), "21:45");
         assert_eq!(format_time(23 * 60 + 59, false), "11:59PM");
+    }
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn pick_panel_prefers_the_panel_over_the_dock() {
+        assert_eq!(pick_panel(&ids(&["Dock", "Panel"])), Some("Panel"));
+        assert_eq!(pick_panel(&ids(&["Dock", "Top"])), Some("Dock"));
+        assert_eq!(pick_panel(&[]), None);
+    }
+
+    /// Every applet already there has to survive, in its place.
+    #[test]
+    fn with_applet_keeps_the_existing_applets() {
+        let wings = (ids(&["workspaces"]), ids(&["audio", "power"]));
+        assert_eq!(
+            with_applet(Some(wings)),
+            (ids(&["workspaces"]), ids(&[APP_ID, "audio", "power"]))
+        );
+    }
+
+    #[test]
+    fn with_applet_does_not_add_it_twice() {
+        let wings = (ids(&[APP_ID]), ids(&["power"]));
+        assert_eq!(with_applet(Some(wings.clone())), wings);
+    }
+
+    /// A panel stored with no wings at all is empty, not unreadable.
+    #[test]
+    fn with_applet_fills_a_panel_with_no_wings() {
+        assert_eq!(with_applet(None), (vec![], ids(&[APP_ID])));
     }
 }

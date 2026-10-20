@@ -174,8 +174,9 @@ pub enum Message {
     HostSetupFinished(Result<(), String>),
     /// The "Start on login" toggle, or the banner's shortcut to it.
     SetAutostart(bool),
-    /// The banner's primary action: hand off to COSMIC Settings' applet picker.
-    OpenAppletSettings,
+    /// The banner's primary action: put the applet on the panel, or failing that
+    /// hand off to COSMIC Settings' applet picker.
+    AddToPanel,
 }
 
 /// Applies a toggle the user flipped, and reports back so the toggle can be put
@@ -388,10 +389,10 @@ impl cosmic::Application for SettingsWindow {
                 if !self.setup_busy {
                     self.setup = backend::host_setup();
                 }
-                // Adding the applet happens in COSMIC Settings, with this window
-                // still open beside it. Re-deriving here is what lets the banner
-                // acknowledge that rather than sitting there insisting the applet
-                // is missing until the window is reopened.
+                // The applet can also be added or removed in COSMIC Settings, with
+                // this window still open beside it. Re-deriving here is what lets
+                // the banner acknowledge that rather than sitting there insisting
+                // the applet is missing until the window is reopened.
                 self.applet_present = config::applet_on_panel();
                 self.autostart = autostart::is_enabled();
                 self.retire_redundant_background();
@@ -428,15 +429,19 @@ impl cosmic::Application for SettingsWindow {
                 // a write that failed leaves the toggle where it really is.
                 self.autostart = autostart::is_enabled();
             }
-            Message::OpenAppletSettings => {
-                // Panel and dock have separate applet pages and we cannot know
-                // which one the user wants. The panel is where a status icon
-                // belongs and is the one that exists on a default install, so it
-                // is the better guess of the two.
-                if let Err(err) = backend::spawn_on_host("cosmic-settings", &["panel-applet"]) {
-                    eprintln!("cosmic-nightlight: {err}");
+            Message::AddToPanel => match config::add_applet_to_panel() {
+                // Straight away rather than on the next tick, so the banner goes
+                // as the icon appears.
+                Ok(()) => self.applet_present = Some(true),
+                Err(err) => {
+                    eprintln!("cosmic-nightlight: could not add the applet: {err}");
+                    // Panel and dock have separate applet pages, and the panel
+                    // is the one we tried to add to, so it is the one to open.
+                    if let Err(err) = backend::spawn_on_host("cosmic-settings", &["panel-applet"]) {
+                        eprintln!("cosmic-nightlight: {err}");
+                    }
                 }
-            }
+            },
         }
 
         Task::none()
@@ -698,8 +703,7 @@ impl SettingsWindow {
             .spacing(8)
             .align_y(Alignment::Center)
             .push(
-                widget::button::suggested(fl!("banner-add-to-panel"))
-                    .on_press(Message::OpenAppletSettings),
+                widget::button::suggested(fl!("banner-add-to-panel")).on_press(Message::AddToPanel),
             )
             .push(
                 widget::button::standard(fl!("background-toggle"))
