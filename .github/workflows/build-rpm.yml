@@ -36,19 +36,14 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # The version is written in four places, so check they agree before
-      # building anything with them. The spec is one of the four, and the .rpm is
-      # named after it, so a manual run needs the check too: without it, a stale
-      # spec would quietly label the package with the wrong version. Only a tag
-      # says which version a release intends, so compare against it when there
-      # is one.
+      # The version is written in four places, so check they agree before a
+      # release builds anything with them. Only on a tag: between releases the
+      # debian/changelog carries an UNRELEASED entry for the next version ahead
+      # of the other three, so a manual run of main would always fail here. A
+      # test build from a branch labelled with the previous version is harmless.
       - name: Check the versions agree
-        run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            scripts/check-version.sh "$GITHUB_REF_NAME"
-          else
-            scripts/check-version.sh
-          fi
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: scripts/check-version.sh "$GITHUB_REF_NAME"
 
       - name: Build the .rpm
         run: |
