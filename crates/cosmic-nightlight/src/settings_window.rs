@@ -142,8 +142,9 @@ pub struct SettingsWindow {
     schedule_revert: Option<Schedule>,
     /// Whether the applet is on a panel, or `None` where that can't be told.
     /// Decides whether this window is the only thing keeping the schedule, and
-    /// so whether there is anything to offer. Re-derived on the tick, because
-    /// the fix for it happens in another application while this one sits open.
+    /// so whether there is anything to offer. Kept current by
+    /// [`config::panel_subscription`], because the fix for it happens in another
+    /// application while this one sits open, and re-derived on the tick too.
     applet_present: Option<bool>,
     /// Whether we have an autostart entry installed for the headless daemon.
     autostart: bool,
@@ -161,6 +162,9 @@ pub enum Message {
     BrightnessChanged(f32),
     BrightnessCommitted,
     ConfigUpdated(config::Settings),
+    /// The applet was added to or removed from a panel, or the answer to that
+    /// became unknown.
+    PanelChanged(Option<bool>),
     Tick,
     /// A toggle's apply came back. `previous` is the override to fall back to
     /// if it didn't land.
@@ -366,6 +370,10 @@ impl cosmic::Application for SettingsWindow {
                 }
                 self.show_current();
             }
+            Message::PanelChanged(present) => {
+                self.applet_present = present;
+                self.retire_redundant_background();
+            }
             Message::Tick => {
                 // Before anything decides: the steps below reconcile the screen
                 // against this snapshot, so a stale one doesn't just draw wrong,
@@ -390,9 +398,9 @@ impl cosmic::Application for SettingsWindow {
                     self.setup = backend::host_setup();
                 }
                 // The applet can also be added or removed in COSMIC Settings, with
-                // this window still open beside it. Re-deriving here is what lets
-                // the banner acknowledge that rather than sitting there insisting
-                // the applet is missing until the window is reopened.
+                // this window still open beside it. `PanelChanged` normally
+                // reports that as it happens; this catches it anyway if a panel
+                // watch failed to install or missed a write.
                 self.applet_present = config::applet_on_panel();
                 self.autostart = autostart::is_enabled();
                 self.retire_redundant_background();
@@ -450,6 +458,7 @@ impl cosmic::Application for SettingsWindow {
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
         cosmic::iced::Subscription::batch([
             config::subscription().map(Message::ConfigUpdated),
+            config::panel_subscription().map(Message::PanelChanged),
             cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
         ])
     }
