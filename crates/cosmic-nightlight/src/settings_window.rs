@@ -474,7 +474,7 @@ impl cosmic::Application for SettingsWindow {
             }
             Message::LaunchCosmicSettings { page, token } => {
                 if let Err(err) =
-                    backend::spawn_on_host_activated("cosmic-settings", &[page], token.as_deref())
+                    backend::spawn_on_host("cosmic-settings", &[page], token.as_deref())
                 {
                     eprintln!("cosmic-nightlight: {err}");
                 }

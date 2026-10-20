@@ -99,15 +99,12 @@ pub fn in_flatpak() -> bool {
 /// Sandboxed this needs `flatpak-spawn --host`: the program lives on the host,
 /// not in the runtime, and reaching it needs no permission we don't already hold
 /// for the helper.
-pub fn spawn_on_host(program: &str, args: &[&str]) -> Result<(), String> {
-    spawn_on_host_activated(program, args, None)
-}
-
-/// [`spawn_on_host`], passing on an xdg-activation token so the program's window
-/// is let to the front. The token travels in `XDG_ACTIVATION_TOKEN`, which
+///
+/// `activation_token`, when there is one, lets the program's window to the
+/// front. The token travels in `XDG_ACTIVATION_TOKEN`, which
 /// `flatpak-spawn --host` does not forward from our own environment, so
 /// sandboxed it goes on the command line instead.
-pub fn spawn_on_host_activated(
+pub fn spawn_on_host(
     program: &str,
     args: &[&str],
     activation_token: Option<&str>,
