@@ -82,6 +82,52 @@ pub fn state() -> State {
     }
 }
 
+/// Emits [`state`] on startup and again whenever it changes, so the settings
+/// window's row follows the shortcut being changed or removed in COSMIC
+/// Settings as it happens, rather than on its next tick.
+///
+/// A single save in COSMIC Settings arrives as several file events, so the ones
+/// already queued are taken together and answered with one read. Only a change
+/// in the state is sent on, which keeps edits to the user's other shortcuts
+/// from reaching the window at all.
+pub fn subscription() -> cosmic::iced::Subscription<State> {
+    cosmic::iced::Subscription::run(|| {
+        cosmic::iced::stream::channel(
+            10,
+            |mut output: cosmic::iced::futures::channel::mpsc::Sender<State>| async move {
+                use cosmic::iced::futures::{SinkExt, StreamExt};
+
+                let Ok(context) = Config::new(ID, VERSION) else {
+                    std::future::pending::<()>().await;
+                    unreachable!();
+                };
+
+                let (tx, mut rx) = cosmic::iced::futures::channel::mpsc::channel(10);
+                let _watcher = context
+                    .watch(move |_, _keys| {
+                        let _ = tx.clone().try_send(());
+                    })
+                    .ok();
+
+                let mut last = None;
+                loop {
+                    let current = state();
+                    if last.as_ref() != Some(&current) {
+                        last = Some(current.clone());
+                        let _ = output.send(current).await;
+                    }
+
+                    if rx.next().await.is_none() {
+                        break;
+                    }
+                    while rx.try_recv().is_ok() {}
+                }
+                std::future::pending::<()>().await;
+            },
+        )
+    })
+}
+
 /// Adds the shortcut, and returns the key combination it was bound to.
 ///
 /// A shortcut of ours that runs the other install's command (left from moving

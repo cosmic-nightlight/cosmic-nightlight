@@ -161,8 +161,9 @@ pub struct SettingsWindow {
     autostart: bool,
     /// Why the last autostart change didn't take, if it didn't.
     autostart_error: Option<String>,
-    /// Whether the keyboard shortcut is bound. Re-read on the tick, since it is
-    /// changed or removed in COSMIC Settings rather than here.
+    /// Whether the keyboard shortcut is bound. Kept current by
+    /// [`shortcut::subscription`], since it is changed or removed in COSMIC
+    /// Settings rather than here, and re-read on the tick too.
     shortcut: shortcut::State,
     /// Why the last attempt to add the shortcut didn't take, if it didn't.
     shortcut_error: Option<String>,
@@ -181,6 +182,9 @@ pub enum Message {
     /// The applet was added to or removed from a panel, or the answer to that
     /// became unknown.
     PanelChanged(Option<bool>),
+    /// The keyboard shortcut was added, changed or removed, here or in COSMIC
+    /// Settings.
+    ShortcutChanged(shortcut::State),
     Tick,
     /// A toggle's apply came back. `previous` is the override to fall back to
     /// if it didn't land.
@@ -394,6 +398,9 @@ impl cosmic::Application for SettingsWindow {
                 self.applet_present = present;
                 self.retire_redundant_background();
             }
+            Message::ShortcutChanged(state) => {
+                self.shortcut = state;
+            }
             Message::Tick => {
                 // Before anything decides: the steps below reconcile the screen
                 // against this snapshot, so a stale one doesn't just draw wrong,
@@ -424,6 +431,8 @@ impl cosmic::Application for SettingsWindow {
                 self.applet_present = config::applet_on_panel();
                 self.autostart = autostart::is_enabled();
                 self.retire_redundant_background();
+                // `ShortcutChanged` normally reports edits made in COSMIC
+                // Settings as they happen; this is in case the watch missed one.
                 self.shortcut = shortcut::state();
             }
             Message::RunHostSetup => {
@@ -498,6 +507,7 @@ impl cosmic::Application for SettingsWindow {
         cosmic::iced::Subscription::batch([
             config::subscription().map(Message::ConfigUpdated),
             config::panel_subscription().map(Message::PanelChanged),
+            shortcut::subscription().map(Message::ShortcutChanged),
             cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
         ])
     }
