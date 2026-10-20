@@ -8,8 +8,10 @@
 //! - `--daemon`   → run the headless sunset/sunrise scheduler. Adding
 //!   `--managed` ties it to the settings window's "Run in Background" switch,
 //!   so that turning that off stops it (see [`autostart`]).
+//! - `--toggle`   → flip the night light on or off once and exit, for binding
+//!   to a keyboard shortcut (see [`toggle`]).
 //!
-//! All three share state through [`config`] (`cosmic_config`), and all three
+//! All of them share state through [`config`] (`cosmic_config`), and all three
 //! read their user-facing strings through [`i18n`].
 
 mod applet;
@@ -21,6 +23,7 @@ mod i18n;
 mod migrate;
 mod settings_window;
 mod solar;
+mod toggle;
 
 use std::time::Duration;
 
@@ -47,6 +50,13 @@ fn main() -> cosmic::iced::Result {
 
     if args.iter().any(|arg| arg == "--daemon") {
         daemon::run(args.iter().any(|arg| arg == autostart::MANAGED_FLAG));
+        return Ok(());
+    }
+
+    if args.iter().any(|arg| arg == "--toggle") {
+        if !toggle::run() {
+            std::process::exit(1);
+        }
         return Ok(());
     }
 

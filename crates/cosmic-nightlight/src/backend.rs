@@ -1060,6 +1060,13 @@ fn every_connected_display_asleep_from(
     any_connected
 }
 
+/// [`apply_now`] on the calling thread, for a change asked for from the command
+/// line. There is no event loop to keep responsive there, and the caller needs
+/// the outcome before it exits. Returns whether the apply landed.
+pub fn apply(state: TintState, brightness: f32) -> bool {
+    apply_now(state, brightness, SystemTime::now())
+}
+
 /// Queues an [`apply_now`] on a background thread.
 ///
 /// The GUI processes must never apply on their event-loop thread: an apply
