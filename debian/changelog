@@ -1,3 +1,10 @@
+cosmic-nightlight (0.5.2-1) UNRELEASED; urgency=medium
+
+  * Add to Panel now puts the applet on your panel in one click, instead of
+    sending you to COSMIC Settings to do it.
+
+ -- Daniel Watts <danielcwtts@gmail.com>  Mon, 19 Oct 2026 20:52:27 -0500
+
 cosmic-nightlight (0.5.1-1) noble; urgency=medium
 
   * Fix repeated password prompts on Fedora Atomic, where the setup reported
