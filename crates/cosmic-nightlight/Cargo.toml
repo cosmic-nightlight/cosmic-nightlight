@@ -31,6 +31,13 @@ i18n-embed-fl = "0.10"
 # confusing way to lose an afternoon.
 rust-embed = { version = "8", features = ["debug-embed"] }
 
+# For the keyboard shortcut (see `shortcut.rs`), which reads COSMIC's shortcut
+# config with each action left as raw RON. `ron` has to be the version
+# cosmic-config itself reads and writes with, or a raw value would not survive
+# the round trip through it. Both are already in the tree under libcosmic.
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
+
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"
 # Unpinned, so `Cargo.lock` is what decides. Frosted glass needs a libcosmic that

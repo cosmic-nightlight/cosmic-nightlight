@@ -131,6 +131,11 @@ To build the `.deb`, `.rpm` or Arch package, see [PACKAGING.md](PACKAGING.md). F
 the screen while the night light is on). Open it from the applet, from your app
 launcher, or with `cosmic-nightlight --settings`.
 
+**Keyboard shortcut.** Click **Add** next to **Keyboard Shortcut** in Settings,
+and Super+Shift+N turns Night Light on and off. (If that key is taken, it picks
+another and shows you which.) Change or remove it in COSMIC Settings, under
+Keyboard, like any other shortcut.
+
 **Schedules:**
 - **Off**: you turn it on and off yourself.
 - **Sunset to Sunrise**: it follows the real sun where you are, adjusting with

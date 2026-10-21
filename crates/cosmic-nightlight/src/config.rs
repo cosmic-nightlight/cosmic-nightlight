@@ -264,6 +264,17 @@ impl Settings {
         }
     }
 
+    /// The override that puts the tint `on` (or off) right now.
+    ///
+    /// Read relative to what the schedule wants: asking for what the schedule
+    /// would do anyway just follows it (`Auto`), while asking against it sets a
+    /// manual override that lasts until the next sunset/sunrise transition. The
+    /// applet, the settings window and `--toggle` all decide through this, so a
+    /// flip means the same thing wherever it came from.
+    pub fn override_for(&self, on: bool) -> Override {
+        override_for_at(on, self.schedule_wants_tint())
+    }
+
     /// Whether the schedule has caught up to the manual override — the override
     /// now asks for what the schedule would anyway, so it has served its purpose
     /// and should lapse. `Auto` is never "caught up": there is nothing to expire.
@@ -274,6 +285,18 @@ impl Settings {
             Override::Off => !want,
             Override::Auto => false,
         }
+    }
+}
+
+/// [`Settings::override_for`] given what the schedule wants, so it can be
+/// tested without the clock.
+fn override_for_at(on: bool, schedule_wants: bool) -> Override {
+    if on == schedule_wants {
+        Override::Auto
+    } else if on {
+        Override::On
+    } else {
+        Override::Off
     }
 }
 
@@ -792,6 +815,16 @@ pub fn status_text(settings: &Settings, tint_on: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A flip that agrees with the schedule hands control back to it; one that
+    /// goes against it is the only kind that sets an override.
+    #[test]
+    fn a_flip_overrides_only_against_the_schedule() {
+        assert_eq!(override_for_at(true, true), Override::Auto);
+        assert_eq!(override_for_at(false, false), Override::Auto);
+        assert_eq!(override_for_at(true, false), Override::On);
+        assert_eq!(override_for_at(false, true), Override::Off);
+    }
 
     /// `Custom` rather than `Solar` throughout, so the window under test is the
     /// one written here. `Solar` asks the sky what time it is, which is not
