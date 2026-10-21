@@ -126,6 +126,8 @@ clean_up() {
     # Reset the tint while the helper is still here, so nobody is left with a
     # warm screen and no app to undo it. Not at boot, though: there is no tint
     # to clear yet, and the VT switch would get in the way of the login screen.
+    # A helper from this release on skips the VT switch, and so the blink, when
+    # the screen is already untinted; an older one switches either way.
     if [[ "$mode" == watch ]] && ours "$helper"; then
         "$helper" --off || true
     fi

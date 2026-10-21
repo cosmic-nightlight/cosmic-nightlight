@@ -346,6 +346,9 @@ Each run asks one question, whether the app is still deployed in any
 installation (`app/<id>/current/active` exists), and does nothing if so. If it is
 gone everywhere, it resets the tint (`watch` only), deletes the helper and then
 the rule, and finally disables and deletes its own units and state directory.
+The reset only blinks the screen if there was a tint to clear: the helper reads
+the current gamma first, which needs no DRM master, and skips the VT bounce when
+every display already shows the ramp it was asked for.
 Nothing of the app is left on the host.
 
 The details that keep it from doing the wrong thing:
