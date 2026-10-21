@@ -50,6 +50,12 @@ It exists because COSMIC doesn't support the usual night light tools
    page.
 2. Open it with the **COSMIC Store** and click **Install**
    (or run `sudo apt install ./cosmic-nightlight_*.deb`).
+
+   On Fedora 44 or newer, download **`cosmic-nightlight-*.rpm`** instead and
+   run `sudo dnf install ./cosmic-nightlight-*.rpm`.
+
+   On Arch Linux, download **`cosmic-nightlight-*.pkg.tar.zst`** instead and
+   run `sudo pacman -U ./cosmic-nightlight-*.pkg.tar.zst`.
 3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**)
    **→ Configure applets → Add applet → Night Light**.
 
@@ -119,7 +125,7 @@ You'll need a Rust toolchain and `libdrm-dev`:
 ./scripts/uninstall.sh         # remove it all again
 ```
 
-To build the `.deb`, see [PACKAGING.md](PACKAGING.md). For packagers:
+To build the `.deb`, `.rpm` or Arch package, see [PACKAGING.md](PACKAGING.md). For packagers:
 [docs/flatpak-design.md](docs/flatpak-design.md) explains the flatpak setup, and
 [docs/cosmic-store.md](docs/cosmic-store.md) covers the COSMIC Store listing.
 
@@ -131,6 +137,11 @@ To build the `.deb`, see [PACKAGING.md](PACKAGING.md). For packagers:
 **Settings.** Choose a schedule, the night warmth, and the brightness (which dims
 the screen while the night light is on). Open it from the applet, from your app
 launcher, or with `cosmic-nightlight --settings`.
+
+**Keyboard shortcut.** Click **Add** next to **Keyboard Shortcut** in Settings,
+and Super+Shift+N turns Night Light on and off. (If that key is taken, it picks
+another and shows you which.) Change or remove it in COSMIC Settings, under
+Keyboard, like any other shortcut.
 
 **Schedules:**
 - **Off**: you turn it on and off yourself.

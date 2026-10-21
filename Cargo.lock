@@ -951,7 +951,9 @@ dependencies = [
  "libc",
  "libcosmic",
  "nightlight-core",
+ "ron",
  "rust-embed",
+ "serde",
 ]
 
 [[package]]

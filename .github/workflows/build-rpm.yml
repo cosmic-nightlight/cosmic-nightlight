@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Build RPM
+
+# Tag builds only, like the flatpak workflow: the .rpm is a release artifact, and
+# the .deb workflow already proves on every push and pull request that the tree
+# still packages. Run it by hand from the Actions tab to test a change to the
+# spec or to this file.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-rpm:
+    runs-on: ubuntu-24.04
+    # A Fedora container for rpmbuild and the Fedora -devel packages, so the
+    # package comes out native to Fedora rather than to the runner's Ubuntu. The
+    # cost is that it links the container's glibc, so it installs on fedora:44 and
+    # newer and not on older Fedora. Change this one line to target a different
+    # Fedora.
+    container: fedora:44
+    permissions:
+      contents: write   # required so tag builds can attach the .rpm to the Release
+    steps:
+      # Ahead of checkout, which needs git inside the container.
+      - name: Install the toolchain and the build dependencies
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            git-core gh patch rpm-build \
+            cargo gcc gcc-c++ pkgconf-pkg-config \
+            libdrm-devel libxkbcommon-devel wayland-devel \
+            fontconfig-devel expat-devel systemd-rpm-macros
+
+      - uses: actions/checkout@v4
+
+      # The version is written in four places, so check they agree before a
+      # release builds anything with them. Only on a tag: between releases the
+      # debian/changelog carries an UNRELEASED entry for the next version ahead
+      # of the other three, so a manual run of main would always fail here. A
+      # test build from a branch labelled with the previous version is harmless.
+      - name: Check the versions agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: scripts/check-version.sh "$GITHUB_REF_NAME"
+
+      - name: Build the .rpm
+        run: |
+          # The container runs as root while the checkout belongs to the runner's
+          # user, and git refuses to read such a tree until it is told the
+          # directory is trusted. actions/checkout only covers the paths it uses
+          # itself, which is not this one.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          # Name the archive after the spec's own Version, since that is the name
+          # rpmbuild looks for. Taking it from Cargo.toml instead fails a manual
+          # run whenever the two have drifted apart.
+          version=$(rpmspec -q --srpm --qf '%{version}' rpm/cosmic-nightlight.spec)
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          git archive --prefix="cosmic-nightlight-$version/" \
+            -o ~/rpmbuild/SOURCES/"cosmic-nightlight-$version.tar.gz" HEAD
+          rpmbuild -bb rpm/cosmic-nightlight.spec
+
+          mkdir -p dist
+          cp ~/rpmbuild/RPMS/*/*.rpm dist/
+          ls -l dist/
+
+      - name: Upload the .rpm as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmic-nightlight-rpm
+          path: dist/*.rpm
+          if-no-files-found: error
+
+      - name: Attach the .rpm to the Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # The .deb workflow is what creates the Release, with its title and
+          # notes, so wait for it rather than race it, as the flatpak workflow
+          # does. If this job created it first, the Release would go out bare,
+          # and stay that way with only the .rpm if the .deb build then failed.
+          # Only the asset is uploaded, leaving the notes that job wrote alone.
+          for _ in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            echo "waiting for the Release to be created..."
+            sleep 20
+          done
+          gh release upload "$GITHUB_REF_NAME" dist/*.rpm --clobber

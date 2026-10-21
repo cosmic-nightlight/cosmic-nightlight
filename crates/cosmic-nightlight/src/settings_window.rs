@@ -15,6 +15,7 @@ use crate::autostart;
 use crate::backend;
 use crate::config::{self, Schedule, SETTINGS_APP_ID};
 use crate::fl;
+use crate::shortcut;
 use crate::solar;
 use crate::TICK_INTERVAL;
 
@@ -67,6 +68,16 @@ const SLIDER_WIDTH: f32 = 200.0;
 /// side by side and start overlapping.
 const MIN_WIDTH: f32 = 400.0;
 const MIN_HEIGHT: f32 = 300.0;
+
+/// COSMIC Settings' arguments for the panel's applet picker. Each page is a
+/// list of argument lists, tried in order; see
+/// [`backend::spawn_on_host_falling_back`].
+const PANEL_APPLET_PAGE: &[&[&str]] = &[&["panel-applet"]];
+
+/// COSMIC Settings' arguments for the custom shortcuts page, where ours is
+/// listed. Versions without that subcommand (pop-os/cosmic-settings#2252) get
+/// the keyboard page instead, two clicks short of it.
+const CUSTOM_SHORTCUTS_PAGE: &[&[&str]] = &[&["keyboard", "shortcuts", "custom"], &["keyboard"]];
 
 /// Runs the settings window.
 pub fn run() -> cosmic::iced::Result {
@@ -150,6 +161,12 @@ pub struct SettingsWindow {
     autostart: bool,
     /// Why the last autostart change didn't take, if it didn't.
     autostart_error: Option<String>,
+    /// Whether the keyboard shortcut is bound. Kept current by
+    /// [`shortcut::subscription`], since it is changed or removed in COSMIC
+    /// Settings rather than here, and re-read on the tick too.
+    shortcut: shortcut::State,
+    /// Why the last attempt to add the shortcut didn't take, if it didn't.
+    shortcut_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -165,6 +182,9 @@ pub enum Message {
     /// The applet was added to or removed from a panel, or the answer to that
     /// became unknown.
     PanelChanged(Option<bool>),
+    /// The keyboard shortcut was added, changed or removed, here or in COSMIC
+    /// Settings.
+    ShortcutChanged(shortcut::State),
     Tick,
     /// A toggle's apply came back. `previous` is the override to fall back to
     /// if it didn't land.
@@ -181,6 +201,17 @@ pub enum Message {
     /// The banner's primary action: put the applet on the panel, or failing that
     /// hand off to COSMIC Settings' applet picker.
     AddToPanel,
+    /// The shortcut row's button while there is no shortcut: bind one.
+    AddShortcut,
+    /// The shortcut row itself, once there is one: COSMIC Settings is where it
+    /// is changed or removed.
+    OpenKeyboardSettings,
+    /// An activation token came back for opening a COSMIC Settings page, or
+    /// didn't (`None`); see [`SettingsWindow::open_cosmic_settings`].
+    LaunchCosmicSettings {
+        page: &'static [&'static [&'static str]],
+        token: Option<String>,
+    },
 }
 
 /// Applies a toggle the user flipped, and reports back so the toggle can be put
@@ -252,6 +283,8 @@ impl cosmic::Application for SettingsWindow {
             applet_present: config::applet_on_panel(),
             autostart: autostart::is_enabled(),
             autostart_error: None,
+            shortcut: shortcut::state(),
+            shortcut_error: None,
         };
 
         // Before the first render, so a setting the applet has made redundant is
@@ -301,17 +334,8 @@ impl cosmic::Application for SettingsWindow {
                 }
             }
             Message::Toggle(on) => {
-                // Mirrors the applet's toggle logic: flipping it to match the
-                // schedule just follows it (`Auto`), while flipping it against
-                // the schedule sets a manual override the daemon honors until
-                // the next sunset/sunrise transition.
-                let new_override = if on == self.settings.schedule_wants_tint() {
-                    config::Override::Auto
-                } else if on {
-                    config::Override::On
-                } else {
-                    config::Override::Off
-                };
+                // Relative to the schedule: see `Settings::override_for`.
+                let new_override = self.settings.override_for(on);
                 let previous = self.settings.tint_override;
                 self.settings.tint_override = new_override;
                 config::store_override(&self.config, new_override);
@@ -374,6 +398,9 @@ impl cosmic::Application for SettingsWindow {
                 self.applet_present = present;
                 self.retire_redundant_background();
             }
+            Message::ShortcutChanged(state) => {
+                self.shortcut = state;
+            }
             Message::Tick => {
                 // Before anything decides: the steps below reconcile the screen
                 // against this snapshot, so a stale one doesn't just draw wrong,
@@ -404,6 +431,9 @@ impl cosmic::Application for SettingsWindow {
                 self.applet_present = config::applet_on_panel();
                 self.autostart = autostart::is_enabled();
                 self.retire_redundant_background();
+                // `ShortcutChanged` normally reports edits made in COSMIC
+                // Settings as they happen; this is in case the watch missed one.
+                self.shortcut = shortcut::state();
             }
             Message::RunHostSetup => {
                 return self.start_host_setup(None);
@@ -445,11 +475,29 @@ impl cosmic::Application for SettingsWindow {
                     eprintln!("cosmic-nightlight: could not add the applet: {err}");
                     // Panel and dock have separate applet pages, and the panel
                     // is the one we tried to add to, so it is the one to open.
-                    if let Err(err) = backend::spawn_on_host("cosmic-settings", &["panel-applet"]) {
-                        eprintln!("cosmic-nightlight: {err}");
-                    }
+                    return self.open_cosmic_settings(PANEL_APPLET_PAGE);
                 }
             },
+            Message::AddShortcut => match shortcut::add() {
+                Ok(keys) => {
+                    self.shortcut = shortcut::State::Bound(keys);
+                    self.shortcut_error = None;
+                }
+                Err(err) => {
+                    eprintln!("cosmic-nightlight: could not add the keyboard shortcut: {err}");
+                    self.shortcut_error = Some(err);
+                }
+            },
+            Message::OpenKeyboardSettings => {
+                return self.open_cosmic_settings(CUSTOM_SHORTCUTS_PAGE);
+            }
+            Message::LaunchCosmicSettings { page, token } => {
+                if let Err(err) =
+                    backend::spawn_on_host_falling_back("cosmic-settings", page, token)
+                {
+                    eprintln!("cosmic-nightlight: {err}");
+                }
+            }
         }
 
         Task::none()
@@ -459,6 +507,7 @@ impl cosmic::Application for SettingsWindow {
         cosmic::iced::Subscription::batch([
             config::subscription().map(Message::ConfigUpdated),
             config::panel_subscription().map(Message::PanelChanged),
+            shortcut::subscription().map(Message::ShortcutChanged),
             cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
         ])
     }
@@ -508,6 +557,7 @@ impl cosmic::Application for SettingsWindow {
                     .width(Length::Fixed(SLIDER_WIDTH)),
                 ),
             );
+        let night_light = self.with_shortcut_row(night_light);
 
         let schedule_control = widget::dropdown(
             &self.schedule_labels,
@@ -816,6 +866,67 @@ impl SettingsWindow {
                 )
                 .into(),
         )
+    }
+
+    /// Opens a page of COSMIC Settings in front of everything else.
+    ///
+    /// Wayland gives no app the power to raise another's window. What it has
+    /// instead is an activation token: we ask the compositor for one on behalf of
+    /// our window, which it grants because the user just clicked in it, and the
+    /// program we launch hands it back to be let to the front. Launched without
+    /// one, an already-open COSMIC Settings switches to the page but stays behind
+    /// whatever was above it. libcosmic forwards `XDG_ACTIVATION_TOKEN` to the
+    /// running instance, so setting it on the launch is all that takes.
+    ///
+    /// No token (an older compositor, or one that refuses) still launches, just
+    /// without the raise.
+    fn open_cosmic_settings(&self, page: &'static [&'static [&'static str]]) -> Task<Message> {
+        cosmic::iced::platform_specific::shell::commands::activation::request_token(
+            // The app being activated, which the token is for, not us.
+            Some("com.system76.CosmicSettings".to_string()),
+            self.core.main_window_id(),
+        )
+        .map(move |token| cosmic::Action::App(Message::LaunchCosmicSettings { page, token }))
+    }
+
+    /// Adds the keyboard shortcut row, laid out like a shortcut in COSMIC
+    /// Settings: before there is one, an Add button; after, the key on the right
+    /// with a chevron, and the whole row opens COSMIC Settings, which is where it
+    /// is changed or removed. Choosing a key is left to COSMIC Settings, which
+    /// already does that well. Left out when the shortcut config can't be read,
+    /// since nothing could be offered safely.
+    fn with_shortcut_row<'a>(
+        &'a self,
+        section: widget::settings::Section<'a, Message>,
+    ) -> widget::settings::Section<'a, Message> {
+        let description = match &self.shortcut_error {
+            Some(error) => format!(
+                "{}\n\n{}",
+                fl!("shortcut-description"),
+                fl!("action-failed", error = error.as_str())
+            ),
+            None => fl!("shortcut-description"),
+        };
+        let row = widget::settings::item::builder(fl!("shortcut")).description(description);
+
+        match &self.shortcut {
+            shortcut::State::Unavailable => section,
+            shortcut::State::Unbound => section.add(row.control(
+                widget::button::standard(fl!("shortcut-add")).on_press(Message::AddShortcut),
+            )),
+            shortcut::State::Bound(keys) => section.add(
+                widget::list::button(
+                    row.control(
+                        widget::Row::new()
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                            .push(widget::text::body(keys.clone()))
+                            .push(widget::icon::from_name("go-next-symbolic").size(16)),
+                    ),
+                )
+                .on_press(Message::OpenKeyboardSettings),
+            ),
+        }
     }
 
     /// Pushes the current temperature and brightness to the screen, but only if a

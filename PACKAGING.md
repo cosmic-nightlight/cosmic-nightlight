@@ -1,5 +1,9 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
-# Packaging cosmic-nightlight as a `.deb`
+# Packaging cosmic-nightlight
+
+This covers the `.deb`, which most of this file is about, the `.rpm` for
+Fedora (see [RPM (Fedora)](#rpm-fedora)) and the Arch Linux package (see
+[Arch Linux](#arch-linux)).
 
 This tool needs root (DRM master + VT switching), so its natural distribution
 channel is a **native `.deb`**. A `.deb` shows up in the COSMIC Store as the
@@ -94,6 +98,39 @@ With `vendor/` committed and `.cargo/config.toml` redirecting crates to it, the
 > Note: `vendor/` is large. For a real upstream you'd typically keep it out of
 > the main branch and generate it in the packaging branch / orig tarball
 > instead.
+
+## RPM (Fedora)
+
+[`rpm/cosmic-nightlight.spec`](rpm/cosmic-nightlight.spec) builds the same set of
+files as the `.deb`. [`.github/workflows/build-rpm.yml`](.github/workflows/build-rpm.yml)
+builds it in a `fedora:44` container on every `v*` tag and attaches the `.rpm`
+to the Release that the `.deb` workflow creates. It does not run on pushes or
+pull requests; start it by hand from the Actions tab to test a spec change.
+
+Because it links the container's glibc, the package installs on Fedora 44 and
+newer only. To target another release, change the `container:` line.
+
+The spec's `Version:` is one of the places the version is written, so bump it
+with the others; `scripts/check-version.sh` checks it. The spec's header
+comment shows how to build it by hand on Fedora.
+
+## Arch Linux
+
+[`arch/PKGBUILD`](arch/PKGBUILD) builds the same set of files as the `.deb`.
+[`.github/workflows/build-arch.yml`](.github/workflows/build-arch.yml) builds it
+in an `archlinux:latest` container on every `v*` tag and attaches the
+`.pkg.tar.zst` to the Release that the `.deb` workflow creates. Like the `.rpm`
+workflow, it does not run on pushes or pull requests; start it by hand from the
+Actions tab to test a PKGBUILD change.
+
+On Arch itself, `makepkg -si` in `arch/` downloads the tagged release from
+GitHub and builds that. To build the working tree instead, the PKGBUILD's header
+comment shows how to hand makepkg an archive of it. CI does the same, which is
+why `sha256sums` is `SKIP`. The PKGBUILD is also the starting point for an AUR
+package, which would want a real checksum there.
+
+The PKGBUILD's `pkgver=` is one of the places the version is written, so bump it
+with the others; `scripts/check-version.sh` checks it.
 
 ## Getting it into the COSMIC Store
 
