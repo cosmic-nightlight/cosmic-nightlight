@@ -385,7 +385,22 @@ impl cosmic::Application for SettingsWindow {
                 self.apply_if_tinted();
             }
             Message::ConfigUpdated(settings) => {
+                // A schedule waiting on the setup is shown but not stored yet, so
+                // no config update carries it. Taking the update whole would put
+                // the stored schedule back under the open password prompt, and the
+                // setup finishing would then store that instead of the choice.
+                // Moving a slider meanwhile is enough to cause it.
+                let pending = self
+                    .schedule_revert
+                    .is_some()
+                    .then_some(self.settings.schedule);
                 self.settings = settings;
+                if let Some(chosen) = pending {
+                    // If the setup doesn't land, fall back to what is stored now,
+                    // which another process may have changed since the choice.
+                    self.schedule_revert = Some(settings.schedule);
+                    self.settings.schedule = chosen;
+                }
                 if !self.temperature_dragging {
                     self.temperature = settings.temperature as f32;
                 }
