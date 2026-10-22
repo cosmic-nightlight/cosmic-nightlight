@@ -43,7 +43,7 @@
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
@@ -99,20 +99,91 @@ pub fn in_flatpak() -> bool {
 /// Sandboxed this needs `flatpak-spawn --host`: the program lives on the host,
 /// not in the runtime, and reaching it needs no permission we don't already hold
 /// for the helper.
-pub fn spawn_on_host(program: &str, args: &[&str]) -> Result<(), String> {
-    let mut command = if in_flatpak() {
-        let mut command = Command::new("flatpak-spawn");
-        command.arg("--host").arg(program);
-        command
-    } else {
-        Command::new(program)
-    };
-
-    command
+///
+/// `activation_token`, when there is one, lets the program's window to the
+/// front. The token travels in `XDG_ACTIVATION_TOKEN`, which
+/// `flatpak-spawn --host` does not forward from our own environment, so
+/// sandboxed it goes on the command line instead.
+pub fn spawn_on_host(
+    program: &str,
+    args: &[&str],
+    activation_token: Option<&str>,
+) -> Result<(), String> {
+    host_command(program, activation_token)
         .args(args)
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("could not start {program}: {err}"))
+}
+
+/// The exit status clap gives arguments it does not recognise.
+const USAGE_ERROR: i32 = 2;
+
+/// As [`spawn_on_host`], for a program whose newer versions take arguments its
+/// older ones refuse. `attempts` runs from most to least wanted; each is tried
+/// only once the one before it has exited with a usage error.
+///
+/// For COSMIC Settings, which grew deeper page subcommands than the ones
+/// released. It parses its arguments before looking for a running instance, so
+/// an older one refuses straight away, and without raising or opening a window,
+/// which leaves the activation token unspent for the next attempt. A newer one
+/// either stays open or hands the page to the running instance and exits
+/// cleanly; either way nothing more is tried. `flatpak-spawn --host` passes the
+/// exit status through, so this works the same sandboxed.
+///
+/// Every attempt but the last has its stderr dropped, so an older version's
+/// usage message does not land in our log as if something had gone wrong.
+/// Waiting happens on its own thread, which may outlive the window: it stays
+/// until COSMIC Settings closes when we were the ones to start it.
+pub fn spawn_on_host_falling_back(
+    program: &'static str,
+    attempts: &'static [&'static [&'static str]],
+    activation_token: Option<String>,
+) -> Result<(), String> {
+    let Some((args, rest)) = attempts.split_first() else {
+        return Ok(());
+    };
+    if rest.is_empty() {
+        return spawn_on_host(program, args, activation_token.as_deref());
+    }
+
+    let mut child = host_command(program, activation_token.as_deref())
+        .args(*args)
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("could not start {program}: {err}"))?;
+
+    thread::spawn(move || {
+        let refused = child
+            .wait()
+            .is_ok_and(|status| status.code() == Some(USAGE_ERROR));
+        if refused {
+            if let Err(err) = spawn_on_host_falling_back(program, rest, activation_token) {
+                eprintln!("cosmic-nightlight: {err}");
+            }
+        }
+    });
+    Ok(())
+}
+
+/// The command for running `program` on the host, carrying `activation_token`
+/// as described at [`spawn_on_host`].
+fn host_command(program: &str, activation_token: Option<&str>) -> Command {
+    if in_flatpak() {
+        let mut command = Command::new("flatpak-spawn");
+        command.arg("--host");
+        if let Some(token) = activation_token {
+            command.arg(format!("--env=XDG_ACTIVATION_TOKEN={token}"));
+        }
+        command.arg(program);
+        command
+    } else {
+        let mut command = Command::new(program);
+        if let Some(token) = activation_token {
+            command.env("XDG_ACTIVATION_TOKEN", token);
+        }
+        command
+    }
 }
 
 /// Runs `test <flag> <path>` on the host, for probing paths our own filesystem
@@ -1058,6 +1129,13 @@ fn every_connected_display_asleep_from(
         }
     }
     any_connected
+}
+
+/// [`apply_now`] on the calling thread, for a change asked for from the command
+/// line. There is no event loop to keep responsive there, and the caller needs
+/// the outcome before it exits. Returns whether the apply landed.
+pub fn apply(state: TintState, brightness: f32) -> bool {
+    apply_now(state, brightness, SystemTime::now())
 }
 
 /// Queues an [`apply_now`] on a background thread.

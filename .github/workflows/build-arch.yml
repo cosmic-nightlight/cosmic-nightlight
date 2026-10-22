@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Build Arch package
+
+# Tag builds only, like the .rpm workflow: the package is a release artifact, and
+# the .deb workflow already proves on every push and pull request that the tree
+# still packages. Run it by hand from the Actions tab to test a change to the
+# PKGBUILD or to this file.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-arch:
+    runs-on: ubuntu-24.04
+    # An Arch container for makepkg and Arch's own libraries, so the package comes
+    # out native to Arch. Arch is rolling, so the latest image is the one users
+    # are on.
+    container: archlinux:latest
+    permissions:
+      contents: write   # required so tag builds can attach the package to the Release
+    steps:
+      # Ahead of checkout, which needs git inside the container.
+      - name: Install the toolchain and the build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git github-cli cargo \
+            libdrm libxkbcommon wayland fontconfig expat polkit
+
+      - uses: actions/checkout@v4
+
+      # The version is written in five places, so check they agree before a
+      # release builds anything with them. Only on a tag, for the reason given in
+      # the .rpm workflow.
+      - name: Check the versions agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: scripts/check-version.sh "$GITHUB_REF_NAME"
+
+      - name: Build the package
+        run: |
+          # The container runs as root while the checkout belongs to the runner's
+          # user, and git refuses to read such a tree until it is told the
+          # directory is trusted.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          # Put an archive of the checkout where makepkg would save the download,
+          # named after the PKGBUILD's own pkgver, so makepkg builds this commit
+          # rather than fetching a tag from GitHub.
+          pkgver=$(sed -n 's/^pkgver=//p' arch/PKGBUILD)
+          git archive --prefix="cosmic-nightlight-$pkgver/" \
+            -o arch/"cosmic-nightlight-$pkgver.tar.gz" HEAD
+
+          # makepkg refuses to run as root, so build as a throwaway user. The
+          # dependencies are installed above, so it needs no sudo of its own.
+          useradd -m builder
+          chown -R builder arch
+          su builder -c 'cd arch && makepkg --noconfirm'
+
+          mkdir -p dist
+          cp arch/*.pkg.tar.zst dist/
+          ls -l dist/
+
+      - name: Upload the package as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmic-nightlight-arch
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+      - name: Attach the package to the Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # The .deb workflow creates the Release with its title and notes, so
+          # wait for it rather than race it, as the .rpm workflow does.
+          for _ in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            echo "waiting for the Release to be created..."
+            sleep 20
+          done
+          gh release upload "$GITHUB_REF_NAME" dist/*.pkg.tar.zst --clobber

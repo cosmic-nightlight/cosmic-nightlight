@@ -20,6 +20,7 @@ use std::io;
 pub mod drm;
 pub mod gamma;
 pub mod vt;
+mod wireplumber;
 
 pub use gamma::{MAX_KELVIN, MIN_KELVIN, NEUTRAL_KELVIN};
 
