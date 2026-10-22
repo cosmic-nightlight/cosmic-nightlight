@@ -1,4 +1,4 @@
-cosmic-nightlight (0.5.2-1) UNRELEASED; urgency=medium
+cosmic-nightlight (0.6.0-1) UNRELEASED; urgency=medium
 
   * Fix the screen staying on after it went to sleep, when a scheduled change
     came while it was asleep. The change now waits until the display is back
