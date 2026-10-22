@@ -52,10 +52,18 @@ It exists because COSMIC doesn't support the usual night light tools
    (or run `sudo apt install ./cosmic-nightlight_*.deb`).
 
    On Fedora 44 or newer, download **`cosmic-nightlight-*.rpm`** instead and
-   run `sudo dnf install ./cosmic-nightlight-*.rpm`.
+   run `sudo dnf install ./cosmic-nightlight-*.rpm`. The `.rpm` is new, so
+   until the next release it's only on the
+   [Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly).
 
-   On Arch Linux, download **`cosmic-nightlight-*.pkg.tar.zst`** instead and
-   run `sudo pacman -U ./cosmic-nightlight-*.pkg.tar.zst`.
+   On Arch Linux, there's no download on the Releases page. Build the package
+   yourself instead:
+
+   ```sh
+   git clone https://github.com/cosmic-nightlight/cosmic-nightlight
+   cd cosmic-nightlight/arch
+   makepkg -si
+   ```
 3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**)
    **→ Configure applets → Add applet → Night Light**.
 
