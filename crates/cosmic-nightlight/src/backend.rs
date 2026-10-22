@@ -20,7 +20,9 @@
 //! records what is currently on screen ([`applied`] / [`record_applied`]) in the
 //! session's runtime directory. Callers consult that record before acting, which
 //! keeps them from re-applying — and flickering the screen a second time — a
-//! tint one of the other processes has already put up.
+//! tint one of the other processes has already put up. The record names the
+//! displays that were lit as well as the tint, so plugging in a monitor or
+//! waking one gets it tinted too; see [`Shown`].
 //!
 //! An apply that *didn't* happen is recorded there too, and shared for the same
 //! reason: a refused password prompt is a fact about the user rather than about
@@ -77,6 +79,44 @@ const SETUP_INSTALLS_TO: &str = HELPER_CANDIDATES[1];
 /// What the displays are currently showing: `None` for a neutral (untinted)
 /// ramp, `Some(kelvin)` for a tint at that temperature.
 pub type TintState = Option<u32>;
+
+/// What was put on the screen: the tint, its brightness, and the displays that
+/// were lit at the time. The shared record holds one, and [`reconcile`] applies
+/// whenever the one it wants differs from it in any part.
+///
+/// The displays are there because the tint lives in each CRTC, so a display
+/// that lights up after an apply (one plugged in, or turned back on) can come up
+/// without it while the tint and brightness still match. Re-applying is cheap
+/// when nothing needed changing: the helper reads the hardware first and skips
+/// the VT bounce if every display already shows the ramp.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Shown {
+    state: TintState,
+    /// In thousandths, the precision the helper is given it at. Always 1000
+    /// when the tint is off, since off ignores it.
+    brightness: u32,
+    /// The lit connectors, sorted and comma-separated, or `-` for none.
+    displays: String,
+}
+
+impl Shown {
+    fn new(state: TintState, brightness: f32, displays: String) -> Self {
+        let brightness = match state {
+            Some(_) => (brightness.clamp(0.0, 1.0) * 1000.0).round() as u32,
+            None => 1000,
+        };
+        Shown {
+            state,
+            brightness,
+            displays,
+        }
+    }
+
+    /// `state` at `brightness`, on the displays lit right now.
+    fn now(state: TintState, brightness: f32) -> Self {
+        Shown::new(state, brightness, lit_displays())
+    }
+}
 
 /// True when we are running inside a flatpak sandbox.
 ///
@@ -578,7 +618,7 @@ fn drop_undeliverable_override(
     // helper, which works and charges a password prompt per change. Someone who
     // has just paid one to warm their screen must not have it taken away on the
     // next tick, and be charged a second prompt to put it back.
-    if applied().flatten().is_some() {
+    if applied().is_some_and(|shown| shown.state.is_some()) {
         return;
     }
 
@@ -804,6 +844,10 @@ enum Failure {
     /// no CRTCs up yet, the session not foreground), and a helper that has gone
     /// missing underneath us. All worth retrying soon — the world may change.
     Other,
+    /// Some displays took the change and some didn't
+    /// ([`nightlight_core::EXIT_PARTIAL`]). Retried on the same scale as
+    /// [`Failure::Other`], but only a few times; see [`settle_failure`].
+    Partial,
 }
 
 /// pkexec's exit code for "the user dismissed the authentication dialog".
@@ -878,6 +922,11 @@ fn run_helper(args: &[String]) -> Result<(), Failure> {
             Err(match status.code() {
                 // The dialog was closed. A person said no.
                 Some(PKEXEC_DISMISSED) => Failure::Auth,
+                // Only the helper itself says this. Through the setup script it
+                // could also be the script failing, so it means nothing there.
+                Some(code) if !installs && code == i32::from(nightlight_core::EXIT_PARTIAL) => {
+                    Failure::Partial
+                }
                 // Overloaded, so look: a program still sitting where we left it
                 // means polkit turned us down, which asking again shortly will
                 // not change. One that has gone means it was swapped underneath
@@ -933,26 +982,30 @@ fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> boo
             println!("backend: skipping an apply the user already declined");
             return false;
         }
-        if answered_since(recorded_on_disk(), record_modified(), state, requested_at) {
+        let wanted = Shown::now(state, brightness);
+        if answered_since(recorded_on_disk(), record_modified(), &wanted, requested_at) {
             println!("backend: skipping an apply another process just made");
             return true;
         }
         match apply_unlocked(state, brightness) {
             Ok(()) => {
-                record_applied(state);
+                record_applied(&wanted);
                 clear_backoff();
                 true
             }
-            Err(failure) => {
-                note_failure(state, failure);
-                false
+            // Some screens changed, so as far as the user can see the change
+            // happened: don't undo their toggle. The rest is left to reconcile.
+            Err(Failure::Partial) => {
+                settle_failure(&wanted, Failure::Partial);
+                true
             }
+            Err(failure) => settle_failure(&wanted, failure),
         }
     })
 }
 
-/// Whether another of our processes has already put `state` on the screen since
-/// the user asked for it, so a forced apply would only repeat it.
+/// Whether another of our processes has already put `wanted` on the screen
+/// since the user asked for it, so a forced apply would only repeat it.
 ///
 /// This is the usual shape of a toggle with both GUIs open. The window that was
 /// clicked stores the setting and queues its forced apply, the store wakes the
@@ -965,22 +1018,57 @@ fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> boo
 /// useful. A record that is wrong because a modeset wiped the LUT was written
 /// before the user asked, so toggling off and on still re-applies for real. A
 /// record whose time can't be read counts as old, which errs toward applying.
+///
+/// Brightness is part of the match: a record of the same temperature at another
+/// brightness is no answer to a brightness change.
 fn answered_since(
-    record: Option<TintState>,
+    record: Option<Shown>,
     written: Option<SystemTime>,
-    state: TintState,
+    wanted: &Shown,
     requested_at: SystemTime,
 ) -> bool {
-    record == Some(state) && written.is_some_and(|written| written >= requested_at)
+    record.as_ref() == Some(wanted) && written.is_some_and(|written| written >= requested_at)
 }
+
+/// Deals with an apply that failed, and says whether it counts as done anyway.
+///
+/// Usually it doesn't: the failure is recorded and backed off from. A partial
+/// apply is the exception once it has been retried a few times. Its failing
+/// displays are most likely failing for good (a GPU the helper can't drive),
+/// and each retry is a VT bounce that flickers every screen that did work. So
+/// after [`LAST_PARTIAL_RETRY_DELAY`] the state is recorded as shown and left
+/// alone, until the tint or the displays change.
+///
+/// Callers must hold the apply lock.
+fn settle_failure(wanted: &Shown, failure: Failure) -> bool {
+    let retries_spent = failure == Failure::Partial
+        && current_backoff().is_some_and(|backoff| {
+            backoff.failure == Failure::Partial
+                && backoff.state == wanted.state
+                && backoff.delay >= LAST_PARTIAL_RETRY_DELAY
+        });
+    if retries_spent {
+        eprintln!("backend: some displays still can't be changed; leaving them as they are");
+        record_applied(wanted);
+        clear_backoff();
+        return true;
+    }
+    note_failure(wanted.state, failure);
+    false
+}
+
+/// The longest wait before a partial apply is retried. The retry after it is
+/// the last; see [`settle_failure`].
+const LAST_PARTIAL_RETRY_DELAY: Duration = Duration::from_secs(40);
 
 /// Brings the displays in line with `state`, doing nothing if they already show
 /// it. This is how a schedule boundary reaches the screen, so it runs on the
 /// GUI tick as well as in the daemon — the app tints on schedule whenever *any*
 /// of its processes is running, rather than only when the daemon is.
 ///
-/// Also re-pushes the tint after a resume from suspend; see
-/// [`discard_record_if_resumed`].
+/// Also re-pushes the tint after a resume from suspend (see
+/// [`discard_record_if_resumed`]) and when a display lights up or goes dark
+/// (see [`Shown`]).
 ///
 /// **Never prompts for a password.** Nobody asked for this apply — it is a
 /// schedule boundary, a resume, or a snapshot loaded at startup — so there is
@@ -1003,7 +1091,9 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
         discard_record_if_resumed();
         // Re-read inside the lock: another of our processes may have applied
         // this very state while we were waiting for it.
-        if applied() == Some(state) {
+        let wanted = Shown::now(state, brightness);
+        let record = applied();
+        if record.as_ref() == Some(&wanted) {
             return Reconcile::UpToDate;
         }
         // Do not bounce the VT to apply a schedule change while every display is
@@ -1035,16 +1125,19 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
             println!("backend: not applying unasked — the host setup would prompt for a password");
             return Reconcile::Pending;
         }
+        if record.is_some_and(|record| {
+            record.state == wanted.state && record.brightness == wanted.brightness
+        }) {
+            println!("backend: the lit displays changed; re-applying the tint");
+        }
         match apply_unlocked(state, brightness) {
             Ok(()) => {
-                record_applied(state);
+                record_applied(&wanted);
                 clear_backoff();
                 Reconcile::Applied
             }
-            Err(failure) => {
-                note_failure(state, failure);
-                Reconcile::Pending
-            }
+            Err(failure) if settle_failure(&wanted, failure) => Reconcile::Applied,
+            Err(_) => Reconcile::Pending,
         }
     })
 }
@@ -1101,6 +1194,43 @@ fn every_connected_display_asleep() -> bool {
         states.push((connected, dpms));
     }
     every_connected_display_asleep_from(states)
+}
+
+/// The connectors with a display that is connected and not asleep, as stored in
+/// [`Shown::displays`]. Read from the same world-readable sysfs attributes as
+/// [`every_connected_display_asleep`], which never wake a GPU.
+///
+/// Unreadable sysfs gives `-`, the same as no displays, so it never causes an
+/// apply by itself changing from one tick to the next.
+fn lit_displays() -> String {
+    let Ok(entries) = std::fs::read_dir("/sys/class/drm") else {
+        return lit_displays_from(Vec::new());
+    };
+    let mut lit = Vec::new();
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !(name.starts_with("card") && name.contains('-')) {
+            continue;
+        }
+        let connected = sysfs_trim(&dir.join("status")).as_deref() == Some("connected");
+        let asleep = sysfs_trim(&dir.join("dpms")).as_deref() == Some("Off");
+        if connected && !asleep {
+            lit.push(name.to_owned());
+        }
+    }
+    lit_displays_from(lit)
+}
+
+/// [`lit_displays`] from connector names, split out so it can be tested.
+fn lit_displays_from(mut names: Vec<String>) -> String {
+    if names.is_empty() {
+        return "-".to_owned();
+    }
+    names.sort();
+    names.join(",")
 }
 
 /// Reads a sysfs attribute and trims it, or `None` if unreadable.
@@ -1233,8 +1363,8 @@ impl Request {
     /// carry the same freshly-stored values; only their intent differs.
     ///
     /// Letting the `Reconcile` win dropped the change. `Reconcile` applies
-    /// nothing when the record already matches, and the record holds only the
-    /// temperature ([`record_applied`]), so a brightness-only change found its
+    /// nothing when the record already matches, and the record then held only
+    /// the temperature ([`record_applied`]), so a brightness-only change found its
     /// temperature unchanged and returned `UpToDate` without touching the
     /// screen. That left the stored settings describing one screen and the user
     /// looking at another, and it stayed that way: every later tick reconciles
@@ -1396,32 +1526,39 @@ fn lock_file() -> Option<File> {
 /// it, which is why a resume from suspend needs handling and a logout does not
 /// get it for free.
 ///
-/// So the record dies at logout while the thing it describes does not, and the
-/// next session — or the next *user* — starts out believing the screen is
-/// neutral when it is still warm. See [`assumed`]. Fixing that means recording
-/// the state somewhere session-independent and root-owned, written by the helper
-/// that actually set it; `/run` has exactly gamma's lifetime.
+/// So the record dies at logout while the thing it describes does not. A new
+/// session therefore starts out not knowing what is on screen, and its first
+/// reconcile asks the helper, which reads the hardware; see [`assumed`].
+///
+/// Named `-shown` because it holds a [`Shown`]. The older `-applied` file held
+/// only the temperature, and a process from before an upgrade may still be
+/// reading that one; a different name keeps the two from misreading each other.
 fn applied_state_path() -> Option<PathBuf> {
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
-    Some(PathBuf::from(runtime_dir).join("cosmic-nightlight-applied"))
+    Some(PathBuf::from(runtime_dir).join("cosmic-nightlight-shown"))
 }
 
-/// Reads the tint currently on screen, as recorded by whichever of our
+/// Reads what is currently on screen, as recorded by whichever of our
 /// processes last applied one. `None` means "unknown", which callers must treat
 /// as "needs applying".
-pub fn applied() -> Option<TintState> {
-    recorded_on_disk().or_else(|| *assumed().lock().unwrap_or_else(|err| err.into_inner()))
+pub fn applied() -> Option<Shown> {
+    recorded_on_disk().or_else(|| {
+        assumed()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone()
+    })
 }
 
 /// Records what is now on screen, so another of our processes doesn't re-apply
 /// — and re-flicker — a tint this one just put up.
-pub fn record_applied(state: TintState) {
-    *assumed().lock().unwrap_or_else(|err| err.into_inner()) = Some(state);
+fn record_applied(shown: &Shown) {
+    *assumed().lock().unwrap_or_else(|err| err.into_inner()) = Some(shown.clone());
 
     let Some(path) = applied_state_path() else {
         return;
     };
-    if let Err(err) = std::fs::write(&path, format_applied(state)) {
+    if let Err(err) = std::fs::write(&path, format_shown(shown)) {
         eprintln!("backend: failed to record the applied tint in {path:?}: {err}");
         // The record is now stuck describing an older tint. Stop reading it, or
         // every later reconcile would find that stale value and bounce the VT
@@ -1523,28 +1660,22 @@ fn forget_applied() {
 /// What *this* process believes is on screen, consulted when the shared record
 /// is unavailable (no runtime directory, or writing it has failed).
 ///
-/// It starts as `Some(None)` — neutral — so a session that starts with the tint
-/// off matches straight away and costs no pointless reset bounce at login.
-///
-/// That optimism is **known to be wrong** after a logout with the tint up: the
-/// LUT is still on the hardware, but a fresh session assumes neutral, agrees
-/// with itself, and never clears it. The screen stays warm, and for a second
-/// user with no copy of the app installed there is nothing to clear it with.
-/// Correcting it means learning the real state rather than assuming it — see
-/// [`applied_state_path`] — and the cost of getting it wrong in the other
-/// direction is a VT bounce on every single login, which is why this has not
-/// simply been flipped to `None`.
-fn assumed() -> &'static Mutex<Option<TintState>> {
-    static ASSUMED: Mutex<Option<TintState>> = Mutex::new(Some(None));
+/// It starts as `None`, unknown, rather than assuming neutral. Assuming neutral
+/// was wrong after a logout with the tint up: the LUT stays on the hardware, so
+/// the next session agreed with itself that the screen was neutral and never
+/// cleared it. Not knowing costs one helper call at login, which reads the
+/// hardware and skips the VT bounce when it already shows the right thing.
+fn assumed() -> &'static Mutex<Option<Shown>> {
+    static ASSUMED: Mutex<Option<Shown>> = Mutex::new(None);
     &ASSUMED
 }
 
-fn recorded_on_disk() -> Option<TintState> {
+fn recorded_on_disk() -> Option<Shown> {
     if RECORD_UNUSABLE.load(Ordering::Relaxed) {
         return None;
     }
     let text = std::fs::read_to_string(applied_state_path()?).ok()?;
-    parse_applied(&text)
+    parse_shown(&text)
 }
 
 /// Set when a write to the shared record fails; see [`record_applied`].
@@ -1727,7 +1858,7 @@ fn holds(backoff: &Backoff, state: TintState, now: SystemTime) -> bool {
 fn retry_delay(previous: Option<Duration>, failure: Failure) -> Duration {
     let (first, max) = match failure {
         Failure::Auth => (FIRST_AUTH_RETRY_DELAY, MAX_AUTH_RETRY_DELAY),
-        Failure::Other => (FIRST_RETRY_DELAY, MAX_RETRY_DELAY),
+        Failure::Other | Failure::Partial => (FIRST_RETRY_DELAY, MAX_RETRY_DELAY),
     };
     match previous {
         // Still failing the same way: wait twice as long as last time.
@@ -1771,7 +1902,7 @@ fn note_failure(state: TintState, failure: Failure) {
 ///
 /// Callers must hold the apply lock.
 fn note_auth_refusal() {
-    note_failure(applied().flatten(), Failure::Auth);
+    note_failure(applied().and_then(|shown| shown.state), Failure::Auth);
 }
 
 /// Clears the backoff: something just worked, so nothing is worth waiting out.
@@ -1823,6 +1954,28 @@ fn format_applied(state: TintState) -> String {
     }
 }
 
+/// Renders a [`Shown`] as `<state> <brightness> <displays>`.
+fn format_shown(shown: &Shown) -> String {
+    format!(
+        "{} {} {}",
+        format_applied(shown.state),
+        shown.brightness,
+        shown.displays
+    )
+}
+
+/// Parses a [`Shown`], or `None` if the record is unreadable, which callers
+/// treat as unknown.
+fn parse_shown(text: &str) -> Option<Shown> {
+    let mut fields = text.split_whitespace();
+    let shown = Shown {
+        state: parse_applied(fields.next()?)?,
+        brightness: fields.next()?.parse().ok()?,
+        displays: fields.next()?.to_owned(),
+    };
+    fields.next().is_none().then_some(shown)
+}
+
 /// Renders a backoff as `<state> <retry-at> <delay> <failure>`, the deadline in
 /// seconds since the epoch so it reads the same in every process.
 fn format_backoff(backoff: &Backoff) -> String {
@@ -1834,6 +1987,7 @@ fn format_backoff(backoff: &Backoff) -> String {
     let failure = match backoff.failure {
         Failure::Auth => "auth",
         Failure::Other => "other",
+        Failure::Partial => "partial",
     };
     format!(
         "{} {retry_at} {} {failure}",
@@ -1854,6 +2008,7 @@ fn parse_backoff(text: &str) -> Option<Backoff> {
     let failure = match fields.next()? {
         "auth" => Failure::Auth,
         "other" => Failure::Other,
+        "partial" => Failure::Partial,
         _ => return None,
     };
     Some(Backoff {
@@ -1925,12 +2080,35 @@ mod tests {
         let asked = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let written = asked + Duration::from_millis(200);
         assert!(answered_since(
-            Some(Some(2600)),
+            Some(shown(Some(2600), 0.8)),
             Some(written),
-            Some(2600),
+            &shown(Some(2600), 0.8),
             asked
         ));
-        assert!(answered_since(Some(None), Some(written), None, asked));
+        assert!(answered_since(
+            Some(shown(None, 1.0)),
+            Some(written),
+            &shown(None, 1.0),
+            asked
+        ));
+    }
+
+    fn shown(state: TintState, brightness: f32) -> Shown {
+        Shown::new(state, brightness, "card1-eDP-1".to_owned())
+    }
+
+    /// The race the audit found: another process recorded the same temperature
+    /// after the ask, but at the old brightness. That is not this change.
+    #[test]
+    fn a_forced_brightness_change_is_not_answered_by_the_old_brightness() {
+        let asked = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let written = asked + Duration::from_millis(200);
+        assert!(!answered_since(
+            Some(shown(Some(2600), 0.8)),
+            Some(written),
+            &shown(Some(2600), 0.5),
+            asked
+        ));
     }
 
     /// A record from before the click may be wrong, since a modeset can wipe the
@@ -1940,12 +2118,17 @@ mod tests {
         let asked = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let written = asked - Duration::from_secs(60);
         assert!(!answered_since(
-            Some(Some(2600)),
+            Some(shown(Some(2600), 0.8)),
             Some(written),
-            Some(2600),
+            &shown(Some(2600), 0.8),
             asked
         ));
-        assert!(!answered_since(Some(Some(2600)), None, Some(2600), asked));
+        assert!(!answered_since(
+            Some(shown(Some(2600), 0.8)),
+            None,
+            &shown(Some(2600), 0.8),
+            asked
+        ));
     }
 
     /// A fresh record of some other state is no answer to this request.
@@ -1954,18 +2137,23 @@ mod tests {
         let asked = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let written = asked + Duration::from_millis(200);
         assert!(!answered_since(
-            Some(None),
+            Some(shown(None, 1.0)),
             Some(written),
-            Some(2600),
+            &shown(Some(2600), 0.8),
             asked
         ));
         assert!(!answered_since(
-            Some(Some(3400)),
+            Some(shown(Some(3400), 0.8)),
             Some(written),
-            Some(2600),
+            &shown(Some(2600), 0.8),
             asked
         ));
-        assert!(!answered_since(None, Some(written), Some(2600), asked));
+        assert!(!answered_since(
+            None,
+            Some(written),
+            &shown(Some(2600), 0.8),
+            asked
+        ));
     }
 
     /// The reinstall case: the config outlives the flatpak, so a schedule comes
@@ -2111,6 +2299,64 @@ mod tests {
     }
 
     #[test]
+    fn shown_round_trips() {
+        for shown in [
+            shown(None, 1.0),
+            shown(Some(2500), 0.51),
+            Shown::new(Some(6500), 1.0, lit_displays_from(Vec::new())),
+            Shown::new(
+                Some(3000),
+                0.9,
+                lit_displays_from(vec!["card1-eDP-1".into(), "card0-HDMI-A-1".into()]),
+            ),
+        ] {
+            assert_eq!(parse_shown(&format_shown(&shown)), Some(shown));
+        }
+    }
+
+    /// A brightness the helper would round to the same value is the same
+    /// state, and off ignores brightness altogether.
+    #[test]
+    fn brightness_compares_at_the_helpers_precision() {
+        assert_eq!(shown(Some(3000), 0.5101), shown(Some(3000), 0.51));
+        assert_ne!(shown(Some(3000), 0.52), shown(Some(3000), 0.51));
+        assert_eq!(shown(None, 0.3), shown(None, 1.0));
+    }
+
+    /// The hotplug case: same tint, a display more.
+    #[test]
+    fn a_new_display_is_a_different_state() {
+        let one = Shown::new(
+            Some(3000),
+            1.0,
+            lit_displays_from(vec!["card1-eDP-1".into()]),
+        );
+        let two = Shown::new(
+            Some(3000),
+            1.0,
+            lit_displays_from(vec!["card1-eDP-1".into(), "card1-HDMI-A-1".into()]),
+        );
+        assert_ne!(one, two);
+        // Order of discovery doesn't matter.
+        let reversed = Shown::new(
+            Some(3000),
+            1.0,
+            lit_displays_from(vec!["card1-HDMI-A-1".into(), "card1-eDP-1".into()]),
+        );
+        assert_eq!(two, reversed);
+    }
+
+    #[test]
+    fn unreadable_shown_records_are_unknown() {
+        assert_eq!(parse_shown(""), None);
+        // What the older `-applied` file holds.
+        assert_eq!(parse_shown("3500"), None);
+        assert_eq!(parse_shown("3500 920"), None);
+        assert_eq!(parse_shown("3500 bright card1-eDP-1"), None);
+        assert_eq!(parse_shown("3500 920 card1-eDP-1 extra"), None);
+    }
+
+    #[test]
     fn a_trailing_newline_is_tolerated() {
         assert_eq!(parse_applied("off\n"), Some(None));
         assert_eq!(parse_applied(" 3500 \n"), Some(Some(3500)));
@@ -2206,7 +2452,7 @@ mod tests {
     #[test]
     fn a_backoff_round_trips() {
         for state in [None, Some(2500), Some(6500)] {
-            for failure in [Failure::Auth, Failure::Other] {
+            for failure in [Failure::Auth, Failure::Other, Failure::Partial] {
                 let backoff = Backoff {
                     state,
                     // Truncated to the whole second the format stores.

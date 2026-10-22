@@ -29,7 +29,16 @@ pub use gamma::{MAX_KELVIN, MIN_KELVIN, NEUTRAL_KELVIN};
 pub struct Applied {
     /// Number of CRTCs (display pipes) whose gamma was updated.
     pub crtcs: usize,
+    /// Cards with a display on them that could not be fully updated.
+    pub failed_cards: usize,
 }
+
+/// The helper's exit code when some displays changed and others could not.
+///
+/// Distinct from a plain failure because the screens that did change are
+/// showing the new tint: the GUI retries the rest a few times rather than
+/// treating the whole change as undone.
+pub const EXIT_PARTIAL: u8 = 2;
 
 /// Applies a color temperature (Kelvin) and brightness (`0.0..=1.0`) to all
 /// active displays.
@@ -48,10 +57,16 @@ pub struct Applied {
 pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Result<Applied> {
     let kelvin = kelvin.clamp(MIN_KELVIN, MAX_KELVIN);
     if let Some(crtcs) = drm::already_showing(kelvin, brightness) {
-        return Ok(Applied { crtcs });
+        return Ok(Applied {
+            crtcs,
+            failed_cards: 0,
+        });
     }
-    let crtcs = vt::with_master_window(session_vt, || drm::apply_all(kelvin, brightness))??;
-    Ok(Applied { crtcs })
+    let written = vt::with_master_window(session_vt, || drm::apply_all(kelvin, brightness))??;
+    Ok(Applied {
+        crtcs: written.crtcs,
+        failed_cards: written.failed_cards,
+    })
 }
 
 /// Resets all displays to a neutral (untinted) ramp.
