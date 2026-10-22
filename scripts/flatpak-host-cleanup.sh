@@ -14,7 +14,8 @@
 #
 # The directories it watches and scans are writable by ordinary users. They are
 # only ever tested for existence here: nothing is read from them, run from them
-# or passed on from them. The worst a user can do through them is fake an
+# or passed on from them. The one thing it does read is flatpak's own list of
+# custom installations, under /etc, which only root can write. The worst a user can do through them is fake an
 # install, which keeps the helper around, which is the state the setup left
 # anyway.
 #
@@ -40,12 +41,24 @@ path_unit=cosmic-nightlight-cleanup.path
 service_template=cosmic-nightlight-cleanup@.service
 boot_unit=cosmic-nightlight-cleanup@boot.service
 
-# Every flatpak installation the app could be in: the system one, and each
-# user's. Custom installations under /etc/flatpak/installations.d are not
-# covered; an app there is simply not seen, and its helper is kept only until
-# the next check that finds no other install.
+# The custom installations configured in /etc/flatpak/installations.d, as
+# absolute paths. Each `.conf` there is an INI file whose `Path=` names one.
+custom_installations() {
+    local conf path
+    for conf in /etc/flatpak/installations.d/*.conf; do
+        [[ -f "$conf" ]] || continue
+        while IFS= read -r path; do
+            [[ "$path" == /?* ]] && echo "$path"
+        done < <(sed -n 's/^[[:space:]]*Path[[:space:]]*=[[:space:]]*//p' "$conf" |
+            sed 's/[[:space:]]*$//')
+    done
+}
+
+# Every flatpak installation the app could be in: the system one, any custom
+# ones, and each user's.
 installations() {
     echo /var/lib/flatpak
+    custom_installations
     getent passwd | while IFS=: read -r _ _ _ _ _ home _; do
         [[ "$home" == /?* && -d "$home" ]] || continue
         echo "$home/.local/share/flatpak"
@@ -164,6 +177,10 @@ case "${1:-}" in
         # is still covered. Paths systemd would misread are skipped; the boot
         # check still covers those users.
         echo /var/lib/flatpak/app
+        custom_installations | while read -r root; do
+            [[ "$root" =~ [[:space:]%\\] ]] && continue
+            echo "$root/app"
+        done
         getent passwd | while IFS=: read -r _ _ uid _ _ home _; do
             ((uid >= 1000 && uid != 65534)) || continue
             [[ "$home" == /?* && -d "$home" ]] || continue

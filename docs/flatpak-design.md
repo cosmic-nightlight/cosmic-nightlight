@@ -358,7 +358,9 @@ The details that keep it from doing the wrong thing:
   missing. The `watch` run also waits a few seconds first, so an uninstall
   followed at once by a reinstall (a branch or remote switch) keeps the helper.
 - **Other users and installations count.** The helper is shared, so it stays
-  while the app is installed for any user, or system-wide.
+  while the app is installed for any user, system-wide, or in a custom
+  installation listed in `/etc/flatpak/installations.d`. A custom installation
+  on a drive that isn't mounted counts as unseen, the same as an unmounted home.
 - **An unmounted home is not an empty one.** The setup records which
   installations had the app (`roots`). If one of those cannot be seen at check
   time (no `repo/`, as with an encrypted home before login), the cleanup does
@@ -375,7 +377,8 @@ The details that keep it from doing the wrong thing:
 
 The watched directories are user-writable, and the cleanup runs as root, so it
 only ever tests them for existence: it reads nothing from them and runs nothing
-from them. A user can fake an install to keep the helper around, which is no more
+from them. The list of custom installations is read from `/etc`, which only
+root can write. A user can fake an install to keep the helper around, which is no more
 than what the setup already left them.
 
 The script lives under `/var/lib` because Pop!_OS has no `/usr/local/libexec`,
@@ -384,8 +387,7 @@ cleanup is best-effort, like the setup itself: on a host without systemd, or if
 any step fails, the app works as before and simply leaves the helper behind on
 uninstall, as it did before this existed.
 
-Not covered: custom installations under `/etc/flatpak/installations.d`. A host
-set up before this shipped has no cleanup installed until the setup runs again,
+Not covered: a host set up before this shipped has no cleanup installed until the setup runs again,
 so those users still need `scripts/uninstall.sh` or the two `rm` lines in the
 README.
 
