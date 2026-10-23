@@ -9,6 +9,11 @@ cosmic-nightlight (0.6.0-1) UNRELEASED; urgency=medium
     sending you to COSMIC Settings to do it.
   * The settings window now notices at once when you add or remove the
     applet from your panel, instead of up to 15 seconds later.
+  * No more password prompts at sunset for accounts that aren't
+    administrators. The schedule waits instead, and changes you make
+    yourself still ask as before.
+  * Depend on pkexec, without which Night Light could install on some
+    Debian and Ubuntu systems and then fail to change the screen.
 
  -- Daniel Watts <danielcwtts@gmail.com>  Mon, 19 Oct 2026 20:52:27 -0500
 
