@@ -552,7 +552,7 @@ impl cosmic::Application for SettingsWindow {
                         self.brightness,
                         Message::BrightnessChanged,
                     )
-                    .step(0.01)
+                    .step(0.01_f32)
                     .on_release(Message::BrightnessCommitted)
                     .width(Length::Fixed(SLIDER_WIDTH)),
                 ),
@@ -1079,7 +1079,7 @@ impl SettingsWindow {
             config::warmth_of(self.temperature),
             |warmth| Message::TemperatureChanged(config::kelvin_of(warmth)),
         )
-        .step(50.0)
+        .step(50.0_f32)
         .on_release(Message::TemperatureCommitted);
 
         let (less, more) = config::warmth_ends();

@@ -359,7 +359,7 @@ impl NightLightApplet {
                     config::warmth_of(self.temperature),
                     |warmth| Message::TemperatureChanged(config::kelvin_of(warmth)),
                 )
-                .step(50.0)
+                .step(50.0_f32)
                 .on_release(Message::TemperatureCommitted),
             )
             .push(
