@@ -51,16 +51,30 @@ fn invoking_uid() -> Option<u32> {
         .find_map(|var| std::env::var(var).ok()?.parse().ok())
 }
 
-/// logind's state for `uid` ("active", "online", ...), as WirePlumber sees it.
-fn user_state(uid: u32) -> Option<String> {
-    let output = Command::new("loginctl")
-        .args(["show-user", &uid.to_string(), "--property=State", "--value"])
-        .output()
-        .ok()?;
+/// The owner of the session in the foreground on seat0, which is whose
+/// WirePlumber the bounce disturbs. For a caller with no user behind it, like
+/// the flatpak's uninstall cleanup, which systemd runs as root.
+fn foreground_uid() -> Option<u32> {
+    let session = loginctl(&["show-seat", "seat0", "--property=ActiveSession", "--value"])?;
+    if session.is_empty() {
+        return None;
+    }
+    loginctl(&["show-session", &session, "--property=User", "--value"])?
+        .parse()
+        .ok()
+}
+
+fn loginctl(args: &[&str]) -> Option<String> {
+    let output = Command::new("loginctl").args(args).output().ok()?;
     if !output.status.success() {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// logind's state for `uid` ("active", "online", ...), as WirePlumber sees it.
+fn user_state(uid: u32) -> Option<String> {
+    loginctl(&["show-user", &uid.to_string(), "--property=State", "--value"])
 }
 
 /// Every `wireplumber` process owned by `uid`.
@@ -180,7 +194,7 @@ impl Drop for Watchdog {
 /// Only does so when the user is active right now: otherwise WirePlumber has
 /// already released the devices and there is nothing for the bounce to break.
 pub fn hold() -> Option<Hold> {
-    let uid = invoking_uid()?;
+    let uid = invoking_uid().or_else(foreground_uid)?;
     if user_state(uid)? != "active" {
         return None;
     }

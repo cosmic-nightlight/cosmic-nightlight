@@ -17,6 +17,10 @@
 //! `--version` is how a newer GUI checks the older host copy still understands
 //! it; see `nightlight_core::HELPER_CONTRACT` before changing any of them.
 //!
+//! Exits 0 when every display took the change, 1 when none did or the
+//! arguments were wrong, and `nightlight_core::EXIT_PARTIAL` (2) when some
+//! displays changed and others could not.
+//!
 //! `--session-vt` is the caller's graphical-session VT (from `XDG_VTNR`, which
 //! `pkexec` strips from the environment). When given, the VT bounce only runs
 //! if that VT is foreground and always switches back to it; without it the
@@ -132,6 +136,13 @@ fn main() -> ExitCode {
                     "cosmic-nightlight-helper: no CRTCs were updated (no active displays with gamma support yet?)"
                 );
                 return ExitCode::FAILURE;
+            }
+            if applied.failed_cards > 0 {
+                eprintln!(
+                    "cosmic-nightlight-helper: {} card(s) could not be updated; their displays were left as they were",
+                    applied.failed_cards
+                );
+                return ExitCode::from(nightlight_core::EXIT_PARTIAL);
             }
             ExitCode::SUCCESS
         }

@@ -34,6 +34,7 @@
                 "install -Dm755 target/release/cosmic-nightlight /app/bin/cosmic-nightlight",
                 "install -Dm755 target/release/cosmic-nightlight-helper /app/libexec/cosmic-nightlight-helper",
                 "install -Dm755 scripts/flatpak-host-setup.sh /app/libexec/cosmic-nightlight-setup",
+                "install -Dm644 scripts/flatpak-host-cleanup.sh /app/libexec/cosmic-nightlight-cleanup",
                 "install -Dm644 polkit/49-cosmic-nightlight.rules /app/share/polkit-1/rules.d/49-cosmic-nightlight.rules",
                 "install -Dm644 data/io.github.cosmic_nightlight.desktop /app/share/applications/io.github.cosmic_nightlight.desktop",
                 "install -Dm644 data/io.github.cosmic_nightlight.settings.desktop /app/share/applications/io.github.cosmic_nightlight.settings.desktop",
