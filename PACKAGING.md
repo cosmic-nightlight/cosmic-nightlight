@@ -120,10 +120,11 @@ comment shows how to build it by hand on Fedora.
 
 [`arch/PKGBUILD`](arch/PKGBUILD) builds the same set of files as the `.deb`.
 [`.github/workflows/build-arch.yml`](.github/workflows/build-arch.yml) builds it
-in an `archlinux:latest` container on every `v*` tag and attaches the
-`.pkg.tar.zst` to the Release that the `.deb` workflow creates. Like the `.rpm`
-workflow, it does not run on pushes or pull requests; start it by hand from the
-Actions tab to test a PKGBUILD change.
+in an `archlinux:latest` container on every `v*` tag. Unlike the `.deb` and
+`.rpm`, the `.pkg.tar.zst` is not attached to the Release, to keep the Assets
+list short; it is kept as a workflow artifact, and Arch users build their own
+with `makepkg -si`. Like the `.rpm` workflow, it does not run on pushes or pull
+requests; start it by hand from the Actions tab to test a PKGBUILD change.
 
 On Arch itself, `makepkg -si` in `arch/` downloads the tagged release from
 GitHub and builds that. To build the working tree instead, the PKGBUILD's header
