@@ -77,7 +77,9 @@ git push --tags
 ```
 
 The workflow then builds `cosmic-nightlight_0.2.0-1_amd64.deb` and attaches it to
-a `v0.2.0` Release with auto-generated notes.
+a `v0.2.0` Release. The release text comes from `docs/release-notes/v0.2.0.md`
+if it exists, or is generated from the changelog if not. Write that file before
+tagging, following [docs/release-notes/README.md](docs/release-notes/README.md).
 
 ## Clean-room / offline build (PPA, sbuild, Launchpad)
 
