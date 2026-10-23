@@ -82,13 +82,15 @@ pub type TintState = Option<u32>;
 
 /// What was put on the screen: the tint, its brightness, and the displays that
 /// were lit at the time. The shared record holds one, and [`reconcile`] applies
-/// whenever the one it wants differs from it in any part.
+/// when the one it wants has a different tint or brightness, or a display the
+/// record lacks.
 ///
 /// The displays are there because the tint lives in each CRTC, so a display
 /// that lights up after an apply (one plugged in, or turned back on) can come up
 /// without it while the tint and brightness still match. Re-applying is cheap
 /// when nothing needed changing: the helper reads the hardware first and skips
-/// the VT bounce if every display already shows the ramp.
+/// the VT bounce if every display already shows the ramp. It waits for the
+/// displays to settle first, though; see [`DISPLAYS_SETTLE`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shown {
     state: TintState,
@@ -1148,6 +1150,9 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
         // Re-read inside the lock: another of our processes may have applied
         // this very state while we were waiting for it.
         let wanted = Shown::now(state, brightness);
+        // Every tick, so that a change is timed from when it happened, even one
+        // that needed no apply.
+        let settled = displays_settled(&wanted.displays);
         let record = applied();
         if record.as_ref() == Some(&wanted) {
             return Reconcile::UpToDate;
@@ -1186,13 +1191,37 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
             return Reconcile::Pending;
         }
         DEFERRING_FOR_PASSWORD.store(false, Ordering::Relaxed);
-        if record.is_some_and(|record| {
+        let displays_only = record.as_ref().is_some_and(|record| {
             record.state == wanted.state && record.brightness == wanted.brightness
-        }) {
-            println!("backend: the lit displays changed; re-applying the tint");
+        });
+        if displays_only {
+            let record = record
+                .as_ref()
+                .map_or("-", |record| record.displays.as_str());
+            // A display going away leaves the others as they were, so there is
+            // nothing to apply. A bounce right after an unplug, while the
+            // compositor was still tearing that output down, is what left
+            // cosmic-comp without its GPU on a hybrid laptop.
+            if !displays_added(record, &wanted.displays) {
+                record_applied(&wanted);
+                return Reconcile::UpToDate;
+            }
+            if !settled {
+                return Reconcile::Pending;
+            }
+            println!("backend: a display lit up; re-applying the tint");
         }
         match apply_unlocked(state, brightness) {
             Ok(()) => {
+                record_applied(&wanted);
+                clear_backoff();
+                Reconcile::Applied
+            }
+            // One try per change. A retry is another VT bounce, and a display
+            // still coming up is the worst time for one. The next change, or
+            // the user's next toggle, tries again.
+            Err(_) if displays_only => {
+                eprintln!("backend: re-applying for a new display failed; not retrying");
                 record_applied(&wanted);
                 clear_backoff();
                 Reconcile::Applied
@@ -1296,6 +1325,59 @@ fn lit_displays_from(mut names: Vec<String>) -> String {
     }
     names.sort();
     names.join(",")
+}
+
+/// Whether `now` has a lit display that `before` did not, both as
+/// [`lit_displays`] gives them.
+fn displays_added(before: &str, now: &str) -> bool {
+    let before: Vec<&str> = before.split(',').collect();
+    now.split(',')
+        .any(|display| display != "-" && !before.contains(&display))
+}
+
+/// How long the lit displays must stay the same before a new one is tinted.
+///
+/// Plugging in a monitor changes the set several times over a few seconds, as
+/// it connects and then wakes, and cosmic-comp is setting the output up all
+/// the while. A VT bounce in that window can make it lose the GPU for good: on
+/// an Intel and NVIDIA laptop every screen went black until a reboot. 30
+/// seconds is two reconcile ticks.
+const DISPLAYS_SETTLE: Duration = Duration::from_secs(30);
+
+/// Whether the lit displays have been `lit` for at least [`DISPLAYS_SETTLE`],
+/// noting `lit` as the current set if it is a change.
+///
+/// Kept in a file rather than in memory, because the panel restarts its applets
+/// when a monitor is plugged in. A fresh applet would otherwise see the new set
+/// for the first time and apply straight away, in the middle of the setup this
+/// waits out. The file's mtime is when the set last changed.
+///
+/// Callers must hold the apply lock.
+fn displays_settled(lit: &str) -> bool {
+    let Some(path) = displays_path() else {
+        // Nowhere to keep the time. Applying at once is how this behaved
+        // before it waited at all.
+        return true;
+    };
+    if std::fs::read_to_string(&path).is_ok_and(|seen| seen == lit) {
+        // An mtime we can't read, or one in the future after the clock was set
+        // back, counts as settled, so the wait can't get stuck.
+        return std::fs::metadata(&path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|changed| changed.elapsed().ok())
+            .is_none_or(|elapsed| elapsed >= DISPLAYS_SETTLE);
+    }
+    if std::fs::write(&path, lit).is_err() {
+        return true;
+    }
+    false
+}
+
+/// Path of the file [`displays_settled`] keeps the lit displays in.
+fn displays_path() -> Option<PathBuf> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+    Some(PathBuf::from(runtime_dir).join("cosmic-nightlight-displays"))
 }
 
 /// Reads a sysfs attribute and trims it, or `None` if unreadable.
@@ -2458,6 +2540,16 @@ mod tests {
             lit_displays_from(vec!["card1-HDMI-A-1".into(), "card1-eDP-1".into()]),
         );
         assert_eq!(two, reversed);
+    }
+
+    /// Unplugging needs no apply: the other displays keep their tint.
+    #[test]
+    fn only_a_new_display_counts_as_added() {
+        assert!(displays_added("card1-eDP-1", "card0-HDMI-A-1,card1-eDP-1"));
+        assert!(displays_added("-", "card1-eDP-1"));
+        assert!(!displays_added("card0-HDMI-A-1,card1-eDP-1", "card1-eDP-1"));
+        assert!(!displays_added("card1-eDP-1", "-"));
+        assert!(!displays_added("card1-eDP-1", "card1-eDP-1"));
     }
 
     #[test]
