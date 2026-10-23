@@ -124,8 +124,10 @@ if [[ "$tint_reset" -eq 0 ]]; then
 fi
 
 # 5. Remove the files install.sh placed under /usr/local and /usr/share.
+# Checked under sudo: /etc/polkit-1/rules.d is 0750 root:polkitd on most
+# distros, so a test run as the user can't see the rule and skipped it.
 remove() {
-    if [[ -e "$1" ]]; then
+    if sudo test -e "$1"; then
         sudo rm -f "$1"
         echo "Removed: $1"
     fi
