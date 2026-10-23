@@ -481,9 +481,56 @@ fn probe_host_setup() -> HostSetup {
 /// build still knows. Every other answer routes the call through the setup
 /// program instead — see [`privileged_program`] — whose path inside the flatpak
 /// no rule can name, so it asks. Unsandboxed there is nothing to install and the
-/// answer is always `Ready`, which is why none of this touches the `.deb`.
+/// answer is always `Ready`.
+///
+/// Neither install helps a user the rule does not cover, though. It only lets
+/// members of `sudo` and `wheel` through, so for anyone else every call asks,
+/// and for an account that isn't an administrator it asks for a password that
+/// account doesn't have.
 fn would_prompt() -> bool {
-    host_setup() != HostSetup::Ready
+    host_setup() != HostSetup::Ready || !in_passwordless_group()
+}
+
+/// The groups `polkit/49-cosmic-nightlight.rules` lets run the helper without a
+/// password. Keep the two in step.
+const PASSWORDLESS_GROUPS: [&str; 2] = ["sudo", "wheel"];
+
+/// Whether the user is in one of [`PASSWORDLESS_GROUPS`].
+///
+/// Asked of the host, because a flatpak's own group list can't name the host's
+/// groups. Asked by user name, because polkit checks the group database rather
+/// than the groups this session started with, so someone just added to `sudo`
+/// counts straight away. Learned once per process.
+///
+/// Answers yes when `id` can't tell us, which is how this behaved before it
+/// asked: the cost of being wrong that way is the prompt it always had.
+fn in_passwordless_group() -> bool {
+    static ANSWER: OnceLock<bool> = OnceLock::new();
+    *ANSWER.get_or_init(|| {
+        let mut command = host_command("id", None);
+        command.arg("-Gn");
+        if let Ok(user) = std::env::var("USER") {
+            command.arg("--").arg(user);
+        }
+        let output = match command.stderr(Stdio::null()).output() {
+            Ok(output) if output.status.success() => output,
+            _ => return true,
+        };
+        let member = lists_a_passwordless_group(&String::from_utf8_lossy(&output.stdout));
+        if !member {
+            println!(
+                "backend: not in sudo or wheel, so changes nobody asked for will wait rather than ask for a password"
+            );
+        }
+        member
+    })
+}
+
+/// Whether `id -Gn` output names one of [`PASSWORDLESS_GROUPS`].
+fn lists_a_passwordless_group(groups: &str) -> bool {
+    groups
+        .split_whitespace()
+        .any(|group| PASSWORDLESS_GROUPS.contains(&group))
 }
 
 /// Stands the stored settings down to what the host can actually deliver:
@@ -1032,9 +1079,14 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
         // can reach pkexec: a screen that already matches, or a state we are
         // backing off from, pays nothing for the question.
         if would_prompt() {
-            println!("backend: not applying unasked — the host setup would prompt for a password");
+            // Once per stretch, like the deferral above: for a user outside the
+            // rule's groups this is every tick, all session long.
+            if !DEFERRING_FOR_PASSWORD.swap(true, Ordering::Relaxed) {
+                println!("backend: not applying unasked: it would ask for a password");
+            }
             return Reconcile::Pending;
         }
+        DEFERRING_FOR_PASSWORD.store(false, Ordering::Relaxed);
         match apply_unlocked(state, brightness) {
             Ok(()) => {
                 record_applied(state);
@@ -1057,7 +1109,7 @@ pub enum Reconcile {
     /// The wanted state was applied.
     Applied,
     /// Not applied: the attempt failed, we are still backing off from an
-    /// earlier failure, the host setup would prompt for a password, or every
+    /// earlier failure, applying would prompt for a password, or every
     /// connected display is asleep. Worth trying again later.
     Pending,
 }
@@ -1065,6 +1117,10 @@ pub enum Reconcile {
 /// Set while [`reconcile`] is holding off because every display is asleep, so
 /// the deferral is logged once rather than on every tick.
 static DEFERRING_WHILE_ASLEEP: AtomicBool = AtomicBool::new(false);
+
+/// Set while [`reconcile`] is holding off because applying would prompt, so that
+/// is logged once rather than on every tick.
+static DEFERRING_FOR_PASSWORD: AtomicBool = AtomicBool::new(false);
 
 /// Whether to hold off an unasked apply because every connected display is
 /// already asleep. See the deferral in [`reconcile`] for why.
@@ -2204,6 +2260,18 @@ mod tests {
             delay: FIRST_AUTH_RETRY_DELAY,
             failure: Failure::Auth,
         }
+    }
+
+    #[test]
+    fn only_sudo_and_wheel_skip_the_password() {
+        assert!(lists_a_passwordless_group(
+            "daniel adm cdrom sudo dip plugdev"
+        ));
+        assert!(lists_a_passwordless_group("alex wheel\n"));
+        assert!(!lists_a_passwordless_group("guest users"));
+        // Whole names only.
+        assert!(!lists_a_passwordless_group("sudoers wheelers"));
+        assert!(!lists_a_passwordless_group(""));
     }
 
     /// A backoff has to survive the trip through the file that shares it, or the
