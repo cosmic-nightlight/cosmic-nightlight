@@ -56,6 +56,9 @@ pub const EXIT_PARTIAL: u8 = 2;
 /// [`vt::with_master_window`] for how it guards and restores the VT bounce.
 pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Result<Applied> {
     let kelvin = kelvin.clamp(MIN_KELVIN, MAX_KELVIN);
+    // Before the read as well as the write: a read taken while another
+    // helper's bounce is under way can see a half-written screen.
+    let _lock = lock_host();
     if let Some(crtcs) = drm::already_showing(kelvin, brightness) {
         return Ok(Applied {
             crtcs,
@@ -67,6 +70,46 @@ pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Resul
         crtcs: written.crtcs,
         failed_cards: written.failed_cards,
     })
+}
+
+/// Where [`lock_host`] takes its lock. Under `/run` because only root can write
+/// there, and every caller of [`apply`] is root anyway.
+const HOST_LOCK_PATH: &str = "/run/cosmic-nightlight-helper.lock";
+
+/// Serializes applies across the whole machine, so only one VT bounce is ever
+/// under way.
+///
+/// The GUI already serializes its own applies, but on a lock in
+/// `XDG_RUNTIME_DIR`, and Flatpak gives the sandbox a private one of those. A
+/// native applet and the flatpak running side by side (most often a .deb applet
+/// still in the panel after switching to the flatpak) then each bounce on their
+/// own. A helper starting while the other's bounce has the spare VT foreground
+/// finds the session VT in the background and, rightly, refuses to switch, so
+/// that change is lost. Waiting here instead means the other helper has switched
+/// back by the time we look.
+///
+/// Advisory `flock`, released by the kernel when the returned file closes, so a
+/// killed helper cannot wedge it. If the file can't be opened we go ahead
+/// unserialized, which is how the helper behaved before.
+fn lock_host() -> Option<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(HOST_LOCK_PATH)
+        .ok()?;
+    // SAFETY: `lock` owns a live file descriptor, and `flock` only inspects it.
+    // A signal interrupting the wait leaves us unlocked, which is the same
+    // fallback as failing to open the file.
+    unsafe {
+        libc::flock(lock.as_raw_fd(), libc::LOCK_EX);
+    }
+    Some(lock)
 }
 
 /// Resets all displays to a neutral (untinted) ramp.
