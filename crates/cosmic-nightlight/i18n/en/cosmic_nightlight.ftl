@@ -102,7 +102,7 @@ setup-description = Turning on the night light needs a one-time system permissio
 setup-action = Set Up
 
 setup-outdated-title = Update the installed helper
-setup-outdated-description = The helper Night Light installed was put there by an older version and no longer understands this one. Running the setup again replaces it.
+setup-outdated-description = The helper Night Light installed came from an older version and is missing fixes this one needs. Running the setup again replaces it.
 setup-action-update = Update
 
 # On the button while the password prompt is up.

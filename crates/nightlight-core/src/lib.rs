@@ -134,15 +134,19 @@ pub fn is_root() -> bool {
 ///
 /// Bump this **only** for a change that would make an older helper mishandle
 /// what the GUI sends — an argument removed or renamed, a unit or range
-/// redefined, a new argument the GUI relies on. Adding an argument the GUI does
-/// not require is not a bump.
+/// redefined, a new argument the GUI relies on. Bump it too for a fix only the
+/// helper can deliver, since an old copy on the host would otherwise keep the
+/// bug. Adding an argument the GUI does not require is not a bump.
 ///
-/// Contract 1, unchanged across every release so far:
+/// The command line has not changed since contract 1:
 ///
 /// ```text
 /// --temp <kelvin>   --brightness <0.0-1.0>   --off   --session-vt <n>
 /// ```
-pub const HELPER_CONTRACT: u32 = 1;
+///
+/// Contract 2 leaves it as it was. It exists so that hosts set up by 0.5.x or
+/// earlier pick up the helper-side fixes in 0.6.0.
+pub const HELPER_CONTRACT: u32 = 2;
 
 /// The line `cosmic-nightlight-helper --version` prints.
 ///
