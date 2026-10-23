@@ -2257,8 +2257,6 @@ mod tests {
         }
     }
 
-    /// A backoff has to survive the trip through the file that shares it, or the
-    /// process that reads it back learns nothing and prompts again.
     #[test]
     fn only_sudo_and_wheel_skip_the_password() {
         assert!(lists_a_passwordless_group(
@@ -2271,6 +2269,8 @@ mod tests {
         assert!(!lists_a_passwordless_group(""));
     }
 
+    /// A backoff has to survive the trip through the file that shares it, or the
+    /// process that reads it back learns nothing and prompts again.
     #[test]
     fn a_backoff_round_trips() {
         for state in [None, Some(2500), Some(6500)] {
