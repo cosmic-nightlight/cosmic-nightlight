@@ -14,10 +14,10 @@
 #
 # The directories it watches and scans are writable by ordinary users. They are
 # only ever tested for existence here: nothing is read from them, run from them
-# or passed on from them. The one thing it does read is flatpak's own list of
-# custom installations, under /etc, which only root can write. The worst a user can do through them is fake an
+# or passed on from them. The worst a user can do through them is fake an
 # install, which keeps the helper around, which is the state the setup left
-# anyway.
+# anyway. The one thing it does read is flatpak's own list of custom
+# installations, under /etc, which only root can write.
 #
 # Installed by the setup as /var/lib/cosmic-nightlight/cleanup.sh, run as root.
 #
@@ -47,8 +47,13 @@ custom_installations() {
     local conf path
     for conf in /etc/flatpak/installations.d/*.conf; do
         [[ -f "$conf" ]] || continue
+        # An `if` rather than `&&`: a relative path read last would otherwise be
+        # this function's exit status, and under `set -e` that ends the caller
+        # before it lists any home directory.
         while IFS= read -r path; do
-            [[ "$path" == /?* ]] && echo "$path"
+            if [[ "$path" == /?* ]]; then
+                echo "$path"
+            fi
         done < <(sed -n 's/^[[:space:]]*Path[[:space:]]*=[[:space:]]*//p' "$conf" |
             sed 's/[[:space:]]*$//')
     done

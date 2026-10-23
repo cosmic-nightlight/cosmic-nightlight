@@ -378,8 +378,8 @@ The details that keep it from doing the wrong thing:
 The watched directories are user-writable, and the cleanup runs as root, so it
 only ever tests them for existence: it reads nothing from them and runs nothing
 from them. The list of custom installations is read from `/etc`, which only
-root can write. A user can fake an install to keep the helper around, which is no more
-than what the setup already left them.
+root can write. A user can fake an install to keep the helper around, which is
+no more than what the setup already left them.
 
 The script lives under `/var/lib` because Pop!_OS has no `/usr/local/libexec`,
 and the unit runs it through `/bin/bash` so it needs no exec bit there. The whole
@@ -387,9 +387,9 @@ cleanup is best-effort, like the setup itself: on a host without systemd, or if
 any step fails, the app works as before and simply leaves the helper behind on
 uninstall, as it did before this existed.
 
-Not covered: a host set up before this shipped has no cleanup installed until the setup runs again,
-so those users still need `scripts/uninstall.sh` or the two `rm` lines in the
-README.
+Not covered: a host set up before this shipped has no cleanup installed until
+the setup runs again, so those users still need `scripts/uninstall.sh` or the
+two `rm` lines in the README.
 
 ## What ships where
 
