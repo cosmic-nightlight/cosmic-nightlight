@@ -25,6 +25,7 @@
 //! Everything here is best effort: if we cannot tell whose WirePlumber to hold,
 //! or logind cannot be asked, the bounce runs exactly as it did before.
 
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -36,6 +37,11 @@ const ACTIVE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often to ask logind whether the user is active again.
 const ACTIVE_POLL: Duration = Duration::from_millis(25);
+
+/// How long the [`Watchdog`] waits before resuming WirePlumber on its own. A
+/// bounce plus [`ACTIVE_TIMEOUT`] takes a few seconds at most, so reaching this
+/// means the helper has stalled.
+const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The user who asked for this apply. `pkexec` records it in `PKEXEC_UID`;
 /// `SUDO_UID` covers running the helper by hand under sudo.
@@ -82,6 +88,91 @@ fn wireplumber_pids(uid: u32) -> Vec<libc::pid_t> {
 pub struct Hold {
     uid: u32,
     pids: Vec<libc::pid_t>,
+    // Dropped after `Hold::drop` has resumed them, which is what tells the
+    // watchdog its job is done.
+    _watchdog: Watchdog,
+}
+
+/// A child process that resumes the held WirePlumber if the helper can't.
+///
+/// Resuming normally happens when [`Hold`] is dropped, but nothing runs that if
+/// the helper is killed mid-bounce, and a WirePlumber left stopped stays
+/// stopped: no audio device is set up or torn down again until someone kills it
+/// by hand. So the child waits on a pipe whose only writer is the helper. The
+/// pipe closes when the helper lets go of it, whether on purpose or by dying,
+/// and the child then resumes the processes itself. It stops waiting after
+/// [`WATCHDOG_TIMEOUT`] too, which covers a helper that hangs instead, say in a
+/// `loginctl` that never returns.
+struct Watchdog {
+    pipe: Option<OwnedFd>,
+    child: libc::pid_t,
+}
+
+/// Starts a [`Watchdog`] over `pids`, or `None` if it can't be started.
+fn watchdog(pids: &[libc::pid_t], timeout: Duration) -> Option<Watchdog> {
+    let mut fds = [0; 2];
+    // SAFETY: `fds` has room for the two descriptors pipe2 writes. CLOEXEC keeps
+    // the write end out of the `loginctl`s we run, so only we hold it open.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return None;
+    }
+    // SAFETY: both were just opened and nothing else owns them.
+    let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    let timeout = libc::c_int::try_from(timeout.as_millis()).unwrap_or(libc::c_int::MAX);
+
+    // SAFETY: the child sticks to async-signal-safe calls and never returns.
+    match unsafe { libc::fork() } {
+        -1 => None,
+        // SAFETY: we are the freshly forked child.
+        0 => unsafe { watch(read.as_raw_fd(), write.as_raw_fd(), pids, timeout) },
+        child => Some(Watchdog {
+            pipe: Some(write),
+            child,
+        }),
+    }
+}
+
+/// The child's side of [`watchdog`].
+///
+/// # Safety
+///
+/// Only for a freshly forked child, which may make nothing but
+/// async-signal-safe calls. Everything here is one.
+unsafe fn watch(read: RawFd, write: RawFd, pids: &[libc::pid_t], timeout: libc::c_int) -> ! {
+    unsafe {
+        // Out of the helper's session and deaf to the usual ways of stopping a
+        // process, so whatever stops the helper (Ctrl+C in its terminal, systemd
+        // stopping the unit that ran it) doesn't stop this too. It is gone
+        // within moments of the helper either way.
+        libc::setsid();
+        for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM] {
+            libc::signal(signal, libc::SIG_IGN);
+        }
+        // Our copy of the write end, which would otherwise keep the pipe open.
+        libc::close(write);
+
+        let mut pipe = libc::pollfd {
+            fd: read,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // Hang-up, timeout and error all mean the same thing: resume.
+        libc::poll(&mut pipe, 1, timeout);
+        for &pid in pids {
+            libc::kill(pid, libc::SIGCONT);
+        }
+        libc::_exit(0)
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        // Closing our end is the signal; then reap the child, which exits as
+        // soon as it sees it.
+        self.pipe = None;
+        // SAFETY: `child` is our own child and has not been waited for.
+        unsafe { libc::waitpid(self.child, std::ptr::null_mut(), 0) };
+    }
 }
 
 /// Stops the invoking user's WirePlumber, if there is one to protect.
@@ -93,7 +184,15 @@ pub fn hold() -> Option<Hold> {
     if user_state(uid)? != "active" {
         return None;
     }
-    let pids: Vec<_> = wireplumber_pids(uid)
+    let pids = wireplumber_pids(uid);
+    if pids.is_empty() {
+        return None;
+    }
+    // Armed before anything is stopped, and nothing is stopped without it: a
+    // Bluetooth headset dropping is a better outcome than audio that stays
+    // stuck.
+    let watchdog = watchdog(&pids, WATCHDOG_TIMEOUT)?;
+    let pids: Vec<_> = pids
         .into_iter()
         // SAFETY: kill has no memory-safety preconditions.
         .filter(|&pid| unsafe { libc::kill(pid, libc::SIGSTOP) } == 0)
@@ -108,7 +207,11 @@ pub fn hold() -> Option<Hold> {
     while !pids.iter().all(|&pid| is_stopped(pid)) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(1));
     }
-    Some(Hold { uid, pids })
+    Some(Hold {
+        uid,
+        pids,
+        _watchdog: watchdog,
+    })
 }
 
 /// How long to wait for a SIGSTOP to take effect. It normally takes well under
@@ -139,5 +242,88 @@ impl Drop for Hold {
             // SAFETY: kill has no memory-safety preconditions.
             unsafe { libc::kill(pid, libc::SIGCONT) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stopped `sleep` to stand in for WirePlumber.
+    fn stopped_process() -> std::process::Child {
+        let child = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id() as libc::pid_t;
+        // SAFETY: kill has no memory-safety preconditions.
+        unsafe { libc::kill(pid, libc::SIGSTOP) };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !is_stopped(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(is_stopped(pid), "sleep did not stop");
+        child
+    }
+
+    fn resumes(pid: libc::pid_t) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while is_stopped(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        !is_stopped(pid)
+    }
+
+    #[test]
+    fn letting_go_of_the_watchdog_resumes() {
+        let mut child = stopped_process();
+        let pid = child.id() as libc::pid_t;
+        let dog = watchdog(&[pid], Duration::from_secs(60)).expect("watchdog");
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(is_stopped(pid), "resumed before it was let go");
+        drop(dog);
+        assert!(resumes(pid));
+        child.kill().ok();
+        child.wait().ok();
+    }
+
+    /// The case the watchdog exists for: the holder is killed outright, so no
+    /// `Drop` runs anywhere.
+    #[test]
+    fn a_killed_holder_is_resumed_anyway() {
+        let mut child = stopped_process();
+        let pid = child.id() as libc::pid_t;
+        // SAFETY: the forked holder only calls `watchdog`, which allocates
+        // nothing, and then waits to be killed.
+        let holder = unsafe { libc::fork() };
+        if holder == 0 {
+            let _dog = watchdog(&[pid], Duration::from_secs(60));
+            loop {
+                // SAFETY: pause has no preconditions.
+                unsafe { libc::pause() };
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(is_stopped(pid), "resumed while the holder was alive");
+        // SAFETY: `holder` is our own child.
+        unsafe {
+            libc::kill(holder, libc::SIGKILL);
+            libc::waitpid(holder, std::ptr::null_mut(), 0);
+        }
+        assert!(resumes(pid));
+        child.kill().ok();
+        child.wait().ok();
+    }
+
+    #[test]
+    fn a_stalled_holder_is_resumed_anyway() {
+        let mut child = stopped_process();
+        let pid = child.id() as libc::pid_t;
+        let dog = watchdog(&[pid], Duration::from_millis(50)).expect("watchdog");
+        // Still holding the pipe, as a hung helper would.
+        assert!(resumes(pid));
+        drop(dog);
+        child.kill().ok();
+        child.wait().ok();
     }
 }
