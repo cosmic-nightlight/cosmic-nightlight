@@ -3,7 +3,7 @@
 //! DRM/KMS gamma application.
 //!
 //! Enumerates the DRM cards under `/dev/dri`, grabs the DRM master lock on
-//! each (which only succeeds while no compositor holds it — see
+//! each one driving a display (which only succeeds while no compositor holds it — see
 //! [`crate::vt`]), and writes per-channel gamma LUTs to every active CRTC.
 
 use std::fs::{File, OpenOptions};
@@ -72,37 +72,54 @@ fn acquire_master(card: &Card) -> io::Result<()> {
     Err(last_err.unwrap_or_else(|| io::Error::other("could not acquire DRM master")))
 }
 
-/// Writes the gamma ramp for `kelvin`/`brightness` to every active CRTC on
-/// a single card. Returns the number of CRTCs updated.
-fn apply_card(path: &Path, kelvin: u32, brightness: f64) -> io::Result<usize> {
+/// The CRTCs on `card` that are driving a display and have a legacy gamma LUT,
+/// with the LUT's length. Readable without DRM master.
+///
+/// A card without modesetting, like a render-only GPU or one whose driver was
+/// loaded without KMS, answers `EOPNOTSUPP` when asked for its CRTCs. That is a
+/// card with nothing to write, not a failure: hybrid laptops often have one.
+fn gamma_crtcs(card: &Card) -> io::Result<Vec<(crtc::Handle, usize)>> {
+    let resources = match card.resource_handles() {
+        Ok(resources) => resources,
+        Err(err) if err.raw_os_error() == Some(libc::EOPNOTSUPP) => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let mut crtcs = Vec::new();
+    for &handle in resources.crtcs() {
+        let info = card.get_crtc(handle)?;
+        let size = info.gamma_length() as usize;
+        // No mode means it is driving nothing; no length means the driver
+        // exposes no legacy LUT for it.
+        if info.mode().is_some() && size > 0 {
+            crtcs.push((handle, size));
+        }
+    }
+    Ok(crtcs)
+}
+
+/// Writes the gamma ramp for `kelvin`/`brightness` to every active CRTC on a
+/// single card, counting each one in `updated` as it lands. A failure partway
+/// leaves the CRTCs before it written, and counted.
+fn apply_card(path: &Path, kelvin: u32, brightness: f64, updated: &mut usize) -> io::Result<()> {
     let card = Card::open(path)?;
+    let crtcs = gamma_crtcs(&card)?;
+    // Nothing on this card to write, so don't contend for its master either.
+    if crtcs.is_empty() {
+        return Ok(());
+    }
     acquire_master(&card)?;
 
-    let mut updated = 0;
-    let resources = card.resource_handles()?;
-
-    for &crtc_handle in resources.crtcs() {
-        let info = card.get_crtc(crtc_handle)?;
-
-        // A CRTC with no current mode is not driving a display; skip it.
-        if info.mode().is_none() {
-            continue;
-        }
-
-        let size = info.gamma_length() as usize;
-        if size == 0 {
-            // Driver does not expose a legacy gamma LUT for this CRTC.
-            continue;
-        }
-
+    let written = crtcs.iter().try_for_each(|&(crtc, size)| {
         let [red, green, blue] = gamma::target(kelvin, brightness, size);
-        card.set_gamma(crtc_handle, &red, &green, &blue)?;
-        updated += 1;
-    }
+        card.set_gamma(crtc, &red, &green, &blue)?;
+        *updated += 1;
+        Ok(())
+    });
 
-    // Release master so the compositor can reclaim it on VT switch-back.
-    card.release_master_lock()?;
-    Ok(updated)
+    // Release master so the compositor can reclaim it on VT switch-back, even
+    // if a write failed.
+    let released = card.release_master_lock();
+    written.and(released)
 }
 
 /// How far, in 16-bit LUT units, a read-back entry may sit from an identity
@@ -170,14 +187,7 @@ pub fn already_showing(kelvin: u32, brightness: f64) -> Option<usize> {
 
     for path in card_paths().ok()? {
         let card = Card::open(&path).ok()?;
-        for &crtc in card.resource_handles().ok()?.crtcs() {
-            let info = card.get_crtc(crtc).ok()?;
-            let size = info.gamma_length() as usize;
-            // The same CRTCs `apply_card` skips.
-            if info.mode().is_none() || size == 0 {
-                continue;
-            }
-
+        for (crtc, size) in gamma_crtcs(&card).ok()? {
             let current = read_ramp(&card, crtc, size).ok()?;
             let len = current[0].len();
             let tolerance = if neutral { IDENTITY_TOLERANCE } else { 0 };
@@ -191,25 +201,34 @@ pub fn already_showing(kelvin: u32, brightness: f64) -> Option<usize> {
     (matched > 0).then_some(matched)
 }
 
+/// What [`apply_all`] got done.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Written {
+    /// CRTCs updated, across every card.
+    pub crtcs: usize,
+    /// Cards with a display on them that could not be fully updated.
+    pub failed_cards: usize,
+}
+
 /// Applies the gamma ramp to every active CRTC on every card.
 ///
-/// Cards that cannot be updated (no master, no displays) are logged and
-/// skipped rather than aborting the whole operation. Returns the total
-/// number of CRTCs updated across all cards.
-pub fn apply_all(kelvin: u32, brightness: f64) -> io::Result<usize> {
+/// A card that fails is logged and counted, and the rest still get written:
+/// one stubborn GPU shouldn't leave every screen untinted. Cards driving no
+/// display are skipped without counting as failures.
+pub fn apply_all(kelvin: u32, brightness: f64) -> io::Result<Written> {
     let paths = card_paths()?;
     if paths.is_empty() {
         return Err(io::Error::other("no DRM cards found under /dev/dri"));
     }
 
-    let mut total = 0;
+    let mut written = Written::default();
     for path in paths {
-        match apply_card(&path, kelvin, brightness) {
-            Ok(n) => total += n,
-            Err(err) => eprintln!("nightlight: {}: {err}", path.display()),
+        if let Err(err) = apply_card(&path, kelvin, brightness, &mut written.crtcs) {
+            eprintln!("nightlight: {}: {err}", path.display());
+            written.failed_cards += 1;
         }
     }
-    Ok(total)
+    Ok(written)
 }
 
 #[cfg(test)]
