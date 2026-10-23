@@ -21,7 +21,8 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- polkitd | policykit-1
+ polkitd | policykit-1,
+ pkexec | policykit-1
 Description: Night light / red tint for the COSMIC desktop
  A night-light utility for the COSMIC desktop (Pop!_OS) that warms the screen
  color temperature on a schedule.
