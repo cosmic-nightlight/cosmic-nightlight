@@ -95,7 +95,7 @@ fn apply_card(path: &Path, kelvin: u32, brightness: f64) -> io::Result<usize> {
             continue;
         }
 
-        let [red, green, blue] = gamma::ramp(kelvin, brightness, size);
+        let [red, green, blue] = gamma::target(kelvin, brightness, size);
         card.set_gamma(crtc_handle, &red, &green, &blue)?;
         updated += 1;
     }
@@ -107,8 +107,8 @@ fn apply_card(path: &Path, kelvin: u32, brightness: f64) -> io::Result<usize> {
 
 /// How far, in 16-bit LUT units, a read-back entry may sit from an identity
 /// ramp and still count as one. The kernel's boot-time ramp is `i << 8`, up to
-/// 255 below ours. Our own ramps read back exactly as written, so they get no
-/// slack at all: a 50K step near 10000K moves them by less than this.
+/// 255 below ours. Our own tinted ramps read back exactly as written, so they
+/// get no slack at all: a 50K step near 10000K moves them by less than this.
 const IDENTITY_TOLERANCE: u16 = 256;
 
 fn close(current: &[Vec<u16>; 3], wanted: &[Vec<u16>; 3], tolerance: u16) -> bool {
@@ -161,10 +161,11 @@ fn read_ramp(card: &Card, crtc: crtc::Handle, size: usize) -> io::Result<[Vec<u1
 /// that is, or `None` if any differs, cannot be read, or there are none, so
 /// the caller falls back to writing.
 ///
-/// For the neutral ramp, a true identity ramp counts too: that is what the
-/// screen shows if the tint was never turned on since boot.
+/// Neutral is compared with some slack, so the kernel's own identity ramp
+/// counts: that is what the screen shows if the tint was never turned on since
+/// boot.
 pub fn already_showing(kelvin: u32, brightness: f64) -> Option<usize> {
-    let neutral = kelvin == gamma::NEUTRAL_KELVIN && brightness >= 1.0;
+    let neutral = gamma::is_neutral(kelvin, brightness);
     let mut matched = 0;
 
     for path in card_paths().ok()? {
@@ -179,9 +180,8 @@ pub fn already_showing(kelvin: u32, brightness: f64) -> Option<usize> {
 
             let current = read_ramp(&card, crtc, size).ok()?;
             let len = current[0].len();
-            if !(close(&current, &gamma::ramp(kelvin, brightness, len), 0)
-                || neutral && close(&current, &gamma::identity(len), IDENTITY_TOLERANCE))
-            {
+            let tolerance = if neutral { IDENTITY_TOLERANCE } else { 0 };
+            if !close(&current, &gamma::target(kelvin, brightness, len), tolerance) {
                 return None;
             }
             matched += 1;
@@ -232,6 +232,14 @@ mod tests {
         assert!(!same(gamma::MAX_KELVIN - 50, 1.0, 256));
         assert!(!same(gamma::MAX_KELVIN, 0.99, 256));
         assert!(!same(gamma::MAX_KELVIN, 1.0, 1024));
+    }
+
+    /// What turning the tint off used to write, so a screen still showing it
+    /// gets the true identity written over it once.
+    #[test]
+    fn the_old_off_ramp_is_not_identity() {
+        let old_off = gamma::ramp(gamma::NEUTRAL_KELVIN, 1.0, 256);
+        assert!(!close(&old_off, &gamma::identity(256), IDENTITY_TOLERANCE));
     }
 
     #[test]
