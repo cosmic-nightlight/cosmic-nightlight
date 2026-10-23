@@ -1043,9 +1043,7 @@ fn answered_since(
 fn settle_failure(wanted: &Shown, failure: Failure) -> bool {
     let retries_spent = failure == Failure::Partial
         && current_backoff().is_some_and(|backoff| {
-            backoff.failure == Failure::Partial
-                && backoff.state == wanted.state
-                && backoff.delay >= LAST_PARTIAL_RETRY_DELAY
+            retrying(&backoff, wanted) && backoff.delay >= LAST_PARTIAL_RETRY_DELAY
         });
     if retries_spent {
         eprintln!("backend: some displays still can't be changed; leaving them as they are");
@@ -1053,8 +1051,19 @@ fn settle_failure(wanted: &Shown, failure: Failure) -> bool {
         clear_backoff();
         return true;
     }
-    note_failure(wanted.state, failure);
+    note_failure(wanted.state, Some(wanted), failure);
     false
+}
+
+/// Whether `backoff` is a partial apply of exactly `wanted`, whose retries
+/// [`settle_failure`] is counting.
+///
+/// The brightness and displays count as well as the tint. A brightness change
+/// or a monitor plugged in while an earlier target is on its last retry is a
+/// new target, and gets its own retries rather than the one left over. A record
+/// with no target matches nothing, so its retries start again from the first.
+fn retrying(backoff: &Backoff, wanted: &Shown) -> bool {
+    backoff.failure == Failure::Partial && backoff.target.as_ref() == Some(wanted)
 }
 
 /// The longest wait before a partial apply is retried. The retry after it is
@@ -1711,7 +1720,7 @@ const FIRST_AUTH_RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
 const MAX_AUTH_RETRY_DELAY: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// The apply we are currently backing off from, if any.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Backoff {
     /// The state that failed. A request for a *different* state is always worth
     /// trying immediately — the world has changed.
@@ -1730,6 +1739,11 @@ struct Backoff {
     /// speaks for the user, and so only a refusal can answer a request that was
     /// made before it — see [`refused_since`] and [`covers`].
     failure: Failure,
+    /// The whole apply that failed, brightness and displays included, so a
+    /// partial apply's retries are counted per target (see [`retrying`]).
+    /// `None` for a refusal from the host setup, and in a record written by a
+    /// version that did not store it.
+    target: Option<Shown>,
 }
 
 /// Path of the file recording the apply every process is backing off from.
@@ -1766,7 +1780,12 @@ fn backoff() -> &'static Mutex<Option<Backoff>> {
 /// The backoff in force, preferring the shared record so that a refusal any of
 /// our processes collected counts for all of them.
 fn current_backoff() -> Option<Backoff> {
-    recorded_backoff().or_else(|| *backoff().lock().unwrap_or_else(|err| err.into_inner()))
+    recorded_backoff().or_else(|| {
+        backoff()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone()
+    })
 }
 
 fn recorded_backoff() -> Option<Backoff> {
@@ -1874,11 +1893,11 @@ fn retry_delay(previous: Option<Duration>, failure: Failure) -> Duration {
 /// keeps happening doubles once per attempt rather than once per attempt *per
 /// process*, which would have three processes climbing three separate ladders.
 ///
+/// `target` is the whole apply that failed, when there was one.
+///
 /// Callers must hold the apply lock.
-fn note_failure(state: TintState, failure: Failure) {
-    let previous = current_backoff()
-        .filter(|backoff| covers(backoff, state))
-        .map(|backoff| backoff.delay);
+fn note_failure(state: TintState, target: Option<&Shown>, failure: Failure) {
+    let previous = carried_delay(current_backoff().as_ref(), state, target, failure);
     let delay = retry_delay(previous, failure);
 
     eprintln!(
@@ -1890,7 +1909,26 @@ fn note_failure(state: TintState, failure: Failure) {
         retry_at: SystemTime::now() + delay,
         delay,
         failure,
+        target: target.cloned(),
     }));
+}
+
+/// The delay from `previous` that a new failure of `state` doubles, if any.
+///
+/// A partial apply only carries on from a partial apply of the same target, so
+/// a new target's retries start from the first (see [`retrying`]). Every other
+/// failure carries on from whatever [`covers`] it.
+fn carried_delay(
+    previous: Option<&Backoff>,
+    state: TintState,
+    target: Option<&Shown>,
+    failure: Failure,
+) -> Option<Duration> {
+    let previous = previous.filter(|backoff| covers(backoff, state))?;
+    if failure == Failure::Partial && !target.is_some_and(|target| retrying(previous, target)) {
+        return None;
+    }
+    Some(previous.delay)
 }
 
 /// Records a refusal that came from the host setup's own prompt rather than from
@@ -1902,7 +1940,7 @@ fn note_failure(state: TintState, failure: Failure) {
 ///
 /// Callers must hold the apply lock.
 fn note_auth_refusal() {
-    note_failure(applied().and_then(|shown| shown.state), Failure::Auth);
+    note_failure(applied().and_then(|shown| shown.state), None, Failure::Auth);
 }
 
 /// Clears the backoff: something just worked, so nothing is worth waiting out.
@@ -1914,7 +1952,7 @@ fn clear_backoff() {
 
 /// Writes `backoff` to both the shared record and this process's own copy.
 fn store_backoff(backoff_state: Option<Backoff>) {
-    *backoff().lock().unwrap_or_else(|err| err.into_inner()) = backoff_state;
+    *backoff().lock().unwrap_or_else(|err| err.into_inner()) = backoff_state.clone();
 
     let Some(path) = backoff_path() else {
         return;
@@ -1977,7 +2015,9 @@ fn parse_shown(text: &str) -> Option<Shown> {
 }
 
 /// Renders a backoff as `<state> <retry-at> <delay> <failure>`, the deadline in
-/// seconds since the epoch so it reads the same in every process.
+/// seconds since the epoch so it reads the same in every process, followed by
+/// `<brightness> <displays>` when it has a target. Those go last because older
+/// versions stop reading after the failure.
 fn format_backoff(backoff: &Backoff) -> String {
     let retry_at = backoff
         .retry_at
@@ -1989,11 +2029,15 @@ fn format_backoff(backoff: &Backoff) -> String {
         Failure::Other => "other",
         Failure::Partial => "partial",
     };
-    format!(
+    let mut text = format!(
         "{} {retry_at} {} {failure}",
         format_applied(backoff.state),
         backoff.delay.as_secs()
-    )
+    );
+    if let Some(target) = &backoff.target {
+        text.push_str(&format!(" {} {}", target.brightness, target.displays));
+    }
+    text
 }
 
 /// Parses a recorded backoff, or `None` if the record is unreadable — which
@@ -2011,11 +2055,20 @@ fn parse_backoff(text: &str) -> Option<Backoff> {
         "partial" => Failure::Partial,
         _ => return None,
     };
+    let target = match (fields.next(), fields.next()) {
+        (Some(brightness), Some(displays)) => Some(Shown {
+            state,
+            brightness: brightness.parse().ok()?,
+            displays: displays.to_owned(),
+        }),
+        _ => None,
+    };
     Some(Backoff {
         state,
         retry_at,
         delay,
         failure,
+        target,
     })
 }
 
@@ -2444,6 +2497,7 @@ mod tests {
             retry_at: now + FIRST_AUTH_RETRY_DELAY,
             delay: FIRST_AUTH_RETRY_DELAY,
             failure: Failure::Auth,
+            target: None,
         }
     }
 
@@ -2459,10 +2513,85 @@ mod tests {
                     retry_at: t0(),
                     delay: FIRST_AUTH_RETRY_DELAY,
                     failure,
+                    target: None,
                 };
-                assert_eq!(parse_backoff(&format_backoff(&backoff)), Some(backoff));
+                assert_eq!(
+                    parse_backoff(&format_backoff(&backoff)),
+                    Some(backoff.clone())
+                );
+                let backoff = Backoff {
+                    target: Some(Shown::new(state, 0.8, "card1-eDP-1".to_owned())),
+                    ..backoff
+                };
+                assert_eq!(
+                    parse_backoff(&format_backoff(&backoff)),
+                    Some(backoff.clone())
+                );
             }
         }
+    }
+
+    /// A record from a version that stored no target still reads, as one with
+    /// no target.
+    #[test]
+    fn a_backoff_without_a_target_reads_as_untargeted() {
+        let backoff = parse_backoff("3500 1753000000 40 partial").expect("an older record");
+        assert_eq!(backoff.target, None);
+        assert_eq!(backoff.delay, LAST_PARTIAL_RETRY_DELAY);
+    }
+
+    /// A partial apply on its last retry, as `settle_failure` would find it.
+    fn partial_on_last_retry(target: &Shown) -> Backoff {
+        Backoff {
+            state: target.state,
+            retry_at: t0(),
+            delay: LAST_PARTIAL_RETRY_DELAY,
+            failure: Failure::Partial,
+            target: Some(target.clone()),
+        }
+    }
+
+    /// Only the same target spends the retries already used. A brightness
+    /// change or a new display at the same tint is a new target, and gets
+    /// retries of its own instead of being recorded as shown after one try.
+    #[test]
+    fn a_new_target_does_not_inherit_partial_retries() {
+        let tried = Shown::new(Some(3500), 1.0, "card1-eDP-1".to_owned());
+        let backoff = partial_on_last_retry(&tried);
+        let dimmer = Shown::new(Some(3500), 0.8, "card1-eDP-1".to_owned());
+        let plugged_in = Shown::new(Some(3500), 1.0, "card0-DP-1,card1-eDP-1".to_owned());
+
+        assert!(retrying(&backoff, &tried));
+        assert!(!retrying(&backoff, &dimmer));
+        assert!(!retrying(&backoff, &plugged_in));
+
+        let carried = |target: &Shown| {
+            carried_delay(Some(&backoff), target.state, Some(target), Failure::Partial)
+        };
+        assert_eq!(carried(&tried), Some(LAST_PARTIAL_RETRY_DELAY));
+        assert_eq!(carried(&dimmer), None);
+        assert_eq!(carried(&plugged_in), None);
+    }
+
+    /// An ordinary fault still carries on from the last one at the same tint,
+    /// whatever the target: it is about the helper, not the displays.
+    #[test]
+    fn an_ordinary_fault_carries_on_at_the_same_state() {
+        let tried = Shown::new(Some(3500), 1.0, "card1-eDP-1".to_owned());
+        let dimmer = Shown::new(Some(3500), 0.8, "card1-eDP-1".to_owned());
+        let failed = Backoff {
+            failure: Failure::Other,
+            ..partial_on_last_retry(&tried)
+        };
+
+        assert_eq!(
+            carried_delay(Some(&failed), Some(3500), Some(&dimmer), Failure::Other),
+            Some(LAST_PARTIAL_RETRY_DELAY)
+        );
+        assert_eq!(
+            carried_delay(Some(&failed), Some(4000), Some(&dimmer), Failure::Other),
+            None
+        );
     }
 
     /// An unreadable record must not park the tint: nothing to wait for beats
@@ -2509,6 +2638,7 @@ mod tests {
             retry_at: t0() + FIRST_RETRY_DELAY,
             delay: FIRST_RETRY_DELAY,
             failure: Failure::Other,
+            target: None,
         };
 
         assert!(holds(&failed, Some(3500), t0()));
@@ -2596,7 +2726,7 @@ mod tests {
         assert!(holds(
             &Backoff {
                 retry_at: t0() + MAX_AUTH_RETRY_DELAY,
-                ..stepped_back
+                ..stepped_back.clone()
             },
             Some(3500),
             t0()
