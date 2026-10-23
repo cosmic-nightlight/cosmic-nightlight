@@ -360,9 +360,11 @@ The details that keep it from doing the wrong thing:
 - **Other users and installations count.** The helper is shared, so it stays
   while the app is installed for any user, or system-wide.
 - **An unmounted home is not an empty one.** The setup records which
-  installations had the app (`roots`). If one of those cannot be seen at check
-  time (no `repo/`, as with an encrypted home before login), the cleanup does
-  nothing rather than guess.
+  installations had the app (`roots`), and each check adds any it finds since,
+  such as a second user installing later. If one of those cannot be seen at
+  check time (no `repo/`, as with an encrypted home before login), the cleanup
+  does nothing rather than guess. A recorded installation that can be seen and
+  no longer has the app is dropped.
 - **Only our files.** `install.sh` writes the same two paths. The setup records
   their hashes (`sums`), and if the helper has changed since, or an `install.sh`
   GUI is present, the cleanup leaves the helper and rule alone and only removes

@@ -10,6 +10,9 @@
 // /usr/local to /var/usrlocal, so allow that root-owned location as well.
 //
 // Install to /etc/polkit-1/rules.d/ (see scripts/install.sh).
+//
+// The app mirrors the group list in PASSWORDLESS_GROUPS (backend.rs) so it can
+// tell when a change would prompt. Keep the two in step.
 
 polkit.addRule(function (action, subject) {
     var program = action.lookup("program");

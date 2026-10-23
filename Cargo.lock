@@ -174,9 +174,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "apply"
@@ -935,7 +935,7 @@ dependencies = [
  "bstr",
  "btoi",
  "memchr",
- "memmap2 0.9.10",
+ "memmap2 0.9.12",
  "thiserror 2.0.18",
  "tracing",
  "xdg",
@@ -1393,11 +1393,10 @@ dependencies = [
 
 [[package]]
 name = "event-listener"
-version = "5.4.1"
+version = "5.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
+checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
- "concurrent-queue",
  "parking",
  "pin-project-lite",
 ]
@@ -1568,7 +1567,7 @@ checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
 dependencies = [
  "fontconfig-parser",
  "log",
- "memmap2 0.9.10",
+ "memmap2 0.9.12",
  "slotmap",
  "tinyvec",
  "ttf-parser",
@@ -2945,9 +2944,9 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.9.10"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
+checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
 dependencies = [
  "libc",
 ]
@@ -4198,7 +4197,7 @@ checksum = "1dd3accc0f3f4bbaf2c9e1957a030dc582028130c67660d44c0a0345a22ca69b"
 dependencies = [
  "ab_glyph",
  "log",
- "memmap2 0.9.10",
+ "memmap2 0.9.12",
  "smithay-client-toolkit",
  "tiny-skia",
 ]
@@ -4388,7 +4387,7 @@ dependencies = [
  "cursor-icon",
  "libc",
  "log",
- "memmap2 0.9.10",
+ "memmap2 0.9.12",
  "pkg-config",
  "rustix 1.1.4",
  "thiserror 2.0.18",
@@ -4451,7 +4450,7 @@ dependencies = [
  "foreign-types",
  "js-sys",
  "log",
- "memmap2 0.9.10",
+ "memmap2 0.9.12",
  "objc",
  "raw-window-handle",
  "redox_syscall 0.5.18",
@@ -6020,7 +6019,7 @@ name = "winit-common"
 version = "0.31.0-beta.2"
 source = "git+https://github.com/pop-os/winit.git?tag=cosmic-0.14#71ce08c043814514a8fd92d9d0599f115ae854e8"
 dependencies = [
- "memmap2 0.9.10",
+ "memmap2 0.9.12",
  "objc2 0.6.4",
  "objc2-core-foundation",
  "smol_str",
@@ -6091,7 +6090,7 @@ dependencies = [
  "cursor-icon",
  "dpi",
  "libc",
- "memmap2 0.9.10",
+ "memmap2 0.9.12",
  "raw-window-handle",
  "rustix 1.1.4",
  "sctk-adwaita",
@@ -6348,7 +6347,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d66ca9352cbd4eecbbc40871d8a11b4ac8107cfc528a6e14d7c19c69d0e1ac9"
 dependencies = [
  "libc",
- "memmap2 0.9.10",
+ "memmap2 0.9.12",
  "xkeysym",
 ]
 
