@@ -285,9 +285,12 @@ Taking `/usr/bin` because it comes first meant the setup could never fix an old
 `.deb`, so every change asked for a password.
 
 Bump `HELPER_CONTRACT` only for a change that would make an *older* helper
-mishandle what the GUI sends: an argument removed or renamed, a unit or range
-redefined, a new argument the GUI relies on. Adding an argument the GUI does not
-require is not a bump.
+mishandle what the GUI sends (an argument removed or renamed, a unit or range
+redefined, a new argument the GUI relies on), or for a fix that only the helper
+can deliver. An old helper on the host keeps its bugs until it is replaced, and
+the bump is what replaces it. Adding an argument the GUI does not require is not
+a bump. Contract 2 is the first bump of the second kind: the command line is
+unchanged from contract 1.
 
 ## The setup UI
 
