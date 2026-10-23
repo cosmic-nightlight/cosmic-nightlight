@@ -278,6 +278,12 @@ A helper old enough to predate `--version` rejects the flag and exits non-zero,
 which reads as no contract at all — the same verdict as a contract that is merely
 too low, and the same remedy, so both surface as `HostSetup::Outdated`.
 
+The contract also picks between helpers. A host can have two: an old `.deb` in
+`/usr/bin` and the setup's copy in `/usr/local/bin`. The GUI uses the first one
+whose contract is current, and only reads the host as outdated when none is.
+Taking `/usr/bin` because it comes first meant the setup could never fix an old
+`.deb`, so every change asked for a password.
+
 Bump `HELPER_CONTRACT` only for a change that would make an *older* helper
 mishandle what the GUI sends: an argument removed or renamed, a unit or range
 redefined, a new argument the GUI relies on. Adding an argument the GUI does not
