@@ -84,16 +84,52 @@ visible() {
     [[ -d "$1/repo" ]]
 }
 
-installed_anywhere() {
+# Every installation that has the app now.
+roots_with_app() {
     local root
     while read -r root; do
-        has_app "$root" && return 0
+        if has_app "$root"; then
+            echo "$root"
+        fi
     done < <(installations)
-    return 1
 }
 
-# Every installation that had the app when the setup ran must be visible now.
-# If one is not, we cannot tell whether it still has the app, so do nothing.
+# Whether the app is installed anywhere we can see. Each installation found with
+# it is added to the recorded ones, so one that appeared after the setup (another
+# user's, say) is still waited for if it later cannot be seen.
+installed_anywhere() {
+    local found
+    found="$(roots_with_app)"
+    [[ -n "$found" ]] || return 1
+    remember_roots "$found"
+}
+
+# Adds installations to the recorded ones. A recorded one that is visible and no
+# longer has the app is dropped, since there is nothing there to wait for. The
+# rest are kept, including any that cannot be seen right now.
+remember_roots() {
+    local root new
+    new="$(mktemp "$roots_file.XXXXXX")" || return 0
+    {
+        echo "$1"
+        if [[ -f "$roots_file" ]]; then
+            while read -r root; do
+                [[ -n "$root" ]] || continue
+                if visible "$root" && ! has_app "$root"; then
+                    continue
+                fi
+                echo "$root"
+            done <"$roots_file"
+        fi
+    } | sort -u >"$new"
+    chmod 0644 "$new"
+    mv -f "$new" "$roots_file" || rm -f "$new"
+    return 0
+}
+
+# Every installation seen with the app, at setup or by a check since, must be
+# visible now. If one is not, we cannot tell whether it still has the app, so do
+# nothing.
 recorded_roots_visible() {
     local root
     [[ -f "$roots_file" ]] || return 0
@@ -170,11 +206,7 @@ case "${1:-}" in
         clean_up "$1"
         ;;
     roots)
-        while read -r root; do
-            if has_app "$root"; then
-                echo "$root"
-            fi
-        done < <(installations)
+        roots_with_app
         ;;
     paths)
         # Only real login accounts. systemd watches the nearest existing parent
