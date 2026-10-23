@@ -1731,7 +1731,9 @@ fn retry_delay(previous: Option<Duration>, failure: Failure) -> Duration {
     };
     match previous {
         // Still failing the same way: wait twice as long as last time.
-        Some(previous) => (previous * 2).clamp(first, max),
+        // Saturating, because `previous` can come from the shared record, and a
+        // damaged one may hold a delay too large to double.
+        Some(previous) => previous.saturating_mul(2).clamp(first, max),
         None => first,
     }
 }
@@ -1849,7 +1851,10 @@ fn format_backoff(backoff: &Backoff) -> String {
 fn parse_backoff(text: &str) -> Option<Backoff> {
     let mut fields = text.split_whitespace();
     let state = parse_applied(fields.next()?)?;
-    let retry_at = SystemTime::UNIX_EPOCH + Duration::from_secs(fields.next()?.parse().ok()?);
+    // Checked: a record holding a time past what `SystemTime` can represent is
+    // as unreadable as one holding letters, and the plain `+` panics on it.
+    let retry_at =
+        SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(fields.next()?.parse().ok()?))?;
     let delay = Duration::from_secs(fields.next()?.parse().ok()?);
     let failure = match fields.next()? {
         "auth" => Failure::Auth,
@@ -2232,6 +2237,16 @@ mod tests {
         assert_eq!(parse_backoff("3500 1753000000 3600"), None);
         assert_eq!(parse_backoff("off notanumber 3600 auth"), None);
         assert_eq!(parse_backoff("3500 1753000000 3600 sideways"), None);
+        // A deadline too far out for `SystemTime` to hold.
+        assert_eq!(parse_backoff(&format!("off {} 3600 auth", u64::MAX)), None);
+    }
+
+    /// A delay read back from a damaged record is clamped, not overflowed.
+    #[test]
+    fn a_huge_recorded_delay_still_clamps() {
+        let huge = Duration::from_secs(u64::MAX);
+        assert_eq!(retry_delay(Some(huge), Failure::Other), MAX_RETRY_DELAY);
+        assert_eq!(retry_delay(Some(huge), Failure::Auth), MAX_AUTH_RETRY_DELAY);
     }
 
     /// The two-GUI bug. One click with the applet and the settings window open:
