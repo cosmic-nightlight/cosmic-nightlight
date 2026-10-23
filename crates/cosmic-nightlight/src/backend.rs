@@ -57,6 +57,9 @@ use crate::config;
 /// Both paths are whitelisted by the polkit rule, so either can run without a
 /// password — which is why they are tried ahead of the flatpak's own bundled copy
 /// (see [`bundled_helper_path`]), which is not.
+///
+/// Sandboxed, a path only wins if its helper speaks our contract. See
+/// [`pick_installed_helper`] for why order alone is not enough.
 const HELPER_CANDIDATES: &[&str] = &[
     "/usr/bin/cosmic-nightlight-helper",
     "/usr/local/bin/cosmic-nightlight-helper",
@@ -310,6 +313,10 @@ enum HostHelper {
     /// A polkit-whitelisted path. Applies cost no password, and nothing the user
     /// can do later improves on that, so this answer is final.
     Whitelisted(String),
+    /// A polkit-whitelisted path whose helper is too old for our command line,
+    /// with no current one at any other whitelisted path. Running the host setup
+    /// installs a current one, so this answer can go out of date too.
+    Outdated(String),
     /// Our own bundled copy. It works, but no rule names its path, so pkexec
     /// prompts every time — and running the host setup replaces it with a
     /// whitelisted path. This answer can therefore go out of date.
@@ -326,13 +333,15 @@ enum HostHelper {
 /// tints the screen before the host setup has ever been run rather than failing
 /// outright. The setup stops the prompting; it does not unlock the feature.
 ///
-/// Costs one `flatpak-spawn` per candidate — see [`host_helper_path`] for when
-/// that is paid.
+/// Costs one or two `flatpak-spawn`s per candidate (a stat, then `--version` for
+/// one that is there). See [`host_helper_path`] for when that is paid.
 fn probe_host_helper() -> HostHelper {
-    for candidate in HELPER_CANDIDATES {
-        if host_has_executable(candidate) {
-            return HostHelper::Whitelisted((*candidate).to_string());
-        }
+    let installed = HELPER_CANDIDATES
+        .iter()
+        .filter(|candidate| host_has_executable(candidate))
+        .map(|candidate| (*candidate, host_helper_contract(candidate)));
+    if let Some(found) = pick_installed_helper(installed) {
+        return found;
     }
     if let Some(bundled) = bundled_helper_path() {
         if host_has_executable(&bundled) {
@@ -340,6 +349,31 @@ fn probe_host_helper() -> HostHelper {
         }
     }
     HostHelper::Missing
+}
+
+/// Picks from the whitelisted helpers found on the host, given in
+/// [`HELPER_CANDIDATES`] order with the contract each one reported: the first
+/// that speaks ours, or else the first one found, as [`HostHelper::Outdated`].
+///
+/// Taking the first one found regardless trapped anyone with an old `.deb` still
+/// installed. Its `/usr/bin` helper read as outdated, so every apply went through
+/// the setup, which installs to `/usr/local/bin` and so could never fix it. That
+/// was a password prompt on every change, and a contract bump would have done
+/// the same to every `.deb` user running the flatpak alongside.
+///
+/// Lazy over `found`, so a current helper at the first path costs no
+/// `--version` for the second.
+fn pick_installed_helper<'a>(
+    found: impl IntoIterator<Item = (&'a str, Option<u32>)>,
+) -> Option<HostHelper> {
+    let mut first_outdated = None;
+    for (path, contract) in found {
+        if contract.is_some_and(|contract| contract >= nightlight_core::HELPER_CONTRACT) {
+            return Some(HostHelper::Whitelisted(path.to_string()));
+        }
+        first_outdated.get_or_insert(path);
+    }
+    first_outdated.map(|path| HostHelper::Outdated(path.to_string()))
 }
 
 /// The helper resolved for a sandboxed apply, once that answer is worth keeping.
@@ -369,7 +403,7 @@ fn host_helper_path() -> String {
             }
             path
         }
-        HostHelper::Bundled(path) => path,
+        HostHelper::Outdated(path) | HostHelper::Bundled(path) => path,
         // Name the path the setup installs to, so pkexec's error points at what
         // is missing rather than at a sandbox-internal path meaningless outside.
         HostHelper::Missing => SETUP_INSTALLS_TO.to_string(),
@@ -428,7 +462,7 @@ static HOST_SETUP_READY: AtomicBool = AtomicBool::new(false);
 /// whitelists — so it charged the user a second password prompt for the privilege
 /// of re-installing what was already installed.
 ///
-/// The re-probe is three `flatpak-spawn`s, paid once a tick and only while the app
+/// The re-probe is a handful of `flatpak-spawn`s, paid once a tick and only while the app
 /// is unconfigured — which is exactly the state in which every one of those ticks
 /// is otherwise liable for a password prompt.
 pub fn host_setup() -> HostSetup {
@@ -459,17 +493,14 @@ fn probe_host_setup() -> HostSetup {
         // Half-installed is reachable in ordinary use: the setup writes the two
         // separately and is deliberately non-fatal when only the second fails, and
         // an uninstall can take away either one.
-        HostHelper::Whitelisted(path) if host_has_polkit_rule() => {
-            match host_helper_contract(&path) {
-                Some(contract) if contract >= nightlight_core::HELPER_CONTRACT => HostSetup::Ready,
-                // Either too old to understand us, or old enough to predate
-                // `--version` entirely — same remedy, so the same answer.
-                _ => HostSetup::Outdated,
-            }
-        }
-        HostHelper::Whitelisted(_) | HostHelper::Bundled(_) | HostHelper::Missing => {
-            HostSetup::Needed
-        }
+        HostHelper::Whitelisted(_) if host_has_polkit_rule() => HostSetup::Ready,
+        // Either too old to understand us, or old enough to predate `--version`
+        // entirely. Same remedy, so the same answer.
+        HostHelper::Outdated(_) if host_has_polkit_rule() => HostSetup::Outdated,
+        HostHelper::Whitelisted(_)
+        | HostHelper::Outdated(_)
+        | HostHelper::Bundled(_)
+        | HostHelper::Missing => HostSetup::Needed,
     }
 }
 
@@ -2147,6 +2178,38 @@ mod tests {
         assert!(counts_as_installed(RuleProbe::Unreadable));
         assert!(!counts_as_installed(RuleProbe::Absent));
     }
+
+    /// An old `.deb` at `/usr/bin` must not hide a current helper at
+    /// `/usr/local/bin`. Picking it anyway sent every apply through a setup that
+    /// could not fix it, at a password prompt each time.
+    #[test]
+    fn an_outdated_helper_gives_way_to_a_current_one() {
+        let current = nightlight_core::HELPER_CONTRACT;
+        let picked = pick_installed_helper([(USR_BIN, None), (USR_LOCAL_BIN, Some(current))]);
+        assert!(matches!(picked, Some(HostHelper::Whitelisted(path)) if path == USR_LOCAL_BIN));
+
+        let picked =
+            pick_installed_helper([(USR_BIN, Some(current - 1)), (USR_LOCAL_BIN, Some(current))]);
+        assert!(matches!(picked, Some(HostHelper::Whitelisted(path)) if path == USR_LOCAL_BIN));
+    }
+
+    #[test]
+    fn the_first_current_helper_wins() {
+        let current = nightlight_core::HELPER_CONTRACT;
+        let picked =
+            pick_installed_helper([(USR_BIN, Some(current)), (USR_LOCAL_BIN, Some(current + 1))]);
+        assert!(matches!(picked, Some(HostHelper::Whitelisted(path)) if path == USR_BIN));
+    }
+
+    #[test]
+    fn only_outdated_helpers_name_the_first() {
+        let picked = pick_installed_helper([(USR_BIN, None), (USR_LOCAL_BIN, None)]);
+        assert!(matches!(picked, Some(HostHelper::Outdated(path)) if path == USR_BIN));
+        assert!(pick_installed_helper([]).is_none());
+    }
+
+    const USR_BIN: &str = HELPER_CANDIDATES[0];
+    const USR_LOCAL_BIN: &str = HELPER_CANDIDATES[1];
 
     /// Each rule candidate has to have a parent directory for [`probe_rule`] to
     /// ask about, or it could never report anything but `Absent` and the case
