@@ -87,8 +87,15 @@ The first time you turn it on, it asks for your password once to install a small
 helper on your system. A sandboxed app can't change screen colors on its own
 ([why](docs/flatpak-design.md)).
 
-To remove it, run `flatpak uninstall io.github.cosmic_nightlight`, then
-`./scripts/uninstall.sh` to remove that helper too.
+To remove it, uninstall it from the COSMIC Store or run
+`flatpak uninstall io.github.cosmic_nightlight`. The helper removes itself a few
+seconds later.
+
+If you set up the helper with version 0.5.1 or earlier, it stays behind. Remove it with:
+
+```sh
+sudo rm /usr/local/bin/cosmic-nightlight-helper /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
+```
 
 <details>
 <summary>Build the flatpak yourself</summary>
