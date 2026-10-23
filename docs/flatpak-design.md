@@ -321,6 +321,78 @@ The discipline this costs: do not change the helper's arguments casually. Since
 the helper exists precisely to be the smallest possible thing running as root,
 that is a discipline worth having anyway.
 
+## Cleaning up after an uninstall
+
+Flatpak runs no app code on install or uninstall, by design. Uninstalling from
+the COSMIC Store (or with `flatpak uninstall`) deletes the sandbox and nothing
+else, so without help the setup's helper and polkit rule would outlive the app
+indefinitely: a root-capable binary, password-less for wheel/sudo, with nothing
+left that uses it. `scripts/uninstall.sh` removes them, but a Store user has no
+checkout and should not need a terminal.
+
+So the setup also installs something on the host that notices the app is gone.
+`scripts/flatpak-host-cleanup.sh` is copied to `/var/lib/cosmic-nightlight/` and
+run by two systemd units:
+
+- **`cosmic-nightlight-cleanup.path`** watches the system installation's `app/`
+  directory and every login user's `~/.local/share/flatpak/app`, and starts the
+  `watch` instance on any change. An uninstall removes the app's directory there,
+  so the cleanup runs within seconds.
+- **`cosmic-nightlight-cleanup@boot.service`** runs the same check at boot, for
+  anything the watch missed: the machine was off, the user's home was added after
+  the setup, or a path systemd could not watch.
+
+Each run asks one question, whether the app is still deployed in any
+installation (`app/<id>/current/active` exists), and does nothing if so. If it is
+gone everywhere, it resets the tint (`watch` only), deletes the helper and then
+the rule, and finally disables and deletes its own units and state directory.
+The reset only blinks the screen if there was a tint to clear: the helper reads
+the current gamma first, which needs no DRM master, and skips the VT bounce when
+every display already shows the ramp it was asked for.
+Nothing of the app is left on the host.
+
+The details that keep it from doing the wrong thing:
+
+- **Updates are not uninstalls.** An update also changes the watched directory,
+  but flatpak swaps `current/active` atomically, so the check never sees it
+  missing. The `watch` run also waits a few seconds first, so an uninstall
+  followed at once by a reinstall (a branch or remote switch) keeps the helper.
+- **Other users and installations count.** The helper is shared, so it stays
+  while the app is installed for any user, system-wide, or in a custom
+  installation listed in `/etc/flatpak/installations.d`. A custom installation
+  on a drive that isn't mounted counts as unseen, the same as an unmounted home.
+- **An unmounted home is not an empty one.** The setup records which
+  installations had the app (`roots`), and each check adds any it finds since,
+  such as a second user installing later. If one of those cannot be seen at
+  check time (no `repo/`, as with an encrypted home before login), the cleanup
+  does nothing rather than guess. A recorded installation that can be seen and
+  no longer has the app is dropped.
+- **Only our files.** `install.sh` writes the same two paths. The setup records
+  their hashes (`sums`), and if the helper has changed since, or an `install.sh`
+  GUI is present, the cleanup leaves the helper and rule alone and only removes
+  itself.
+- **Helper before rule.** A leftover applet process still running from the
+  uninstalled app then fails to find the helper, instead of getting a password
+  prompt for it.
+- **No reset at boot.** There is no tint to clear yet, and the VT switch would
+  disturb the greeter.
+
+The watched directories are user-writable, and the cleanup runs as root, so it
+only ever tests them for existence: it reads nothing from them and runs nothing
+from them. The list of custom installations is read from `/etc`, which only
+root can write. A user can fake an install to keep the helper around, which is
+no more than what the setup already left them.
+
+The script lives under `/var/lib` because Pop!_OS has no `/usr/local/libexec`,
+and the unit runs it through `/bin/bash` so it needs no exec bit there. The whole
+cleanup is best-effort, like the setup itself: on a host without systemd, or if
+any step fails, the app works as before and simply leaves the helper behind on
+uninstall, as it did before this existed.
+
+Not covered: a host set up before this shipped has no cleanup installed until
+the setup runs again, so those users still need `scripts/uninstall.sh` or the
+two `rm` lines in the README.
+
 ## What ships where
 
 | Path in the flatpak | Purpose |
@@ -328,6 +400,7 @@ that is a discipline worth having anyway.
 | `/app/bin/cosmic-nightlight` | the applet and settings window |
 | `/app/libexec/cosmic-nightlight-helper` | payload for the setup; never run in-sandbox |
 | `/app/libexec/cosmic-nightlight-setup` | the one-time host setup script |
+| `/app/libexec/cosmic-nightlight-cleanup` | payload for the setup; the uninstall cleanup |
 | `/app/share/polkit-1/rules.d/49-…rules` | payload for the setup |
 
 Installed on the host by the setup:
@@ -336,6 +409,12 @@ Installed on the host by the setup:
 |---|---|
 | `/usr/local/bin/cosmic-nightlight-helper` | `root:root 0755` |
 | `/etc/polkit-1/rules.d/49-cosmic-nightlight.rules` | `root:root 0644` |
+| `/var/lib/cosmic-nightlight/` (`cleanup.sh`, `sums`, `roots`) | `root:root 0755` |
+| `/etc/systemd/system/cosmic-nightlight-cleanup.path` | `root:root 0644` |
+| `/etc/systemd/system/cosmic-nightlight-cleanup@.service` | `root:root 0644` |
+
+Everything in the second table removes itself once the app is uninstalled. See
+[Cleaning up after an uninstall](#cleaning-up-after-an-uninstall).
 
 ## Permissions requested
 
@@ -444,7 +523,8 @@ Done, on branch `flatpak-sandbox-support`:
   the setup has ever been run
 - the manifest, in [`flatpak/`](../flatpak/)
 - the host setup script
-- `scripts/uninstall.sh` covering a flatpak install, which nothing else removes
+- `scripts/uninstall.sh` covering a flatpak install
+- the uninstall cleanup, so a Store uninstall removes the host helper too
 - `--version` on the helper, and the contract check behind it
 - setup on first use, riding along on the first tint change
 - the setup UI — one derived row in the settings window, as the fallback path

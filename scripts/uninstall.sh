@@ -68,6 +68,11 @@ for unit in cosmic-nightlight.service cosmic-nightshift.service; do
     sudo rm -f "/etc/systemd/user/graphical-session.target.wants/$unit"
 done
 
+# The flatpak's uninstall cleanup (see flatpak-host-cleanup.sh). Stop it before
+# anything below changes a flatpak directory, so it can't race this script.
+sudo systemctl disable --now cosmic-nightlight-cleanup.path 2>/dev/null || true
+sudo systemctl disable cosmic-nightlight-cleanup@boot.service 2>/dev/null || true
+
 # A flatpak instance isn't under systemd — it's a sandbox, so ask flatpak.
 if command -v flatpak >/dev/null 2>&1; then
     for app_id in "${app_ids[@]}"; do
@@ -119,8 +124,10 @@ if [[ "$tint_reset" -eq 0 ]]; then
 fi
 
 # 5. Remove the files install.sh placed under /usr/local and /usr/share.
+# Checked under sudo: /etc/polkit-1/rules.d is 0750 root:polkitd on most
+# distros, so a test run as the user can't see the rule and skipped it.
 remove() {
-    if [[ -e "$1" ]]; then
+    if sudo test -e "$1"; then
         sudo rm -f "$1"
         echo "Removed: $1"
     fi
@@ -133,6 +140,14 @@ remove /usr/share/applications/io.github.cosmic_nightlight.settings.desktop
 remove /usr/share/metainfo/io.github.cosmic_nightlight.metainfo.xml
 remove /usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
 remove /usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
+# The flatpak's uninstall cleanup, which step 2 already stopped.
+remove /etc/systemd/system/cosmic-nightlight-cleanup.path
+remove "/etc/systemd/system/cosmic-nightlight-cleanup@.service"
+if [[ -d /var/lib/cosmic-nightlight ]]; then
+    sudo rm -rf /var/lib/cosmic-nightlight
+    echo "Removed: /var/lib/cosmic-nightlight"
+fi
+sudo systemctl daemon-reload 2>/dev/null || true
 # A user service some setups copy in by hand (see systemd/cosmic-nightlight.service).
 remove "$config_home/systemd/user/cosmic-nightlight.service"
 

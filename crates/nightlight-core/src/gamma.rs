@@ -4,13 +4,14 @@
 //! ramp suitable for `drmModeCrtcSetGamma`.
 //!
 //! The white point is approximated with Tanner Helland's well-known
-//! blackbody curve fit. At ~6500K the white point is (1, 1, 1), i.e. an
-//! identity ramp that applies no tint; lower temperatures progressively
-//! cut the green and blue channels to warm (redden) the image.
+//! blackbody curve fit. Lower temperatures progressively cut the green and
+//! blue channels to warm (redden) the image. The fit only comes close to
+//! (1, 1, 1) at 6500K, so neutral is special-cased in [`target`].
 
 /// Lowest temperature we allow callers to request, in Kelvin.
 pub const MIN_KELVIN: u32 = 1000;
-/// Neutral daylight temperature; applying this is a no-op (identity ramp).
+/// Neutral daylight temperature. At full brightness this writes an identity
+/// ramp, which applies no tint; see [`target`].
 pub const NEUTRAL_KELVIN: u32 = 6500;
 /// Highest temperature we allow callers to request, in Kelvin.
 pub const MAX_KELVIN: u32 = 10000;
@@ -48,13 +49,40 @@ pub fn white_point(kelvin: u32) -> [f64; 3] {
     ]
 }
 
+/// The LUTs to write for `kelvin`/`brightness`: [`identity`] when that is
+/// neutral at full brightness, [`ramp`] otherwise.
+///
+/// Writing [`ramp`] at [`NEUTRAL_KELVIN`] instead left blue at about 98% after
+/// the tint was turned off, which is not off.
+pub fn target(kelvin: u32, brightness: f64, size: usize) -> [Vec<u16>; 3] {
+    if is_neutral(kelvin, brightness) {
+        identity(size)
+    } else {
+        ramp(kelvin, brightness, size)
+    }
+}
+
+/// Whether `kelvin`/`brightness` means no adjustment at all.
+pub fn is_neutral(kelvin: u32, brightness: f64) -> bool {
+    kelvin == NEUTRAL_KELVIN && brightness >= 1.0
+}
+
 /// Builds red/green/blue gamma LUTs of length `size` for the given
 /// temperature and overall `brightness` (`0.0..=1.0`, where `1.0` is full).
 ///
 /// Each LUT is a linear ramp scaled by the channel's white point and the
 /// brightness, expressed as the 16-bit values the DRM API expects.
 pub fn ramp(kelvin: u32, brightness: f64, size: usize) -> [Vec<u16>; 3] {
-    let wp = white_point(kelvin);
+    ramp_for(white_point(kelvin), brightness, size)
+}
+
+/// A true identity ramp, with every channel at full scale. Not quite the same
+/// as [`ramp`] at [`NEUTRAL_KELVIN`], whose blue tops out around 98%.
+pub fn identity(size: usize) -> [Vec<u16>; 3] {
+    ramp_for([1.0, 1.0, 1.0], 1.0, size)
+}
+
+fn ramp_for(wp: [f64; 3], brightness: f64, size: usize) -> [Vec<u16>; 3] {
     let brightness = brightness.clamp(0.0, 1.0);
     let last = (size.max(1) - 1) as f64;
 
@@ -102,6 +130,15 @@ mod tests {
         assert!(*b.last().unwrap() < *r.last().unwrap());
         // Non-decreasing.
         assert!(g.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    #[test]
+    fn off_writes_a_true_identity() {
+        assert_eq!(target(NEUTRAL_KELVIN, 1.0, 256), identity(256));
+        // The approximation it replaces falls short on blue.
+        assert_ne!(ramp(NEUTRAL_KELVIN, 1.0, 256), identity(256));
+        // Dimming at 6500K is still an adjustment.
+        assert_ne!(target(NEUTRAL_KELVIN, 0.9, 256), identity(256));
     }
 
     #[test]

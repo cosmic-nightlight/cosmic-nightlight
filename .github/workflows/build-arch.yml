@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: MPL-2.0
 name: Build Arch package
 
-# Tag builds only, like the .rpm workflow: the package is a release artifact, and
-# the .deb workflow already proves on every push and pull request that the tree
-# still packages. Run it by hand from the Actions tab to test a change to the
-# PKGBUILD or to this file.
+# Tag builds only, like the .rpm workflow: the .deb workflow already proves on
+# every push and pull request that the tree still packages. Run it by hand from
+# the Actions tab to test a change to the PKGBUILD or to this file.
+#
+# The package is not attached to the Release, to keep the Assets list short.
+# Arch users build it themselves with makepkg, and the build here only proves the
+# PKGBUILD still works; its output is kept as a workflow artifact.
 on:
   push:
     tags: ['v*']
@@ -20,8 +23,6 @@ jobs:
     # out native to Arch. Arch is rolling, so the latest image is the one users
     # are on.
     container: archlinux:latest
-    permissions:
-      contents: write   # required so tag builds can attach the package to the Release
     steps:
       # Ahead of checkout, which needs git inside the container.
       - name: Install the toolchain and the build dependencies
@@ -70,17 +71,3 @@ jobs:
           path: dist/*.pkg.tar.zst
           if-no-files-found: error
 
-      - name: Attach the package to the Release
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          # The .deb workflow creates the Release with its title and notes, so
-          # wait for it rather than race it, as the .rpm workflow does.
-          for _ in $(seq 1 30); do
-            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
-            echo "waiting for the Release to be created..."
-            sleep 20
-          done
-          gh release upload "$GITHUB_REF_NAME" dist/*.pkg.tar.zst --clobber
