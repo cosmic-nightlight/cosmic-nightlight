@@ -15,9 +15,12 @@
 # Installs:
 #   the helper    -> /usr/local/bin/cosmic-nightlight-helper
 #   the rule      -> /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
+#   the cleanup   -> /var/lib/cosmic-nightlight/ and two systemd units
 #
-# Both paths are already whitelisted by the rule itself, so nothing here differs
-# from what the .deb and install.sh set up.
+# The helper and rule paths are already whitelisted by the rule itself, so
+# nothing there differs from what the .deb and install.sh set up. The cleanup is
+# flatpak-only: it removes all of the above once the app is uninstalled, since
+# flatpak gives an app no way to do that itself. See flatpak-host-cleanup.sh.
 #
 # Any arguments are forwarded verbatim to the helper once it is installed, which
 # is what lets the setup ride along on a change the user was making anyway. Before
@@ -47,6 +50,7 @@ app_dir="$(dirname "$libexec_dir")"
 
 helper="$libexec_dir/cosmic-nightlight-helper"
 rule="$app_dir/share/polkit-1/rules.d/49-cosmic-nightlight.rules"
+cleanup="$libexec_dir/cosmic-nightlight-cleanup"
 
 for f in "$helper" "$rule"; do
     [[ -f "$f" ]] || { echo "cosmic-nightlight-setup: missing $f" >&2; exit 1; }
@@ -71,6 +75,73 @@ if install -o root -g root -m 0755 "$helper" /usr/local/bin/cosmic-nightlight-he
     echo "  /etc/polkit-1/rules.d/49-cosmic-nightlight.rules"
 else
     echo "cosmic-nightlight-setup: could not install to the host; leaving it be." >&2
+fi
+
+# Arrange for the two files above to go away with the app. A path unit runs the
+# cleanup whenever a flatpak `app/` directory changes, which is what an
+# uninstall from the Store or the command line does, and a boot-time run catches
+# anything the watch missed. The cleanup removes itself and both units once it
+# has done its job.
+#
+# The script lives under /var/lib rather than /usr/local/libexec, which Pop!_OS
+# does not have, and runs through bash so it needs no exec permission there.
+# The hashes let it tell our files apart from the same paths written later by
+# install.sh, and `roots` lets it tell an uninstalled app apart from a home
+# directory that simply is not mounted yet.
+#
+# Best-effort like the install itself: without it the app works exactly as
+# before, it just leaves the helper behind when uninstalled.
+install_cleanup() {
+    local state_dir=/var/lib/cosmic-nightlight
+    local unit_dir=/etc/systemd/system
+    local watched
+
+    [[ -f "$cleanup" && -d /run/systemd/system ]] || return 1
+    install -d -o root -g root -m 0755 "$state_dir" || return 1
+    install -o root -g root -m 0644 "$cleanup" "$state_dir/cleanup.sh" || return 1
+    sha256sum /usr/local/bin/cosmic-nightlight-helper \
+        /etc/polkit-1/rules.d/49-cosmic-nightlight.rules >"$state_dir/sums" || return 1
+    bash "$state_dir/cleanup.sh" roots >"$state_dir/roots" || return 1
+    watched="$(bash "$state_dir/cleanup.sh" paths)" || return 1
+
+    {
+        echo "[Unit]"
+        echo "Description=Remove the Night Light helper once its flatpak is uninstalled"
+        echo
+        echo "[Path]"
+        while read -r dir; do
+            echo "PathChanged=$dir"
+        done <<<"$watched"
+        echo "Unit=cosmic-nightlight-cleanup@watch.service"
+        echo
+        echo "[Install]"
+        echo "WantedBy=paths.target"
+    } >"$unit_dir/cosmic-nightlight-cleanup.path" || return 1
+
+    cat >"$unit_dir/cosmic-nightlight-cleanup@.service" <<'EOF' || return 1
+[Unit]
+Description=Remove the Night Light helper once its flatpak is uninstalled (%i)
+After=local-fs.target remote-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /var/lib/cosmic-nightlight/cleanup.sh %i
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload &&
+        systemctl enable cosmic-nightlight-cleanup@boot.service &&
+        systemctl enable --now cosmic-nightlight-cleanup.path
+}
+
+if [[ "$installed" -eq 1 ]]; then
+    if install_cleanup; then
+        echo "  /var/lib/cosmic-nightlight/ (removes all of this when the app is uninstalled)"
+    else
+        echo "cosmic-nightlight-setup: could not set up the uninstall cleanup." >&2
+    fi
 fi
 
 # Hand the rest of the job to the helper. `exec "$helper" "$@"` and nothing else:

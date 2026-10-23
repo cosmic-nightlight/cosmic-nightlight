@@ -54,7 +54,16 @@ pub fn white_point(kelvin: u32) -> [f64; 3] {
 /// Each LUT is a linear ramp scaled by the channel's white point and the
 /// brightness, expressed as the 16-bit values the DRM API expects.
 pub fn ramp(kelvin: u32, brightness: f64, size: usize) -> [Vec<u16>; 3] {
-    let wp = white_point(kelvin);
+    ramp_for(white_point(kelvin), brightness, size)
+}
+
+/// A true identity ramp, with every channel at full scale. Not quite the same
+/// as [`ramp`] at [`NEUTRAL_KELVIN`], whose blue tops out around 98%.
+pub fn identity(size: usize) -> [Vec<u16>; 3] {
+    ramp_for([1.0, 1.0, 1.0], 1.0, size)
+}
+
+fn ramp_for(wp: [f64; 3], brightness: f64, size: usize) -> [Vec<u16>; 3] {
     let brightness = brightness.clamp(0.0, 1.0);
     let last = (size.max(1) - 1) as f64;
 

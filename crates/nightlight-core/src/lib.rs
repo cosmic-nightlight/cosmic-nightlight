@@ -38,10 +38,18 @@ pub struct Applied {
 /// Passing [`NEUTRAL_KELVIN`] with full brightness resets displays to an
 /// identity ramp (i.e. turns the tint off).
 ///
+/// If every display already shows the requested ramp, nothing is written and
+/// the VT bounce is skipped, since the user sees it as a blink. That covers
+/// turning the tint off when it is already off, which the flatpak's uninstall
+/// cleanup does unconditionally.
+///
 /// `session_vt` is the caller's graphical-session VT (`XDG_VTNR`); see
 /// [`vt::with_master_window`] for how it guards and restores the VT bounce.
 pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Result<Applied> {
     let kelvin = kelvin.clamp(MIN_KELVIN, MAX_KELVIN);
+    if let Some(crtcs) = drm::already_showing(kelvin, brightness) {
+        return Ok(Applied { crtcs });
+    }
     let crtcs = vt::with_master_window(session_vt, || drm::apply_all(kelvin, brightness))??;
     Ok(Applied { crtcs })
 }

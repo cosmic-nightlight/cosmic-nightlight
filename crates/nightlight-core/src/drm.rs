@@ -12,7 +12,7 @@ use std::os::fd::{AsFd, BorrowedFd};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use drm::control::Device as ControlDevice;
+use drm::control::{crtc, Device as ControlDevice};
 use drm::Device as BasicDevice;
 
 use crate::gamma;
@@ -105,6 +105,92 @@ fn apply_card(path: &Path, kelvin: u32, brightness: f64) -> io::Result<usize> {
     Ok(updated)
 }
 
+/// How far, in 16-bit LUT units, a read-back entry may sit from an identity
+/// ramp and still count as one. The kernel's boot-time ramp is `i << 8`, up to
+/// 255 below ours. Our own ramps read back exactly as written, so they get no
+/// slack at all: a 50K step near 10000K moves them by less than this.
+const IDENTITY_TOLERANCE: u16 = 256;
+
+fn close(current: &[Vec<u16>; 3], wanted: &[Vec<u16>; 3], tolerance: u16) -> bool {
+    current.iter().zip(wanted).all(|(c, w)| {
+        c.len() == w.len() && c.iter().zip(w).all(|(a, b)| a.abs_diff(*b) <= tolerance)
+    })
+}
+
+/// The CRTC's `GAMMA_LUT` blob id, or `None` on a driver without one.
+fn gamma_lut_blob(card: &Card, crtc: crtc::Handle) -> io::Result<Option<u64>> {
+    for (&prop, &value) in card.get_properties(crtc)?.iter() {
+        if card.get_property(prop)?.name().to_bytes() == b"GAMMA_LUT" {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
+/// Reads the ramp a CRTC is showing right now. Reading needs no DRM master, so
+/// this works while the compositor holds it.
+///
+/// `GAMMA_LUT` comes first because it is what the hardware actually uses: the
+/// legacy read only returns what was last written through the legacy call, and
+/// would miss a LUT a compositor set atomically.
+fn read_ramp(card: &Card, crtc: crtc::Handle, size: usize) -> io::Result<[Vec<u16>; 3]> {
+    if let Some(blob) = gamma_lut_blob(card, crtc)? {
+        // No blob means no LUT at all, which the hardware treats as identity.
+        if blob == 0 {
+            return Ok(gamma::identity(size));
+        }
+        // An array of `struct drm_color_lut { u16 red, green, blue, reserved; }`.
+        let bytes = card.get_property_blob(blob)?;
+        let mut ramp = [Vec::new(), Vec::new(), Vec::new()];
+        for entry in 0..bytes.len() / 8 {
+            for (i, channel) in ramp.iter_mut().enumerate() {
+                let at = entry * 8 + i * 2;
+                channel.push(u16::from_ne_bytes([bytes[at], bytes[at + 1]]));
+            }
+        }
+        return Ok(ramp);
+    }
+
+    let [mut red, mut green, mut blue] = [vec![0; size], vec![0; size], vec![0; size]];
+    card.get_gamma(crtc, &mut red, &mut green, &mut blue)?;
+    Ok([red, green, blue])
+}
+
+/// Whether every active CRTC already shows the ramp for `kelvin`/`brightness`,
+/// in which case [`apply_all`] would change nothing. Returns how many CRTCs
+/// that is, or `None` if any differs, cannot be read, or there are none, so
+/// the caller falls back to writing.
+///
+/// For the neutral ramp, a true identity ramp counts too: that is what the
+/// screen shows if the tint was never turned on since boot.
+pub fn already_showing(kelvin: u32, brightness: f64) -> Option<usize> {
+    let neutral = kelvin == gamma::NEUTRAL_KELVIN && brightness >= 1.0;
+    let mut matched = 0;
+
+    for path in card_paths().ok()? {
+        let card = Card::open(&path).ok()?;
+        for &crtc in card.resource_handles().ok()?.crtcs() {
+            let info = card.get_crtc(crtc).ok()?;
+            let size = info.gamma_length() as usize;
+            // The same CRTCs `apply_card` skips.
+            if info.mode().is_none() || size == 0 {
+                continue;
+            }
+
+            let current = read_ramp(&card, crtc, size).ok()?;
+            let len = current[0].len();
+            if !(close(&current, &gamma::ramp(kelvin, brightness, len), 0)
+                || neutral && close(&current, &gamma::identity(len), IDENTITY_TOLERANCE))
+            {
+                return None;
+            }
+            matched += 1;
+        }
+    }
+
+    (matched > 0).then_some(matched)
+}
+
 /// Applies the gamma ramp to every active CRTC on every card.
 ///
 /// Cards that cannot be updated (no master, no displays) are logged and
@@ -124,4 +210,33 @@ pub fn apply_all(kelvin: u32, brightness: f64) -> io::Result<usize> {
         }
     }
     Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kernel_identity_counts_as_identity() {
+        let kernel: Vec<u16> = (0..256u16).map(|i| i << 8).collect();
+        let current = [kernel.clone(), kernel.clone(), kernel];
+        assert!(close(&current, &gamma::identity(256), IDENTITY_TOLERANCE));
+    }
+
+    #[test]
+    fn the_smallest_slider_steps_still_count_as_changes() {
+        let current = gamma::ramp(gamma::MAX_KELVIN, 1.0, 256);
+        let same =
+            |kelvin, brightness, size| close(&current, &gamma::ramp(kelvin, brightness, size), 0);
+        assert!(same(gamma::MAX_KELVIN, 1.0, 256));
+        assert!(!same(gamma::MAX_KELVIN - 50, 1.0, 256));
+        assert!(!same(gamma::MAX_KELVIN, 0.99, 256));
+        assert!(!same(gamma::MAX_KELVIN, 1.0, 1024));
+    }
+
+    #[test]
+    fn a_dimmed_screen_is_not_identity() {
+        let current = gamma::ramp(gamma::NEUTRAL_KELVIN, 0.99, 256);
+        assert!(!close(&current, &gamma::identity(256), IDENTITY_TOLERANCE));
+    }
 }
