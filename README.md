@@ -72,7 +72,16 @@ The `.rpm` is new, so until the next release it's only on the Nightly build.
 <details>
 <summary><b>Arch Linux</b></summary>
 
-There's no download on the Releases page. Build the package yourself instead:
+Download **`cosmic-nightlight-*.pkg.tar.zst`** from the
+[Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly)
+and run:
+
+```sh
+sudo pacman -U ./cosmic-nightlight-*.pkg.tar.zst
+```
+
+The Nightly build can have bugs. For the latest release instead, build the
+package yourself, since it isn't on the Releases page:
 
 ```sh
 git clone https://github.com/cosmic-nightlight/cosmic-nightlight
