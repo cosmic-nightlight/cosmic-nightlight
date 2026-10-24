@@ -65,27 +65,102 @@ It exists because COSMIC doesn't support the usual night light tools
    makepkg -si
    ```
 
-   On NixOS, add the flake to your system configuration instead:
+   <details>
+   <summary>On NixOS, follow these steps instead</summary>
+
+   NixOS support is new and **experimental**. It isn't in a release yet, so
+   these steps install the
+   [Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly),
+   which can have bugs. The flatpak doesn't work on NixOS.
+
+   **1. Turn on flakes.** Skip this if you already use flakes.
+
+   Open your system configuration:
+
+   ```sh
+   sudo nano /etc/nixos/configuration.nix
+   ```
+
+   Near the top you'll see a line like `{ config, pkgs, ... }:` and, below it,
+   a line with only `{` on it. Paste this on a new line right after that `{`:
+
+   ```nix
+   nix.settings.experimental-features = [ "nix-command" "flakes" ];
+   ```
+
+   Save with **Ctrl+O**, then **Enter**, and close with **Ctrl+X**. Then run:
+
+   ```sh
+   sudo nixos-rebuild switch
+   ```
+
+   **2. Create the flake file.** Skip this if you already have
+   `/etc/nixos/flake.nix`, and see the note below instead.
+
+   Check which NixOS version you're on:
+
+   ```sh
+   nixos-version
+   ```
+
+   It prints something like `25.11.1234.abcdef`. Remember the first part
+   (`25.11` here). Then create the file:
+
+   ```sh
+   sudo nano /etc/nixos/flake.nix
+   ```
+
+   Paste all of this in, and change `25.11` to your version:
 
    ```nix
    {
-     inputs.cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight";
+     inputs = {
+       nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+       cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/nightly";
+     };
 
      outputs = { nixpkgs, cosmic-nightlight, ... }: {
-       nixosConfigurations.your-hostname = nixpkgs.lib.nixosSystem {
+       nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
          modules = [
+           ./configuration.nix
            cosmic-nightlight.nixosModules.default
            { programs.cosmic-nightlight.enable = true; }
-           # ...the rest of your configuration
          ];
        };
      };
    }
    ```
 
-   Then run `sudo nixos-rebuild switch`. Use the module rather than only
-   adding the package: the module is what lets Night Light change the screen
-   without asking for your password. The flatpak doesn't work on NixOS.
+   Save and close as before.
+
+   **3. Install it.**
+
+   ```sh
+   sudo nixos-rebuild switch --flake /etc/nixos#nixos
+   ```
+
+   Use this command from now on whenever you rebuild your system. To get the
+   latest Nightly build later, run `sudo nix flake update --flake /etc/nixos`
+   and then the command above.
+
+   **Already have a flake?** Add this line inside `inputs`:
+
+   ```nix
+   cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/nightly";
+   ```
+
+   Add `cosmic-nightlight` to the list after `outputs = {`, and add these two
+   lines inside your system's `modules = [ ... ]` list:
+
+   ```nix
+   cosmic-nightlight.nixosModules.default
+   { programs.cosmic-nightlight.enable = true; }
+   ```
+
+   Then rebuild as you normally do.
+
+   </details>
+
 3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**)
    **→ Configure applets → Add applet → Night Light**.
 
