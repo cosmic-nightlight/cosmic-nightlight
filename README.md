@@ -15,7 +15,6 @@ It exists because COSMIC doesn't support the usual night light tools
 
 - [Screenshots](#screenshots)
 - [Install](#install)
-  - [Try the flatpak build](#try-the-flatpak-build)
   - [Build from source (for development)](#build-from-source-for-development)
 - [Using it](#using-it)
 - [Translating](#translating)
@@ -45,140 +44,153 @@ It exists because COSMIC doesn't support the usual night light tools
 
 ## Install
 
-1. Download the latest **`cosmic-nightlight_*.deb`** from the
-   [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
-   page.
-2. Open it with the **COSMIC Store** and click **Install**
-   (or run `sudo apt install ./cosmic-nightlight_*.deb`).
+**1. Get the package.** On Pop!_OS or Ubuntu:
 
-   On Fedora 44 or newer, download **`cosmic-nightlight-*.rpm`** instead and
-   run `sudo dnf install ./cosmic-nightlight-*.rpm`. The `.rpm` is new, so
-   until the next release it's only on the
-   [Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly).
+- Download the latest **`cosmic-nightlight_*.deb`** from the
+  [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+  page.
+- Open it with the **COSMIC Store** and click **Install**
+  (or run `sudo apt install ./cosmic-nightlight_*.deb`).
 
-   On Arch Linux, there's no download on the Releases page. Build the package
-   yourself instead:
+On another system, open yours below:
 
-   ```sh
-   git clone https://github.com/cosmic-nightlight/cosmic-nightlight
-   cd cosmic-nightlight/arch
-   makepkg -si
-   ```
+<details>
+<summary><b>Fedora</b></summary>
 
-   <details>
-   <summary>On NixOS, follow these steps instead</summary>
+You'll need Fedora 44 or newer. Download **`cosmic-nightlight-*.rpm`** from the
+[Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly)
+and run:
 
-   NixOS support is new and **experimental**. It isn't in a release yet, so
-   these steps install the
-   [Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly),
-   which can have bugs. The flatpak doesn't work on NixOS.
+```sh
+sudo dnf install ./cosmic-nightlight-*.rpm
+```
 
-   **1. Turn on flakes.** If you already use flakes, skip to step 2.
+The `.rpm` is new, so until the next release it's only on the Nightly build.
 
-   Open your system configuration:
+</details>
 
-   ```sh
-   sudo nano /etc/nixos/configuration.nix
-   ```
+<details>
+<summary><b>Arch Linux</b></summary>
 
-   Near the top you'll see a line like `{ config, pkgs, ... }:` and, below it,
-   a line with only `{` on it. Paste this on a new line right after that `{`:
+There's no download on the Releases page. Build the package yourself instead:
 
-   ```nix
-   nix.settings.experimental-features = [ "nix-command" "flakes" ];
-   ```
+```sh
+git clone https://github.com/cosmic-nightlight/cosmic-nightlight
+cd cosmic-nightlight/arch
+makepkg -si
+```
 
-   Save with **Ctrl+O**, then **Enter**, and close with **Ctrl+X**. Then run:
+</details>
 
-   ```sh
-   sudo nixos-rebuild switch
-   ```
+<details>
+<summary><b>NixOS</b></summary>
 
-   **2. Create the flake file.** If you already have `/etc/nixos/flake.nix`,
-   skip to **Already have a flake?** below.
+NixOS support is new and **experimental**. It isn't in a release yet, so
+these steps install the
+[Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly),
+which can have bugs. The flatpak doesn't work on NixOS.
 
-   Check which NixOS version you're on:
+**1. Turn on flakes.** If you already use flakes, skip to step 2.
 
-   ```sh
-   nixos-version
-   ```
+Open your system configuration:
 
-   It prints something like `25.11.1234.abcdef`. Remember the first part
-   (`25.11` here). Then create the file:
+```sh
+sudo nano /etc/nixos/configuration.nix
+```
 
-   ```sh
-   sudo nano /etc/nixos/flake.nix
-   ```
+Near the top you'll see a line like `{ config, pkgs, ... }:` and, below it,
+a line with only `{` on it. Paste this on a new line right after that `{`:
 
-   Paste all of this in, and change `25.11` to your version:
+```nix
+nix.settings.experimental-features = [ "nix-command" "flakes" ];
+```
 
-   ```nix
-   {
-     inputs = {
-       nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-       cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/nightly";
-     };
+Save with **Ctrl+O**, then **Enter**, and close with **Ctrl+X**. Then run:
 
-     outputs = { nixpkgs, cosmic-nightlight, ... }: {
-       nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
-         modules = [
-           ./configuration.nix
-           cosmic-nightlight.nixosModules.default
-           { programs.cosmic-nightlight.enable = true; }
-         ];
-       };
-     };
-   }
-   ```
+```sh
+sudo nixos-rebuild switch
+```
 
-   Save and close as before.
+**2. Create the flake file.** If you already have `/etc/nixos/flake.nix`,
+skip to **Already have a flake?** below.
 
-   **3. Install it.**
+Check which NixOS version you're on:
 
-   ```sh
-   sudo nixos-rebuild switch --flake /etc/nixos#nixos
-   ```
+```sh
+nixos-version
+```
 
-   Use this command from now on whenever you rebuild your system. To get the
-   latest Nightly build later, run `sudo nix flake update --flake /etc/nixos`
-   and then the command above.
+It prints something like `25.11.1234.abcdef`. Remember the first part
+(`25.11` here). Then create the file:
 
-   **Already have a flake?** Add this line inside `inputs`:
+```sh
+sudo nano /etc/nixos/flake.nix
+```
 
-   ```nix
-   cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/nightly";
-   ```
+Paste all of this in, and change `25.11` to your version:
 
-   Add `cosmic-nightlight` to the list after `outputs = {`, and add these two
-   lines inside your system's `modules = [ ... ]` list:
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/nightly";
+  };
 
-   ```nix
-   cosmic-nightlight.nixosModules.default
-   { programs.cosmic-nightlight.enable = true; }
-   ```
+  outputs = { nixpkgs, cosmic-nightlight, ... }: {
+    nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
+      modules = [
+        ./configuration.nix
+        cosmic-nightlight.nixosModules.default
+        { programs.cosmic-nightlight.enable = true; }
+      ];
+    };
+  };
+}
+```
 
-   Then rebuild as you normally do.
+Save and close as before.
 
-   </details>
+**3. Install it.**
 
-3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**)
-   **→ Configure applets → Add applet → Night Light**.
+```sh
+sudo nixos-rebuild switch --flake /etc/nixos#nixos
+```
 
-That's it. Click the Night Light icon to turn it on or open its settings.
+Use this command from now on whenever you rebuild your system. To get the
+latest Nightly build later, run `sudo nix flake update --flake /etc/nixos`
+and then the command above.
 
-The app isn't in the COSMIC Store yet. A flatpak version is being submitted, and
-until it's accepted, the `.deb` above is the way to install it.
+**Already have a flake?** Add this line inside `inputs`:
 
-### Try the flatpak build
+```nix
+cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/nightly";
+```
 
-This is optional. The `.deb` is the recommended install. Every release includes
-a ready-built flatpak:
+Add `cosmic-nightlight` to the list after `outputs = {`, and add these two
+lines inside your system's `modules = [ ... ]` list:
+
+```nix
+cosmic-nightlight.nixosModules.default
+{ programs.cosmic-nightlight.enable = true; }
+```
+
+Then rebuild as you normally do.
+
+</details>
+
+<details>
+<summary><b>Flatpak</b> (optional, any system except NixOS)</summary>
+
+The app isn't in the COSMIC Store yet. A flatpak version is being submitted,
+and until it's accepted, the packages above are the recommended install. To
+try it anyway:
 
 1. Download **`cosmic-nightlight-*.flatpak`** from the
    [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
    page.
 2. `flatpak install --user ./cosmic-nightlight-*.flatpak`
-3. Add the applet as above, or run `flatpak run io.github.cosmic_nightlight --settings`.
+3. Add the applet as in step 2 below, or open the settings with
+   `flatpak run io.github.cosmic_nightlight --settings`.
 
 The first time you turn it on, it asks for your password once to install a small
 helper on your system. A sandboxed app can't change screen colors on its own
@@ -220,6 +232,13 @@ This builds the latest release. To build your local changes instead, run
 [flatpak/README.md](flatpak/README.md).
 
 </details>
+
+</details>
+
+**2. Add the applet:** **COSMIC Settings → Desktop → Panel** (or **Dock**)
+**→ Configure applets → Add applet → Night Light**.
+
+That's it. Click the Night Light icon to turn it on or open its settings.
 
 ### Build from source (for development)
 
