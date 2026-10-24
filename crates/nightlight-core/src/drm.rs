@@ -173,32 +173,59 @@ fn read_ramp(card: &Card, crtc: crtc::Handle, size: usize) -> io::Result<[Vec<u1
     Ok([red, green, blue])
 }
 
+/// How the active CRTCs compare with a requested ramp. See [`showing`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Showing {
+    /// Every active CRTC shows it. Holds how many CRTCs that is.
+    All(usize),
+    /// A CRTC shows something else, or could not be read.
+    Different,
+    /// No CRTC is active, so there is nothing to compare.
+    NoneActive,
+}
+
 /// Whether every active CRTC already shows the ramp for `kelvin`/`brightness`,
-/// in which case [`apply_all`] would change nothing. Returns how many CRTCs
-/// that is, or `None` if any differs, cannot be read, or there are none, so
-/// the caller falls back to writing.
+/// in which case [`apply_all`] would change nothing.
+///
+/// [`Showing::NoneActive`] is told apart from a difference because it is often
+/// brief: for about a second after a VT bounce, cosmic-comp re-modesets and
+/// every CRTC reads as off. The caller can wait that out rather than write.
 ///
 /// Neutral is compared with some slack, so the kernel's own identity ramp
 /// counts: that is what the screen shows if the tint was never turned on since
 /// boot.
-pub fn already_showing(kelvin: u32, brightness: f64) -> Option<usize> {
+pub fn showing(kelvin: u32, brightness: f64) -> Showing {
     let neutral = gamma::is_neutral(kelvin, brightness);
     let mut matched = 0;
 
-    for path in card_paths().ok()? {
-        let card = Card::open(&path).ok()?;
-        for (crtc, size) in gamma_crtcs(&card).ok()? {
-            let current = read_ramp(&card, crtc, size).ok()?;
+    let Ok(paths) = card_paths() else {
+        return Showing::Different;
+    };
+    for path in paths {
+        let Ok(card) = Card::open(&path) else {
+            return Showing::Different;
+        };
+        let Ok(crtcs) = gamma_crtcs(&card) else {
+            return Showing::Different;
+        };
+        for (crtc, size) in crtcs {
+            let Ok(current) = read_ramp(&card, crtc, size) else {
+                return Showing::Different;
+            };
             let len = current[0].len();
             let tolerance = if neutral { IDENTITY_TOLERANCE } else { 0 };
             if !close(&current, &gamma::target(kelvin, brightness, len), tolerance) {
-                return None;
+                return Showing::Different;
             }
             matched += 1;
         }
     }
 
-    (matched > 0).then_some(matched)
+    if matched > 0 {
+        Showing::All(matched)
+    } else {
+        Showing::NoneActive
+    }
 }
 
 /// What [`apply_all`] got done.

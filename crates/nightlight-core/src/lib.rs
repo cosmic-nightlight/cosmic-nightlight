@@ -16,6 +16,7 @@
 //! `nightlight-helper` binary invoked via `pkexec`.
 
 use std::io;
+use std::time::{Duration, Instant};
 
 pub mod drm;
 pub mod gamma;
@@ -59,7 +60,12 @@ pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Resul
     // Before the read as well as the write: a read taken while another
     // helper's bounce is under way can see a half-written screen.
     let _lock = lock_host();
-    if let Some(crtcs) = drm::already_showing(kelvin, brightness) {
+    let shown = settled(
+        || drm::showing(kelvin, brightness),
+        SETTLE_TIMEOUT,
+        SETTLE_POLL,
+    );
+    if let Some(crtcs) = shown {
         return Ok(Applied {
             crtcs,
             failed_cards: 0,
@@ -70,6 +76,37 @@ pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Resul
         crtcs: written.crtcs,
         failed_cards: written.failed_cards,
     })
+}
+
+/// How long [`apply`] waits for a display to come back on before writing. The
+/// re-modeset after a VT bounce keeps every CRTC off for about a second.
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How often [`apply`] looks again while it waits.
+const SETTLE_POLL: Duration = Duration::from_millis(20);
+
+/// Whether the screen already shows what was asked for, waiting out a moment
+/// with no display active. Returns how many CRTCs show it, or `None` to write.
+///
+/// A helper queued on [`lock_host`] behind another one's bounce reads the
+/// screen right as cosmic-comp re-modesets, when nothing reads as active.
+/// Taking that as a difference made it bounce again to write a ramp that was
+/// already there, which the user saw as a second blink. If nothing comes back
+/// on in time, write anyway, as before.
+fn settled(
+    mut read: impl FnMut() -> drm::Showing,
+    timeout: Duration,
+    poll: Duration,
+) -> Option<usize> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match read() {
+            drm::Showing::All(crtcs) => return Some(crtcs),
+            drm::Showing::Different => return None,
+            drm::Showing::NoneActive if Instant::now() >= deadline => return None,
+            drm::Showing::NoneActive => std::thread::sleep(poll),
+        }
+    }
 }
 
 /// Where [`lock_host`] takes its lock. Under `/run` because only root can write
@@ -191,5 +228,50 @@ mod tests {
     #[test]
     fn trailing_text_does_not_confuse_the_parse() {
         assert_eq!(parse_contract("x (contract 12) and more"), Some(12));
+    }
+
+    /// A reader that returns `reads` in turn, then repeats the last one.
+    fn reader(reads: Vec<crate::drm::Showing>) -> impl FnMut() -> crate::drm::Showing {
+        let mut reads = reads.into_iter();
+        let mut last = crate::drm::Showing::NoneActive;
+        move || {
+            if let Some(next) = reads.next() {
+                last = next;
+            }
+            last
+        }
+    }
+
+    const LONG: Duration = Duration::from_secs(5);
+    const POLL: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn a_display_coming_back_with_the_ramp_skips_the_write() {
+        use crate::drm::Showing::*;
+        let read = reader(vec![NoneActive, NoneActive, All(1)]);
+        assert_eq!(settled(read, LONG, POLL), Some(1));
+    }
+
+    #[test]
+    fn a_display_coming_back_with_another_ramp_writes() {
+        use crate::drm::Showing::*;
+        let read = reader(vec![NoneActive, Different]);
+        assert_eq!(settled(read, LONG, POLL), None);
+    }
+
+    #[test]
+    fn a_difference_writes_without_waiting() {
+        let start = Instant::now();
+        assert_eq!(
+            settled(reader(vec![crate::drm::Showing::Different]), LONG, POLL),
+            None
+        );
+        assert!(start.elapsed() < LONG);
+    }
+
+    #[test]
+    fn no_display_coming_back_writes_after_the_timeout() {
+        let read = reader(vec![crate::drm::Showing::NoneActive]);
+        assert_eq!(settled(read, Duration::from_millis(30), POLL), None);
     }
 }
