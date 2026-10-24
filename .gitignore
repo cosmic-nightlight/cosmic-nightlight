@@ -28,3 +28,7 @@ arch/src/
 arch/pkg/
 arch/*.tar.gz
 arch/*.pkg.tar.*
+
+# nix build
+/result
+/result-*

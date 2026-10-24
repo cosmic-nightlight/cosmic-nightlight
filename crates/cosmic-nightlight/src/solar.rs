@@ -25,9 +25,13 @@ use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike};
 /// `zone.tab` is the backward-compatible one that still carries the older names
 /// (`US/Central` and friends), which is what a long-lived install can be set to.
 /// Reading both means either name resolves.
-const ZONE_TABLES: [&str; 2] = [
+///
+/// NixOS has no `/usr/share`, and keeps the database at `/etc/zoneinfo` instead.
+const ZONE_TABLES: [&str; 4] = [
     "/usr/share/zoneinfo/zone1970.tab",
     "/usr/share/zoneinfo/zone.tab",
+    "/etc/zoneinfo/zone1970.tab",
+    "/etc/zoneinfo/zone.tab",
 ];
 
 /// The zenith angle of the sun's center at the moment we call it sunrise.

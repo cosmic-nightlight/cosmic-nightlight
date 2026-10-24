@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Build Nix package
+
+# Runs when something the Nix build depends on changes, and on tags. A change
+# to Cargo.lock matters most: the flake fetches the git dependencies by the
+# revisions written there. Run it by hand from the Actions tab to test anything
+# else.
+#
+# Nothing is attached to the Release. NixOS users build from the flake, so this
+# only proves the package builds and the NixOS module works.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/*/Cargo.toml'
+      - '.github/workflows/build-nix.yml'
+  pull_request:
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/*/Cargo.toml'
+      - '.github/workflows/build-nix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-nix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The module test boots a VM, which is slow without KVM. The runner has it,
+      # but only root can open it until this rule says otherwise.
+      - name: Let the build use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Build the package
+        run: nix build -L .#default
+
+      # Also builds the package, which the step above has already done, and
+      # runs the VM test in nix/test.nix.
+      - name: Check the flake and the NixOS module
+        run: nix flake check -L

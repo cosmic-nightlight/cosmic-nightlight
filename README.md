@@ -64,6 +64,28 @@ It exists because COSMIC doesn't support the usual night light tools
    cd cosmic-nightlight/arch
    makepkg -si
    ```
+
+   On NixOS, add the flake to your system configuration instead:
+
+   ```nix
+   {
+     inputs.cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight";
+
+     outputs = { nixpkgs, cosmic-nightlight, ... }: {
+       nixosConfigurations.your-hostname = nixpkgs.lib.nixosSystem {
+         modules = [
+           cosmic-nightlight.nixosModules.default
+           { programs.cosmic-nightlight.enable = true; }
+           # ...the rest of your configuration
+         ];
+       };
+     };
+   }
+   ```
+
+   Then run `sudo nixos-rebuild switch`. Use the module rather than only
+   adding the package: the module is what lets Night Light change the screen
+   without asking for your password. The flatpak doesn't work on NixOS.
 3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**)
    **→ Configure applets → Add applet → Night Light**.
 
@@ -133,7 +155,7 @@ You'll need a Rust toolchain and `libdrm-dev`:
 ./scripts/uninstall.sh         # remove it all again
 ```
 
-To build the `.deb`, `.rpm` or Arch package, see [PACKAGING.md](PACKAGING.md). For packagers:
+To build the `.deb`, `.rpm`, Arch or Nix package, see [PACKAGING.md](PACKAGING.md). For packagers:
 [docs/flatpak-design.md](docs/flatpak-design.md) explains the flatpak setup, and
 [docs/cosmic-store.md](docs/cosmic-store.md) covers the COSMIC Store listing.
 

@@ -852,7 +852,30 @@ fn helper_path() -> String {
             return candidate.to_string();
         }
     }
+    if let Some(beside) = libexec_helper_path().filter(|path| path.exists()) {
+        return beside.to_string_lossy().into_owned();
+    }
     HELPER_CANDIDATES[0].to_string()
+}
+
+/// The helper in the `libexec` directory beside our own `bin`, for a package
+/// that installs to a prefix of its own instead of `/usr`.
+///
+/// This is the Nix package: NixOS has no `/usr/bin`, and the helper lives in the
+/// same store path as we do. Its NixOS module writes a polkit rule naming that
+/// exact path, so it runs without a password like the fixed paths do. It comes
+/// after them so a development build run from `target/` still uses an installed
+/// helper rather than its own copy, which no rule names.
+fn libexec_helper_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    libexec_helper_beside(&exe)
+}
+
+/// The path [`libexec_helper_path`] looks at for a given binary. Split out so it
+/// can be tested without depending on where the test binary lives.
+fn libexec_helper_beside(exe: &std::path::Path) -> Option<PathBuf> {
+    let prefix = exe.parent()?.parent()?;
+    Some(prefix.join("libexec").join("cosmic-nightlight-helper"))
 }
 
 /// The graphical-session VT, as the `--session-vt` argument to the helper, or
@@ -3129,5 +3152,18 @@ mod tests {
 
         assert_eq!(state, Some(2700));
         assert_eq!(brightness, 0.5);
+    }
+
+    /// A Nix store path keeps the helper in `libexec` beside the app's `bin`.
+    #[test]
+    fn the_libexec_helper_sits_beside_our_own_bin() {
+        assert_eq!(
+            libexec_helper_beside(std::path::Path::new(
+                "/nix/store/abc-cosmic-nightlight-0.6.0/bin/.cosmic-nightlight-wrapped"
+            )),
+            Some(PathBuf::from(
+                "/nix/store/abc-cosmic-nightlight-0.6.0/libexec/cosmic-nightlight-helper"
+            ))
+        );
     }
 }
