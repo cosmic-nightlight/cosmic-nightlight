@@ -94,8 +94,8 @@ It exists because COSMIC doesn't support the usual night light tools
    sudo nixos-rebuild switch
    ```
 
-   **2. Create the flake file.** Skip this if you already have
-   `/etc/nixos/flake.nix`, and see the note below instead.
+   **2. Create the flake file.** If you already have `/etc/nixos/flake.nix`,
+   skip to **Already have a flake?** below.
 
    Check which NixOS version you're on:
 
