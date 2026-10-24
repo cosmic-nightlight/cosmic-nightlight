@@ -2,8 +2,8 @@
 # Packaging cosmic-nightlight
 
 This covers the `.deb`, which most of this file is about, the `.rpm` for
-Fedora (see [RPM (Fedora)](#rpm-fedora)) and the Arch Linux package (see
-[Arch Linux](#arch-linux)).
+Fedora (see [RPM (Fedora)](#rpm-fedora)), the Arch Linux package (see
+[Arch Linux](#arch-linux)) and the Nix flake (see [NixOS](#nixos)).
 
 This tool needs root (DRM master + VT switching), so its natural distribution
 channel is a **native `.deb`**. A `.deb` shows up in the COSMIC Store as the
@@ -144,6 +144,41 @@ package, which would want a real checksum there.
 
 The PKGBUILD's `pkgver=` is one of the places the version is written, so bump it
 with the others; `scripts/check-version.sh` checks it.
+
+## NixOS
+
+[`flake.nix`](flake.nix) builds the package from
+[`nix/package.nix`](nix/package.nix) and exports a NixOS module,
+[`nix/module.nix`](nix/module.nix). The README shows how users add it.
+
+The package installs the same files as the `.deb`, with one difference: the
+helper goes in `libexec/`, not `bin/`. It runs as root, so it stays off `PATH`
+and is not wrapped like the app is. The app finds it by looking in `../libexec`
+beside its own binary.
+
+The module is needed as well as the package. The shipped polkit rule names
+`/usr/bin`, and on NixOS the helper is in the Nix store, so the module writes a
+rule that names the helper's store path. Without it, every change asks for a
+password. It also turns on `security.polkit.enablePkexecWrapper` where that
+option exists: newer NixOS leaves out the setuid `pkexec` unless asked, and the
+app can't reach the helper without it. The flatpak can't help here either: its host setup writes to
+`/etc/polkit-1/rules.d`, which NixOS doesn't let anything write to.
+
+The version comes from `Cargo.toml`, so there is nothing to bump. The git
+dependencies are fetched by the revisions in `Cargo.lock`, so there are no
+hashes to update either. `flake.lock` pins nixpkgs; run `nix flake update` now
+and then to move it forward.
+
+To build it on any system with Nix:
+
+```sh
+nix build            # the package, in ./result
+nix flake check -L   # also boots a VM to test the module's polkit rule
+```
+
+[`.github/workflows/build-nix.yml`](.github/workflows/build-nix.yml) runs both
+when the flake, `nix/` or the Cargo files change, and on every `v*` tag. Nothing
+is attached to the Release.
 
 ## Getting it into the COSMIC Store
 
