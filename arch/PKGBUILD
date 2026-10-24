@@ -17,7 +17,7 @@
 # scripts/check-version.sh checks all of them at once.
 
 pkgname=cosmic-nightlight
-pkgver=0.5.1
+pkgver=0.6.0
 pkgrel=1
 pkgdesc='Night light and screen tint for the COSMIC desktop'
 arch=('x86_64')

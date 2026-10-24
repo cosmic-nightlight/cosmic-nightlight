@@ -14,8 +14,21 @@ cosmic-nightlight (0.6.0-1) UNRELEASED; urgency=medium
     yourself still ask as before.
   * Depend on pkexec, without which Night Light could install on some
     Debian and Ubuntu systems and then fail to change the screen.
+  * Fix Night Light sometimes ignoring a change after switching to the
+    Flatpak, when the old applet was still on the panel.
+  * Keep Bluetooth headphones connected when Night Light changes.
+  * Turning Night Light off now fully restores the screen's colors.
+  * A newly plugged in or newly woken monitor now gets the tint within a
+    minute.
+  * Fix the Flatpak asking for a password on every change when an older
+    .deb was still installed.
+  * Fix a schedule picked during the Flatpak's setup being lost if another
+    setting changed while the password prompt was open.
+  * Uninstalling the Flatpak now removes the helper it installed.
+  * Add a keyboard shortcut to turn Night Light on and off.
+  * Add packages for Fedora and Arch Linux.
 
- -- Daniel Watts <danielcwtts@gmail.com>  Mon, 19 Oct 2026 20:52:27 -0500
+ -- Daniel Watts <danielcwtts@gmail.com>  Fri, 23 Oct 2026 15:00:00 -0500
 
 cosmic-nightlight (0.5.1-1) noble; urgency=medium
 
