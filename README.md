@@ -73,7 +73,7 @@ It exists because COSMIC doesn't support the usual night light tools
    [Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly),
    which can have bugs. The flatpak doesn't work on NixOS.
 
-   **1. Turn on flakes.** Skip this if you already use flakes.
+   **1. Turn on flakes.** If you already use flakes, skip to step 2.
 
    Open your system configuration:
 
