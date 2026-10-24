@@ -18,6 +18,18 @@ jobs:
       contents: write   # required so tag builds can publish a Release
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Between releases the tree already carries the next version, so without
+      # this a build of main would share its version with the coming release
+      # and block that release from installing over it. Needs the tags, hence
+      # the full checkout above. See scripts/stamp-dev-version.sh.
+      - name: Give a development build its own version
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          scripts/stamp-dev-version.sh
 
       # libcosmic / iced need a newer Rust than the Ubuntu archive ships, so we
       # build with the rustup stable toolchain rather than apt's cargo/rustc.

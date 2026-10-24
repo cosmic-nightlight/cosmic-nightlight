@@ -51,6 +51,24 @@
   </screenshots>
 
   <releases>
+    <release version="0.6.0" date="2026-10-23">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.6.0</url>
+      <description>
+        <p>
+          Fixes several screen bugs, keeps Bluetooth headphones connected, and adds a keyboard shortcut.
+        </p>
+        <ul>
+          <li>A scheduled change no longer wakes a screen that has gone to sleep</li>
+          <li>Turning Night Light off fully restores your screen's colors</li>
+          <li>A newly plugged in monitor gets the tint within a minute</li>
+          <li>Bluetooth headphones no longer disconnect when the tint changes</li>
+          <li>Accounts that aren't administrators no longer get password prompts at sunset</li>
+          <li>Add to Panel puts the applet on your panel in one click</li>
+          <li>Super+Shift+N turns Night Light on and off, once you add the shortcut in Settings</li>
+          <li>Uninstalling the flatpak removes the helper it put on your system</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-09-12">
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.5.1</url>
       <description>

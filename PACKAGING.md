@@ -60,6 +60,16 @@ sudo apt install ../cosmic-nightlight_0.1.0-1_amd64.deb
 The runner has network, so cargo fetches the libcosmic git dependency directly —
 no vendoring is needed (that's only for the offline path below).
 
+### Development builds
+
+Every build that isn't from a `v*` tag runs
+[`scripts/stamp-dev-version.sh`](scripts/stamp-dev-version.sh) first. It
+versions the packages after the last release, like `0.5.1+git23.g426b052-1`, so
+they sort after that release and before the next one. Without it a build of
+`main` would carry the coming release's own version, and installing the real
+release over it would do nothing. The Nightly release on GitHub is made from
+these builds.
+
 ### Cutting a release
 
 The `.deb` version comes from `debian/changelog`, not the git tag, so bump it

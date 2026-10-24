@@ -35,6 +35,18 @@ jobs:
             fontconfig-devel expat-devel systemd-rpm-macros
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Between releases the tree already carries the next version, so without
+      # this a build of main would share its version with the coming release
+      # and block that release from installing over it. Needs the tags, hence
+      # the full checkout above. See scripts/stamp-dev-version.sh.
+      - name: Give a development build its own version
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          scripts/stamp-dev-version.sh
 
       # The version is written in four places, so check they agree before a
       # release builds anything with them. Only on a tag: between releases the
