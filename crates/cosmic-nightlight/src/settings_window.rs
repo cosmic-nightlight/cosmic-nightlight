@@ -52,13 +52,8 @@ fn meridiem_labels() -> Vec<String> {
 /// than two characters.
 const TIME_PART_WIDTH: f32 = 60.0;
 
-/// Floor for the brightness slider.
-///
-/// The helper accepts anything down to `0.0`, but that is a black screen, and
-/// because this dims by crushing the gamma ramp rather than by driving the
-/// backlight there is no obvious way back from one. So the slider stops well
-/// short of it; the full range stays available on the helper's command line.
-const MIN_BRIGHTNESS: f32 = 0.5;
+/// Floor for the brightness slider. See [`config::MIN_BRIGHTNESS`].
+const MIN_BRIGHTNESS: f32 = config::MIN_BRIGHTNESS as f32;
 
 /// Shared by both sliders so their tracks line up down the column, and so the
 /// temperature slider's end captions can be laid out against the same width.

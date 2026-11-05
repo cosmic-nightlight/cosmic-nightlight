@@ -182,7 +182,11 @@ impl Settings {
             settings.temperature = v;
         }
         if let Ok(v) = config.get::<f64>(KEY_BRIGHTNESS) {
-            settings.brightness = v;
+            // Held to the slider's range, so a hand-edited or damaged value
+            // cannot black out the screen. NaN keeps the default.
+            if v.is_finite() {
+                settings.brightness = v.clamp(MIN_BRIGHTNESS, 1.0);
+            }
         }
         if let Ok(v) = config.get::<String>(KEY_SCHEDULE) {
             settings.schedule = Schedule::from_key(&v);
@@ -751,6 +755,15 @@ pub fn flicker_note() -> String {
     fl!("flicker-note")
 }
 
+/// The lowest brightness the app will use.
+///
+/// The helper accepts anything down to `0.0`, but that is a black screen, and
+/// because this dims by crushing the gamma ramp rather than by driving the
+/// backlight there is no obvious way back from one. So the slider stops well
+/// short of it, and a stored value below it is raised to it on load; the full
+/// range stays available on the helper's command line.
+pub const MIN_BRIGHTNESS: f64 = 0.5;
+
 /// The ends of the temperature range, in Kelvin. [`MIN_KELVIN`] is a deep amber
 /// and [`MAX_KELVIN`] is near enough untinted.
 pub const MIN_KELVIN: f32 = 2500.0;
@@ -1107,6 +1120,26 @@ mod tests {
         store_temperature(&handler, 3500);
         assert_ne!(inode(), first, "a changed value must still be written");
         assert_eq!(Settings::load_from(&handler).temperature, 3500);
+
+        let _ = std::fs::remove_dir_all(keys);
+    }
+
+    /// A stored brightness below the slider's floor would black out the screen,
+    /// so loading raises it to the floor. NaN, which clamping would keep as NaN,
+    /// falls back to the default instead.
+    #[test]
+    fn a_stored_brightness_is_held_to_the_slider_range() {
+        let (keys, handler) = scratch_store("brightness");
+        let loaded = |raw: &str| {
+            std::fs::write(keys.join(KEY_BRIGHTNESS), raw).unwrap();
+            Settings::load_from(&handler).brightness
+        };
+
+        assert_eq!(loaded("0.0"), MIN_BRIGHTNESS);
+        assert_eq!(loaded("-3.0"), MIN_BRIGHTNESS);
+        assert_eq!(loaded("2.0"), 1.0);
+        assert_eq!(loaded("0.75"), 0.75);
+        assert_eq!(loaded("NaN"), Settings::default().brightness);
 
         let _ = std::fs::remove_dir_all(keys);
     }

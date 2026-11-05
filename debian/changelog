@@ -24,6 +24,8 @@ cosmic-nightlight (0.6.0-1) UNRELEASED; urgency=medium
     .deb was still installed.
   * Fix a schedule picked during the Flatpak's setup being lost if another
     setting changed while the password prompt was open.
+  * Fix the screen going completely black when the brightness in the
+    settings file was set below 50% by hand.
   * Uninstalling the Flatpak now removes the helper it installed.
   * Add a keyboard shortcut to turn Night Light on and off.
   * Add packages for Fedora and Arch Linux.
