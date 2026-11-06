@@ -80,14 +80,7 @@ and run:
 sudo pacman -U ./cosmic-nightlight-*.pkg.tar.zst
 ```
 
-The Nightly build can have bugs. For the latest release instead, build the
-package yourself, since it isn't on the Releases page:
-
-```sh
-git clone https://github.com/cosmic-nightlight/cosmic-nightlight
-cd cosmic-nightlight/arch
-makepkg -si
-```
+The Arch package is new, so for now it's only on the Nightly build.
 
 </details>
 
