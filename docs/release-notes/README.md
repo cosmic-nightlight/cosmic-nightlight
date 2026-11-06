@@ -27,6 +27,9 @@ who works on it.
 
 Aim for about 250 words, not counting the Install section.
 
+Keep the Install section to the Pop!_OS steps, which most people use, and
+one line pointing everyone else to the README.
+
 ## Template
 
 ```markdown
@@ -50,10 +53,10 @@ One sentence on what this release is about.
    (or run `sudo apt install ./cosmic-nightlight_X.Y.Z-1_amd64.deb`).
 3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**) **→ Configure applets → Add applet → Night Light**.
 
-**Flatpak (optional):** download **`cosmic-nightlight-X.Y.Z.flatpak`** and run `flatpak install --user ./cosmic-nightlight-X.Y.Z.flatpak`. It asks for your password once, the first time you turn it on. The `.deb` is still the recommended install until the app is in the COSMIC Store.
+**On Fedora, Arch Linux or NixOS, or want the Flatpak?** See the [install steps in the README](https://github.com/cosmic-nightlight/cosmic-nightlight/blob/vX.Y.Z/README.md#install).
 ```
 
-See [v0.5.1.md](v0.5.1.md) for a finished example.
+See [v0.6.0.md](v0.6.0.md) for a finished example.
 
 The same rules apply to the README, `debian/changelog`, and the release
 descriptions in the AppStream metadata.
