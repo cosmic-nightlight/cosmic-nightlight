@@ -5,16 +5,16 @@ name: Build Arch package
 # every push and pull request that the tree still packages. Run it by hand from
 # the Actions tab to test a change to the PKGBUILD or to this file.
 #
-# The package is not attached to the Release, to keep the Assets list short.
-# Arch users build it themselves with makepkg, and the build here only proves the
-# PKGBUILD still works; its output is kept as a workflow artifact.
+# On a tag the package is attached to the Release, next to the .deb and .rpm,
+# so Arch users can install it with `pacman -U` rather than build it.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # To attach the package to the Release.
+  contents: write
 
 jobs:
   build-arch:
@@ -83,3 +83,18 @@ jobs:
           path: dist/*.pkg.tar.zst
           if-no-files-found: error
 
+      - name: Attach the package to the Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # The .deb workflow creates the Release with its title and notes, so
+          # wait for it rather than race it, as the .rpm and flatpak workflows
+          # do. Only the asset is uploaded, leaving the notes alone.
+          for _ in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            echo "waiting for the Release to be created..."
+            sleep 20
+          done
+          gh release upload "$GITHUB_REF_NAME" dist/*.pkg.tar.zst --clobber

@@ -57,40 +57,35 @@ On another system, open yours below:
 <details>
 <summary><b>Fedora</b></summary>
 
-You'll need Fedora 44 or newer. Download **`cosmic-nightlight-*.rpm`** from the
-[Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly)
-and run:
+You'll need Fedora 44 or newer. Download the latest **`cosmic-nightlight-*.rpm`**
+from the [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+page and run:
 
 ```sh
 sudo dnf install ./cosmic-nightlight-*.rpm
 ```
-
-The `.rpm` is new, so until the next release it's only on the Nightly build.
 
 </details>
 
 <details>
 <summary><b>Arch Linux</b></summary>
 
-Download **`cosmic-nightlight-*.pkg.tar.zst`** from the
-[Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly)
-and run:
+Download the latest **`cosmic-nightlight-*.pkg.tar.zst`** from the
+[**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+page and run:
 
 ```sh
 sudo pacman -U ./cosmic-nightlight-*.pkg.tar.zst
 ```
-
-The Arch package is new, so for now it's only on the Nightly build.
 
 </details>
 
 <details>
 <summary><b>NixOS</b></summary>
 
-NixOS support is new and **experimental**. It isn't in a release yet, so
-these steps install the
+NixOS support is new and **experimental**. These steps install the
 [Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly),
-which can have bugs. The flatpak doesn't work on NixOS.
+which gets fixes first but can have bugs. The flatpak doesn't work on NixOS.
 
 **1. Turn on flakes.** If you already use flakes, skip to step 2.
 

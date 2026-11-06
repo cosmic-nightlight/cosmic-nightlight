@@ -1,4 +1,4 @@
-cosmic-nightlight (0.6.0-1) UNRELEASED; urgency=medium
+cosmic-nightlight (0.6.0-1) noble; urgency=medium
 
   * Fix the screen staying on after it went to sleep, when a scheduled change
     came while it was asleep. The change now waits until the display is back
@@ -30,7 +30,7 @@ cosmic-nightlight (0.6.0-1) UNRELEASED; urgency=medium
   * Add a keyboard shortcut to turn Night Light on and off.
   * Add packages for Fedora and Arch Linux.
 
- -- Daniel Watts <danielcwtts@gmail.com>  Fri, 23 Oct 2026 15:00:00 -0500
+ -- Daniel Watts <danielcwtts@gmail.com>  Fri, 06 Nov 2026 12:00:00 -0600
 
 cosmic-nightlight (0.5.1-1) noble; urgency=medium
 
