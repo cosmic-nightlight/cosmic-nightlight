@@ -83,9 +83,9 @@ sudo pacman -U ./cosmic-nightlight-*.pkg.tar.zst
 <details>
 <summary><b>NixOS</b></summary>
 
-NixOS support is new and **experimental**. These steps install the
-[Nightly build](https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/nightly),
-which gets fixes first but can have bugs. The flatpak doesn't work on NixOS.
+NixOS support is new in 0.6.0. If something doesn't work, please
+[open an issue](https://github.com/cosmic-nightlight/cosmic-nightlight/issues).
+The flatpak doesn't work on NixOS.
 
 **1. Turn on flakes.** If you already use flakes, skip to step 2.
 
@@ -130,7 +130,7 @@ Paste all of this in, and change `25.11` to your version:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/nightly";
+    cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.0";
   };
 
   outputs = { nixpkgs, cosmic-nightlight, ... }: {
@@ -153,14 +153,22 @@ Save and close as before.
 sudo nixos-rebuild switch --flake /etc/nixos#nixos
 ```
 
-Use this command from now on whenever you rebuild your system. To get the
-latest Nightly build later, run `sudo nix flake update --flake /etc/nixos`
-and then the command above.
+Use this command from now on whenever you rebuild your system.
+
+**Updating to a new release:** in `/etc/nixos/flake.nix`, change `v0.6.0` in
+the `cosmic-nightlight.url` line to the new version, then run
+`sudo nix flake update cosmic-nightlight --flake /etc/nixos` and the rebuild
+command above.
+
+**Trying the Nightly build:** use `nightly` in place of `v0.6.0` in that line.
+It gets fixes first but can have bugs. Running
+`sudo nix flake update cosmic-nightlight --flake /etc/nixos` and rebuilding
+then brings you the newest one.
 
 **Already have a flake?** Add this line inside `inputs`:
 
 ```nix
-cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/nightly";
+cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.0";
 ```
 
 Add `cosmic-nightlight` to the list after `outputs = {`, and add these two
