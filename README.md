@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
-# Night Light for COSMIC
+# Night Light for COSMIC™
 
-**Night Light** is an applet for the **COSMIC** desktop (Pop!_OS) that warms
+**Night Light** is an applet for the **COSMIC™** desktop (Pop!_OS) that warms
 your screen's colors to cut blue light at night. It sits on your **panel or
 dock**: click it to turn it on or off and set the warmth. In **Settings** you can
 have it follow the real sunset and sunrise, or set your own schedule, and adjust
@@ -10,6 +10,8 @@ the desktop.
 
 It exists because COSMIC doesn't support the usual night light tools
 (`redshift`, `gammastep`, `wlsunset`) yet. See [How it works](#how-it-works).
+
+This is an unofficial community project. It isn't made or endorsed by System76.
 
 ## Contents
 
@@ -130,7 +132,7 @@ Paste all of this in, and change `25.11` to your version:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.0";
+    cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.1";
   };
 
   outputs = { nixpkgs, cosmic-nightlight, ... }: {
@@ -155,12 +157,12 @@ sudo nixos-rebuild switch --flake /etc/nixos#nixos
 
 Use this command from now on whenever you rebuild your system.
 
-**Updating to a new release:** in `/etc/nixos/flake.nix`, change `v0.6.0` in
+**Updating to a new release:** in `/etc/nixos/flake.nix`, change `v0.6.1` in
 the `cosmic-nightlight.url` line to the new version, then run
 `sudo nix flake update cosmic-nightlight --flake /etc/nixos` and the rebuild
 command above.
 
-**Trying the Nightly build:** use `nightly` in place of `v0.6.0` in that line.
+**Trying the Nightly build:** use `nightly` in place of `v0.6.1` in that line.
 It gets fixes first but can have bugs. Running
 `sudo nix flake update cosmic-nightlight --flake /etc/nixos` and rebuilding
 then brings you the newest one.
@@ -168,7 +170,7 @@ then brings you the newest one.
 **Already have a flake?** Add this line inside `inputs`:
 
 ```nix
-cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.0";
+cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.1";
 ```
 
 Add `cosmic-nightlight` to the list after `outputs = {`, and add these two

@@ -21,7 +21,7 @@
 %global debug_package %{nil}
 
 Name:           cosmic-nightlight
-Version:        0.6.0
+Version:        0.6.1
 Release:        1%{?dist}
 Summary:        Night light and screen tint for the COSMIC desktop
 
@@ -108,6 +108,9 @@ install -D -m0644 debian/cosmic-nightlight.user.service \
 %{_userunitdir}/cosmic-nightlight.service
 
 %changelog
+* Mon Nov 09 2026 Daniel Watts <danielcwtts@gmail.com> - 0.6.1-1
+- Update to 0.6.1.
+
 * Fri Oct 23 2026 Daniel Watts <danielcwtts@gmail.com> - 0.6.0-1
 - Update to 0.6.0.
 

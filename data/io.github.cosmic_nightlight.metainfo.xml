@@ -13,15 +13,18 @@
 
        Release descriptions are deliberately left untranslated: they are a
        historical record that would need retranslating every release. -->
-  <name>Night Light for COSMIC</name>
+  <name>Night Light for COSMIC™</name>
   <summary>Warm screen color temperature to reduce eye strain on a schedule</summary>
 
   <description>
     <p>
-      Night Light is a native panel applet and settings application for the COSMIC desktop environment (Pop!_OS) that warms your screen color temperature to cut blue light.
+      Night Light warms your screen's colors at night to cut blue light. It's an applet for the COSMIC™ desktop (Pop!_OS) that sits on your panel or dock.
     </p>
     <p>
-      Built entirely with native libcosmic widgets, it seamlessly integrates with your COSMIC panel or dock.
+      Most night light apps don't work on COSMIC yet. This one does, using a workaround until COSMIC adds support of its own.
+    </p>
+    <p>
+      This is an unofficial community project. It isn't made or endorsed by System76.
     </p>
     <ul>
       <li>Quick toggle and temperature slider directly from the panel popup</li>
@@ -51,6 +54,14 @@
   </screenshots>
 
   <releases>
+    <release version="0.6.1" date="2026-11-09">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.6.1</url>
+      <description>
+        <p>
+          The store page now says Night Light is an unofficial app, and that it works on COSMIC where most night light apps don't yet.
+        </p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-11-06">
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.6.0</url>
       <description>

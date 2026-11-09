@@ -1,3 +1,10 @@
+cosmic-nightlight (0.6.1-1) noble; urgency=medium
+
+  * The COSMIC Store page now says Night Light is an unofficial app, and
+    that it works on COSMIC where most night light apps don't yet.
+
+ -- Daniel Watts <danielcwtts@gmail.com>  Mon, 09 Nov 2026 12:00:00 -0600
+
 cosmic-nightlight (0.6.0-1) noble; urgency=medium
 
   * Fix the screen staying on after it went to sleep, when a scheduled change
