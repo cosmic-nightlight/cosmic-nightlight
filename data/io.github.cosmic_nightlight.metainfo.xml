@@ -63,6 +63,7 @@
         <ul>
           <li>Changes fade in over a second instead of jumping</li>
           <li>The screen follows the warmth and brightness sliders as you drag them</li>
+          <li>The warmth and brightness sliders go further, for a warmer and dimmer screen</li>
         </ul>
       </description>
     </release>
