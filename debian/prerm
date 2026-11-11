@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
+set -e
+
+# Only when the package is going away for good. An upgrade also runs this, with
+# "upgrade", and the tint should stay up across one.
+if [ "$1" = "remove" ]; then
+    # Put the screen's colors back while the helper is still here to do it.
+    # Nothing else can once it is gone, and the tint would stay until the next
+    # restart. The helper does nothing if the screen is already clear, and a
+    # failure (no display, a container, a chroot) must not block the removal.
+    /usr/bin/cosmic-nightlight-helper --off >/dev/null 2>&1 || true
+fi
+
+#DEBHELPER#
+
+exit 0

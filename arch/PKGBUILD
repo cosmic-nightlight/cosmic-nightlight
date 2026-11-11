@@ -38,6 +38,8 @@ makedepends=('cargo' 'git')
 # makepkg's LTO flags are meant for C and break the C parts some crates build.
 # No separate debug package, matching the .rpm.
 options=('!lto' '!debug')
+# Clears the tint when the package is removed.
+install=cosmic-nightlight.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 # The CI build swaps in an archive of the checkout under the same name, which
 # no fixed checksum could match.

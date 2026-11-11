@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    # Each session's note of what it last put on the screen. The prerm cleared
+    # the tint, so the note is now wrong, and a reinstall in the same session
+    # would read it and leave the screen clear when it should be tinted.
+    rm -f /run/user/*/cosmic-nightlight-shown
+fi
+
+#DEBHELPER#
+
+exit 0
