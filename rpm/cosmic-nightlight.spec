@@ -21,7 +21,7 @@
 %global debug_package %{nil}
 
 Name:           cosmic-nightlight
-Version:        0.6.1
+Version:        0.7.0
 Release:        1%{?dist}
 Summary:        Night light and screen tint for the COSMIC desktop
 
@@ -94,6 +94,21 @@ install -D -m0644 polkit/49-cosmic-nightlight.rules \
 install -D -m0644 debian/cosmic-nightlight.user.service \
     %{buildroot}%{_userunitdir}/cosmic-nightlight.service
 
+# $1 is how many copies of the package remain: 0 on a removal, 1 on an upgrade.
+%preun
+if [ "$1" -eq 0 ]; then
+    # Put the screen's colors back while the helper is still here to do it. The
+    # helper does nothing if the screen is already clear.
+    %{_bindir}/cosmic-nightlight-helper --off >/dev/null 2>&1 || :
+fi
+
+%postun
+if [ "$1" -eq 0 ]; then
+    # Each session's note of what it last put on the screen is wrong now that
+    # the tint is cleared. A reinstall in the same session would trust it.
+    rm -f /run/user/*/cosmic-nightlight-shown
+fi
+
 %files
 %license LICENSE
 %doc README.md
@@ -108,6 +123,9 @@ install -D -m0644 debian/cosmic-nightlight.user.service \
 %{_userunitdir}/cosmic-nightlight.service
 
 %changelog
+* Wed Nov 11 2026 Daniel Watts <danielcwtts@gmail.com> - 0.7.0-1
+- Update to 0.7.0.
+
 * Mon Nov 09 2026 Daniel Watts <danielcwtts@gmail.com> - 0.6.1-1
 - Update to 0.6.1.
 

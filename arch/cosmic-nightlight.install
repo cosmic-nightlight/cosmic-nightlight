@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MPL-2.0
+
+# Put the screen's colors back while the helper is still here to do it. The
+# helper does nothing if the screen is already clear.
+pre_remove() {
+    /usr/bin/cosmic-nightlight-helper --off >/dev/null 2>&1 || true
+}
+
+# Each session's note of what it last put on the screen is wrong now that the
+# tint is cleared. A reinstall in the same session would otherwise trust it.
+post_remove() {
+    rm -f /run/user/*/cosmic-nightlight-shown
+}

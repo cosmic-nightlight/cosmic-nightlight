@@ -165,6 +165,9 @@ impl cosmic::Application for NightLightApplet {
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
                 self.dragging = true;
+                if self.settings.tint_on() {
+                    backend::preview_in_background(value as u32, self.settings.brightness as f32);
+                }
             }
             Message::TemperatureCommitted => {
                 self.dragging = false;
@@ -376,14 +379,7 @@ impl NightLightApplet {
             temperature_slider,
         );
 
-        // The note is a footnote to the controls above it, not to the slider it
-        // happens to follow — the toggle flickers just as much. Temperature is
-        // the last control, so riding along at the bottom of its column puts the
-        // caption under the group without the padding a row of its own would add.
-        let temperature = cosmic::widget::Column::new()
-            .spacing(2)
-            .push(temperature_row)
-            .push(widget::text::caption(config::flicker_note()));
+        let temperature = temperature_row;
 
         // Match the native COSMIC applets (e.g. the keyboard applet's "Keyboard
         // Settings...") — a flat, full-width `AppletMenu` row that highlights on

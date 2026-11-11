@@ -741,32 +741,24 @@ pub fn format_time(minutes: u32, military: bool) -> String {
     }
 }
 
-/// Speaks for a whole group of controls rather than any one of them: the toggle
-/// and both sliders go through the same apply, so all of them cost a flicker.
-/// It sits under the section heading in the settings window and under the
-/// control group in the applet popup — never as a row's description, which
-/// would claim it applies to that row alone.
-///
-/// Applying a tint briefly switches virtual terminals to take the DRM master
-/// lock (see `backend`), which the user sees as a flicker; saying so up front
-/// keeps it from reading as a fault. "May" is accuracy rather than softening —
-/// how long the bounce lasts depends on the GPU and how fast it modesets.
-pub fn flicker_note() -> String {
-    fl!("flicker-note")
-}
-
 /// The lowest brightness the app will use.
 ///
 /// The helper accepts anything down to `0.0`, but that is a black screen, and
 /// because this dims by crushing the gamma ramp rather than by driving the
 /// backlight there is no obvious way back from one. So the slider stops well
 /// short of it, and a stored value below it is raised to it on load; the full
-/// range stays available on the helper's command line.
-pub const MIN_BRIGHTNESS: f64 = 0.5;
+/// range stays available on the helper's command line. At `0.35` text is still
+/// easy to read on a white page, which is the case where finding the slider
+/// again matters.
+pub const MIN_BRIGHTNESS: f64 = 0.35;
 
-/// The ends of the temperature range, in Kelvin. [`MIN_KELVIN`] is a deep amber
-/// and [`MAX_KELVIN`] is near enough untinted.
-pub const MIN_KELVIN: f32 = 2500.0;
+/// The ends of the temperature range, in Kelvin. [`MIN_KELVIN`] is a deep
+/// orange and [`MAX_KELVIN`] is near enough untinted.
+///
+/// 1900K is where the blackbody fit in `nightlight_core::gamma` takes blue to
+/// zero. Below it only green keeps falling, so the screen turns redder and
+/// harder to read without losing any more blue, which is the point of the tint.
+pub const MIN_KELVIN: f32 = 1900.0;
 pub const MAX_KELVIN: f32 = 6500.0;
 
 /// The temperature slider's own range, which is *warmth* rather than Kelvin —

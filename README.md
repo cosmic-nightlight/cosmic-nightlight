@@ -300,8 +300,6 @@ systemctl --user enable --now cosmic-nightlight.service
 <details>
 <summary>Advanced: run the helper directly</summary>
 
-Each call briefly flickers the screen:
-
 ```sh
 pkexec /usr/bin/cosmic-nightlight-helper --temp 3500            # warm tint
 pkexec /usr/bin/cosmic-nightlight-helper --temp 4000 --brightness 0.9
@@ -321,7 +319,8 @@ welcome. See [docs/translating.md](docs/translating.md).
 
 ## Known limitations
 
-- **The screen flickers briefly** (1–2 seconds) every time the tint changes.
+- **On some systems the screen flickers briefly** (1–2 seconds) when the tint
+  changes. Most systems change without it.
 - **Some events can clear the tint**, like changing resolution, plugging in a
   monitor, or the screen waking up. Resume from suspend is handled
   automatically. For the others, turn it off and on again, or wait for the next
@@ -344,12 +343,14 @@ graphics layer (DRM), the same way `redshift` does outside a desktop. The
 catch is that COSMIC holds an exclusive lock on the display (**DRM master**), so
 other programs can't change it.
 
-The workaround, from [jjo/drm-colortemp]: briefly switch to another virtual
-terminal, which makes COSMIC release the lock. A root helper grabs it, writes
-the colors, and switches back. **The tint stays after switching back.**
+The workaround: a root helper borrows a copy of COSMIC's own handle to the
+display and writes the colors through it. The kernel accepts that as coming
+from COSMIC, and nothing on screen is interrupted.
 
-That switch is what causes the brief flicker. It will go away once COSMIC
-supports a proper color protocol.
+If that doesn't work on your system, the helper falls back to the older way,
+from [jjo/drm-colortemp]: briefly switch to another virtual terminal, which
+makes COSMIC release the lock, write the colors, and switch back. That switch
+shows as a brief flicker.
 
 ## Architecture
 
@@ -358,7 +359,7 @@ GUI:
 
 | Crate | Runs as | Does |
 | --- | --- | --- |
-| [`nightlight-core`](crates/nightlight-core) | library | Color math ([`gamma.rs`](crates/nightlight-core/src/gamma.rs)), DRM writes ([`drm.rs`](crates/nightlight-core/src/drm.rs)), VT switching ([`vt.rs`](crates/nightlight-core/src/vt.rs)) |
+| [`nightlight-core`](crates/nightlight-core) | library | Color math ([`gamma.rs`](crates/nightlight-core/src/gamma.rs)), DRM writes ([`drm.rs`](crates/nightlight-core/src/drm.rs)), the VT switching fallback ([`vt.rs`](crates/nightlight-core/src/vt.rs)) |
 | [`nightlight-helper`](crates/nightlight-helper) | **root** (via `pkexec`) | Small CLI: reads `--temp`/`--brightness` and calls core |
 | [`cosmic-nightlight`](crates/cosmic-nightlight) | your user | The panel applet, `--settings` window and optional `--daemon`; calls the helper |
 
@@ -370,6 +371,13 @@ What happens on a tint change:
 
 ```
 daemon/GUI ──pkexec──▶ cosmic-nightlight-helper (root)
+                          │ 1. Borrow a copy of COSMIC's display handle
+                          └ 2. Write the color curve to each display through it
+```
+
+If a display didn't take the change, the fallback runs:
+
+```
                           │ 1. Switch to a spare VT      (COSMIC releases DRM master)
                           │ 2. Take DRM master and write the color curve to each display
                           │ 3. Release DRM master

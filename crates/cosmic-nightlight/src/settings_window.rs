@@ -362,6 +362,7 @@ impl cosmic::Application for SettingsWindow {
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
                 self.temperature_dragging = true;
+                self.preview_if_tinted();
             }
             Message::TemperatureCommitted => {
                 self.temperature_dragging = false;
@@ -372,6 +373,7 @@ impl cosmic::Application for SettingsWindow {
             Message::BrightnessChanged(value) => {
                 self.brightness = value;
                 self.brightness_dragging = true;
+                self.preview_if_tinted();
             }
             Message::BrightnessCommitted => {
                 self.brightness_dragging = false;
@@ -526,16 +528,7 @@ impl cosmic::Application for SettingsWindow {
         let tint_on = self.settings.tint_on();
 
         let night_light = widget::settings::section()
-            // `title` is just `header` with a heading in it, so building the
-            // header by hand hangs the flicker note off the section instead of
-            // off a row. Every control below it flickers, and the toggle already
-            // spends its description on the schedule status.
-            .header(
-                widget::Column::new()
-                    .spacing(2)
-                    .push(widget::text::heading(fl!("app-name")))
-                    .push(widget::text::caption(config::flicker_note())),
-            )
+            .title(fl!("app-name"))
             .add(
                 widget::settings::item::builder(fl!("app-name"))
                     .description(config::status_text(&self.settings, tint_on))
@@ -941,13 +934,21 @@ impl SettingsWindow {
 
     /// Pushes the current temperature and brightness to the screen, but only if a
     /// tint is up: with the night light off the screen shows a neutral ramp, which
-    /// neither setting affects, so applying would cost a flicker for no change.
+    /// neither setting affects, so there is nothing to apply.
     fn apply_if_tinted(&self) {
         if self.settings.tint_on() {
             backend::apply_in_background(
                 Some(self.settings.temperature),
                 self.settings.brightness as f32,
             );
+        }
+    }
+
+    /// Shows the sliders' live positions on the screen while one is dragged, but
+    /// only if a tint is up, for the same reason as [`Self::apply_if_tinted`].
+    fn preview_if_tinted(&self) {
+        if self.settings.tint_on() {
+            backend::preview_in_background(self.temperature as u32, self.brightness);
         }
     }
 

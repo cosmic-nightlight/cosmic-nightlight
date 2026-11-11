@@ -7,10 +7,17 @@
 //! color temperature. This crate works around that by writing the gamma LUTs
 //! straight to the kernel's DRM/KMS layer.
 //!
-//! Because the running compositor owns the DRM master lock, the write only
-//! succeeds during the brief window after a VT switch, when logind has
-//! revoked the compositor's master. [`apply`] performs that VT bounce around
-//! the gamma write; the values then persist after switching back.
+//! The running compositor owns the DRM master lock, so a write through a
+//! handle of our own is refused. [`apply`] gets around that in one of two ways.
+//!
+//! First it borrows a copy of the compositor's own handle and writes through
+//! that, which the kernel accepts as coming from the master. Nothing on screen
+//! is disturbed. See [`drm::apply_borrowed`].
+//!
+//! If that is not possible, it falls back to a VT bounce: switching to a spare
+//! VT makes logind revoke the compositor's master for a moment, the write goes
+//! in during that window, and the values persist after switching back. The
+//! user sees this as a blink.
 //!
 //! All of this requires root, so the intended entry point is the
 //! `nightlight-helper` binary invoked via `pkexec`.
@@ -41,10 +48,15 @@ pub struct Applied {
 /// treating the whole change as undone.
 pub const EXIT_PARTIAL: u8 = 2;
 
+/// The helper's exit code when it was asked for a live preview (`--live`) and
+/// the change could not be made without a VT bounce, so it made none.
+pub const EXIT_NO_LIVE: u8 = 3;
+
 /// Applies a color temperature (Kelvin) and brightness (`0.0..=1.0`) to all
 /// active displays.
 ///
-/// Performs the VT bounce internally, so the caller must be running as root.
+/// Borrows the compositor's display handle, or failing that performs the VT
+/// bounce, so the caller must be running as root.
 /// Passing [`NEUTRAL_KELVIN`] with full brightness resets displays to an
 /// identity ramp (i.e. turns the tint off).
 ///
@@ -56,6 +68,35 @@ pub const EXIT_PARTIAL: u8 = 2;
 /// `session_vt` is the caller's graphical-session VT (`XDG_VTNR`); see
 /// [`vt::with_master_window`] for how it guards and restores the VT bounce.
 pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Result<Applied> {
+    apply_with(kelvin, brightness, session_vt, Options::default())
+}
+
+/// How [`apply_with`] should make the change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// How long to take moving the screen to the new colors. Only honored when
+    /// the change can be made without a VT bounce; a bounce blinks the screen
+    /// anyway, so there is nothing to fade.
+    pub fade: Duration,
+    /// Make the change only if it needs no VT bounce, and otherwise fail with
+    /// [`io::ErrorKind::Unsupported`] and leave the screen alone. For previews
+    /// while a slider is being dragged, where a blink per step would be worse
+    /// than no preview.
+    pub live: bool,
+}
+
+/// The longest fade [`apply_with`] will run, whatever it is asked for. The
+/// machine-wide lock is held throughout, so this bounds how long one caller
+/// can keep the others waiting.
+pub const MAX_FADE: Duration = Duration::from_secs(10);
+
+/// [`apply`], with a say in how the change is made. See [`Options`].
+pub fn apply_with(
+    kelvin: u32,
+    brightness: f64,
+    session_vt: Option<i32>,
+    options: Options,
+) -> io::Result<Applied> {
     let kelvin = kelvin.clamp(MIN_KELVIN, MAX_KELVIN);
     // Before the read as well as the write: a read taken while another
     // helper's bounce is under way can see a half-written screen.
@@ -70,6 +111,28 @@ pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Resul
             crtcs,
             failed_cards: 0,
         });
+    }
+    // First try writing through the compositor's own display handle, which
+    // needs no VT bounce and so no blink. Only when the caller's session is the
+    // foreground one: otherwise the handle that works belongs to whoever is on
+    // screen now, and this would tint another user's session.
+    let ours_on_screen = session_vt.is_none_or(|vt| vt::foreground() == Some(vt));
+    let fade = options.fade.min(MAX_FADE);
+    if ours_on_screen && drm::apply_borrowed(kelvin, brightness, fade) > 0 {
+        // Trust the screen, not the count: a display the borrowed handle could
+        // not reach still needs the bounce below.
+        if let drm::Showing::All(crtcs) = drm::showing(kelvin, brightness) {
+            return Ok(Applied {
+                crtcs,
+                failed_cards: 0,
+            });
+        }
+    }
+    if options.live {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this change needs a VT bounce, which a live preview must not cause",
+        ));
     }
     let written = vt::with_master_window(session_vt, || drm::apply_all(kelvin, brightness))??;
     Ok(Applied {
@@ -183,7 +246,17 @@ pub fn is_root() -> bool {
 ///
 /// Contract 2 leaves it as it was. It exists so that hosts set up by 0.5.x or
 /// earlier pick up the helper-side fixes in 0.6.0.
-pub const HELPER_CONTRACT: u32 = 2;
+///
+/// Contract 3 left it as it was too. It existed so that hosts set up by 0.6.x
+/// or earlier got the helper that changes the screen without a VT bounce. It
+/// only ever reached Nightly builds.
+///
+/// Contract 4 adds two arguments the GUI relies on:
+///
+/// ```text
+/// --fade-ms <milliseconds>   --live
+/// ```
+pub const HELPER_CONTRACT: u32 = 4;
 
 /// The line `cosmic-nightlight-helper --version` prints.
 ///

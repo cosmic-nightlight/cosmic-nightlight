@@ -17,7 +17,7 @@
 # scripts/check-version.sh checks all of them at once.
 
 pkgname=cosmic-nightlight
-pkgver=0.6.1
+pkgver=0.7.0
 pkgrel=1
 pkgdesc='Night light and screen tint for the COSMIC desktop'
 arch=('x86_64')
@@ -38,6 +38,8 @@ makedepends=('cargo' 'git')
 # makepkg's LTO flags are meant for C and break the C parts some crates build.
 # No separate debug package, matching the .rpm.
 options=('!lto' '!debug')
+# Clears the tint when the package is removed.
+install=cosmic-nightlight.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 # The CI build swaps in an archive of the checkout under the same name, which
 # no fixed checksum could match.
