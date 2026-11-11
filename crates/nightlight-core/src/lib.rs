@@ -48,6 +48,10 @@ pub struct Applied {
 /// treating the whole change as undone.
 pub const EXIT_PARTIAL: u8 = 2;
 
+/// The helper's exit code when it was asked for a live preview (`--live`) and
+/// the change could not be made without a VT bounce, so it made none.
+pub const EXIT_NO_LIVE: u8 = 3;
+
 /// Applies a color temperature (Kelvin) and brightness (`0.0..=1.0`) to all
 /// active displays.
 ///
@@ -64,6 +68,35 @@ pub const EXIT_PARTIAL: u8 = 2;
 /// `session_vt` is the caller's graphical-session VT (`XDG_VTNR`); see
 /// [`vt::with_master_window`] for how it guards and restores the VT bounce.
 pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Result<Applied> {
+    apply_with(kelvin, brightness, session_vt, Options::default())
+}
+
+/// How [`apply_with`] should make the change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// How long to take moving the screen to the new colors. Only honored when
+    /// the change can be made without a VT bounce; a bounce blinks the screen
+    /// anyway, so there is nothing to fade.
+    pub fade: Duration,
+    /// Make the change only if it needs no VT bounce, and otherwise fail with
+    /// [`io::ErrorKind::Unsupported`] and leave the screen alone. For previews
+    /// while a slider is being dragged, where a blink per step would be worse
+    /// than no preview.
+    pub live: bool,
+}
+
+/// The longest fade [`apply_with`] will run, whatever it is asked for. The
+/// machine-wide lock is held throughout, so this bounds how long one caller
+/// can keep the others waiting.
+pub const MAX_FADE: Duration = Duration::from_secs(10);
+
+/// [`apply`], with a say in how the change is made. See [`Options`].
+pub fn apply_with(
+    kelvin: u32,
+    brightness: f64,
+    session_vt: Option<i32>,
+    options: Options,
+) -> io::Result<Applied> {
     let kelvin = kelvin.clamp(MIN_KELVIN, MAX_KELVIN);
     // Before the read as well as the write: a read taken while another
     // helper's bounce is under way can see a half-written screen.
@@ -84,7 +117,8 @@ pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Resul
     // foreground one: otherwise the handle that works belongs to whoever is on
     // screen now, and this would tint another user's session.
     let ours_on_screen = session_vt.is_none_or(|vt| vt::foreground() == Some(vt));
-    if ours_on_screen && drm::apply_borrowed(kelvin, brightness) > 0 {
+    let fade = options.fade.min(MAX_FADE);
+    if ours_on_screen && drm::apply_borrowed(kelvin, brightness, fade) > 0 {
         // Trust the screen, not the count: a display the borrowed handle could
         // not reach still needs the bounce below.
         if let drm::Showing::All(crtcs) = drm::showing(kelvin, brightness) {
@@ -93,6 +127,12 @@ pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Resul
                 failed_cards: 0,
             });
         }
+    }
+    if options.live {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this change needs a VT bounce, which a live preview must not cause",
+        ));
     }
     let written = vt::with_master_window(session_vt, || drm::apply_all(kelvin, brightness))??;
     Ok(Applied {
@@ -207,9 +247,16 @@ pub fn is_root() -> bool {
 /// Contract 2 leaves it as it was. It exists so that hosts set up by 0.5.x or
 /// earlier pick up the helper-side fixes in 0.6.0.
 ///
-/// Contract 3 leaves it as it was too. It exists so that hosts set up by 0.6.x
-/// or earlier get the helper that changes the screen without a VT bounce.
-pub const HELPER_CONTRACT: u32 = 3;
+/// Contract 3 left it as it was too. It existed so that hosts set up by 0.6.x
+/// or earlier got the helper that changes the screen without a VT bounce. It
+/// only ever reached Nightly builds.
+///
+/// Contract 4 adds two arguments the GUI relies on:
+///
+/// ```text
+/// --fade-ms <milliseconds>   --live
+/// ```
+pub const HELPER_CONTRACT: u32 = 4;
 
 /// The line `cosmic-nightlight-helper --version` prints.
 ///

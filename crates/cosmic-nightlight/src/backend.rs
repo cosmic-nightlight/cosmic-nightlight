@@ -986,13 +986,7 @@ fn program_exists(program: &str) -> bool {
 /// readable from in here.
 fn run_helper(args: &[String]) -> Result<(), Failure> {
     let (program, installs) = privileged_program();
-    let mut command = if in_flatpak() {
-        let mut command = Command::new("flatpak-spawn");
-        command.args(["--host", "pkexec"]);
-        command
-    } else {
-        Command::new("pkexec")
-    };
+    let mut command = pkexec_command();
     command.arg(&program).args(args).args(session_vt_args());
 
     match command.status() {
@@ -1051,17 +1045,97 @@ fn run_helper(args: &[String]) -> Result<(), Failure> {
     }
 }
 
-/// Pushes `state` to every display through the helper. Callers must already
-/// hold the apply lock; use [`apply_now`] or [`reconcile`] instead.
-fn apply_unlocked(state: TintState, brightness: f32) -> Result<(), Failure> {
-    match state {
-        Some(kelvin) => run_helper(&[
+/// `pkexec`, reached through `flatpak-spawn --host` when sandboxed.
+fn pkexec_command() -> Command {
+    if in_flatpak() {
+        let mut command = Command::new("flatpak-spawn");
+        command.args(["--host", "pkexec"]);
+        command
+    } else {
+        Command::new("pkexec")
+    }
+}
+
+/// How long a change takes to fade in. Long enough to read as a fade and not a
+/// jump, short enough that a toggle still feels like it answered the click.
+const FADE: Duration = Duration::from_millis(1000);
+
+/// How long each step of a slider drag takes to fade in. The slider moves in
+/// steps, and this is what makes the screen glide between them.
+const PREVIEW_FADE: Duration = Duration::from_millis(120);
+
+/// The helper arguments that put `state` on the screen.
+fn tint_args(state: TintState, brightness: f32, fade: Duration) -> Vec<String> {
+    let mut args = match state {
+        Some(kelvin) => vec![
             "--temp".to_string(),
             kelvin.to_string(),
             "--brightness".to_string(),
             format!("{brightness:.3}"),
-        ]),
-        None => run_helper(&["--off".to_string()]),
+        ],
+        None => vec!["--off".to_string()],
+    };
+    args.extend(["--fade-ms".to_string(), fade.as_millis().to_string()]);
+    args
+}
+
+/// Pushes `state` to every display through the helper. Callers must already
+/// hold the apply lock; use [`apply_now`] or [`reconcile`] instead.
+fn apply_unlocked(state: TintState, brightness: f32) -> Result<(), Failure> {
+    run_helper(&tint_args(state, brightness, FADE))
+}
+
+/// How long to leave previews alone after one did not work.
+///
+/// A preview only runs where the screen can change without a blink. Where it
+/// can't, the helper says so and changes nothing, and asking again on every
+/// step of the drag would spawn it for nothing. Not forever, though: the same
+/// answer comes back for passing reasons too, like the session being in the
+/// background.
+const PREVIEW_PAUSE: Duration = Duration::from_secs(30);
+
+/// When the last preview failed, if one has.
+fn preview_failed_at() -> &'static Mutex<Option<Instant>> {
+    static FAILED: Mutex<Option<Instant>> = Mutex::new(None);
+    &FAILED
+}
+
+/// Shows `kelvin` at `brightness` on the screen without recording it, while a
+/// slider is still being dragged.
+///
+/// It must never cost the user anything: no password prompt, no setup, no
+/// blink. So it only runs when the helper is reachable without a prompt, and it
+/// asks the helper for a live change, which the helper refuses where it would
+/// need a VT bounce. The drag then previews nothing and the change lands on
+/// release, as it always did.
+///
+/// The shared record is left alone on purpose. It keeps describing the stored
+/// setting, so our other processes go on seeing nothing to do while the drag
+/// lasts. The release applies for real and records what ended up on screen.
+fn preview_now(kelvin: u32, brightness: f32) {
+    let paused = preview_failed_at()
+        .lock()
+        .is_ok_and(|failed| failed.is_some_and(|at| at.elapsed() < PREVIEW_PAUSE));
+    if paused || would_prompt() {
+        return;
+    }
+    let (program, installs) = privileged_program();
+    if installs {
+        return;
+    }
+    let mut command = pkexec_command();
+    command
+        .arg(&program)
+        .args(tint_args(Some(kelvin), brightness, PREVIEW_FADE))
+        .arg("--live")
+        .args(session_vt_args())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let shown = with_apply_lock(|| command.status().is_ok_and(|status| status.success()));
+    if !shown {
+        if let Ok(mut failed) = preview_failed_at().lock() {
+            *failed = Some(Instant::now());
+        }
     }
 }
 
@@ -1500,6 +1574,13 @@ pub fn apply_in_background_reporting(state: TintState, brightness: f32, report: 
     queue(Request::force(state, brightness, Some(report)));
 }
 
+/// Queues a preview of `kelvin` at `brightness` for a slider that is still
+/// being dragged. See [`preview_now`]. Follow it with [`apply_in_background`]
+/// when the slider is released.
+pub fn preview_in_background(kelvin: u32, brightness: f32) {
+    queue(Request::Preview(kelvin, brightness));
+}
+
 /// Queues a [`reconcile`] on the background thread; see [`apply_in_background`].
 pub fn reconcile_in_background(state: TintState, brightness: f32) {
     queue(Request::Reconcile(state, brightness));
@@ -1538,6 +1619,8 @@ enum Request {
     },
     /// A scheduled change: apply it only if the screen doesn't already match.
     Reconcile(TintState, f32),
+    /// A slider part-way through a drag: show it if that costs nothing.
+    Preview(u32, f32),
 }
 
 impl Request {
@@ -1597,6 +1680,11 @@ impl Request {
                 report,
                 requested_at,
             },
+            // A preview is only a courtesy, so it never displaces real work.
+            // The drag's next step, or its release, follows close behind.
+            (older @ (Request::Force { .. } | Request::Reconcile(..)), Request::Preview(..)) => {
+                older
+            }
             (_, newer) => newer,
         }
     }
@@ -1617,6 +1705,7 @@ impl Request {
             Request::Reconcile(state, brightness) => {
                 reconcile(state, brightness);
             }
+            Request::Preview(kelvin, brightness) => preview_now(kelvin, brightness),
         }
     }
 }
@@ -3022,7 +3111,53 @@ mod tests {
             Request::Reconcile(state, brightness) => {
                 panic!("expected a forced apply, got a reconcile of {state:?} at {brightness}")
             }
+            Request::Preview(kelvin, brightness) => {
+                panic!("expected a forced apply, got a preview of {kelvin} at {brightness}")
+            }
         }
+    }
+
+    /// A drag's preview arriving behind real work must not push it out of the
+    /// queue: the apply the user is owed would never run.
+    #[test]
+    fn a_preview_does_not_displace_an_apply() {
+        let force = Request::force(Some(3500), 0.9, None);
+        let (state, brightness, ..) = as_force(force.superseded_by(Request::Preview(4000, 0.8)));
+        assert_eq!((state, brightness), (Some(3500), 0.9));
+
+        let reconcile = Request::Reconcile(Some(3500), 0.9);
+        assert!(matches!(
+            reconcile.superseded_by(Request::Preview(4000, 0.8)),
+            Request::Reconcile(Some(3500), _)
+        ));
+    }
+
+    /// The other way round, the release of a drag replaces its previews.
+    #[test]
+    fn an_apply_replaces_a_pending_preview() {
+        let preview = Request::Preview(4000, 0.8);
+        let (state, ..) = as_force(preview.superseded_by(Request::force(Some(3500), 0.9, None)));
+        assert_eq!(state, Some(3500));
+
+        let newer = Request::Preview(4000, 0.8).superseded_by(Request::Preview(4100, 0.8));
+        assert!(matches!(newer, Request::Preview(4100, _)));
+    }
+
+    #[test]
+    fn every_change_asks_for_a_fade() {
+        let on = tint_args(Some(3500), 0.9, FADE);
+        assert_eq!(
+            on,
+            [
+                "--temp",
+                "3500",
+                "--brightness",
+                "0.900",
+                "--fade-ms",
+                "1000"
+            ]
+        );
+        assert_eq!(tint_args(None, 0.9, FADE), ["--off", "--fade-ms", "1000"]);
     }
 
     /// The queue as a brightness change actually fills it: the commit stores the

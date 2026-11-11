@@ -741,20 +741,6 @@ pub fn format_time(minutes: u32, military: bool) -> String {
     }
 }
 
-/// Speaks for a whole group of controls rather than any one of them: the toggle
-/// and both sliders go through the same apply, so all of them cost a flicker.
-/// It sits under the section heading in the settings window and under the
-/// control group in the applet popup — never as a row's description, which
-/// would claim it applies to that row alone.
-///
-/// Applying a tint briefly switches virtual terminals to take the DRM master
-/// lock (see `backend`), which the user sees as a flicker; saying so up front
-/// keeps it from reading as a fault. "May" is accuracy rather than softening —
-/// how long the bounce lasts depends on the GPU and how fast it modesets.
-pub fn flicker_note() -> String {
-    fl!("flicker-note")
-}
-
 /// The lowest brightness the app will use.
 ///
 /// The helper accepts anything down to `0.0`, but that is a black screen, and

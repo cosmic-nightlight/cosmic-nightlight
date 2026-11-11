@@ -58,8 +58,12 @@
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.7.0</url>
       <description>
         <p>
-          Night Light now changes the screen without the brief flicker.
+          Night Light now changes the screen smoothly, without the brief flicker.
         </p>
+        <ul>
+          <li>Changes fade in over a second instead of jumping</li>
+          <li>The screen follows the warmth and brightness sliders as you drag them</li>
+        </ul>
       </description>
     </release>
     <release version="0.6.1" date="2026-11-09">
