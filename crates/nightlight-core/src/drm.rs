@@ -8,7 +8,8 @@
 
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::fd::{AsFd, BorrowedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -120,6 +121,125 @@ fn apply_card(path: &Path, kelvin: u32, brightness: f64, updated: &mut usize) ->
     // if a write failed.
     let released = card.release_master_lock();
     written.and(released)
+}
+
+/// The DRM subsystem's character device major number.
+const DRM_MAJOR: u32 = 226;
+
+/// The pids of the running compositors, by process name.
+///
+/// A name proves nothing, and nothing here relies on it: a handle from the
+/// wrong process is simply not the DRM master, so the kernel refuses the write.
+/// That also covers the greeter's own cosmic-comp, which sits on another VT.
+fn compositor_pids() -> Vec<libc::pid_t> {
+    let mut pids = Vec::new();
+    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) else {
+            continue;
+        };
+        let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
+        if comm.trim() == "cosmic-comp" {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+fn owned_fd(rc: libc::c_long) -> io::Result<OwnedFd> {
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the kernel just returned this descriptor and nothing else owns it.
+    Ok(unsafe { OwnedFd::from_raw_fd(rc as RawFd) })
+}
+
+/// The `drm-client-id` of one of `pid`'s descriptors. Descriptors sharing one
+/// are the same open file, so only one of them needs borrowing.
+fn drm_client_id(pid: libc::pid_t, fd: RawFd) -> Option<String> {
+    let info = std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{fd}")).ok()?;
+    info.lines()
+        .find_map(|line| line.strip_prefix("drm-client-id:"))
+        .map(|id| id.trim().to_string())
+}
+
+/// Duplicates each distinct DRM card handle that `pid` holds open.
+///
+/// `pidfd_getfd` hands back a second descriptor for the very same open file.
+/// DRM master belongs to the open file, not to the process, so a write through
+/// the copy counts as the compositor's own. Needs root (or ptrace rights over
+/// `pid`) and Linux 5.6.
+fn borrow_cards(pid: libc::pid_t) -> Vec<Card> {
+    // SAFETY: a plain syscall taking integers.
+    let Ok(pidfd) = owned_fd(unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) }) else {
+        return Vec::new();
+    };
+    let mut fds: Vec<RawFd> = std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+        .collect();
+    fds.sort_unstable();
+
+    let mut seen = Vec::new();
+    let mut cards = Vec::new();
+    for fd in fds {
+        // Only a filter to avoid duplicating every descriptor the compositor
+        // has. What the copy really is gets checked below.
+        let is_card = std::fs::read_link(format!("/proc/{pid}/fd/{fd}"))
+            .is_ok_and(|target| target.starts_with("/dev/dri"));
+        if !is_card {
+            continue;
+        }
+        // SAFETY: a plain syscall taking integers.
+        let copy = unsafe { libc::syscall(libc::SYS_pidfd_getfd, pidfd.as_raw_fd(), fd, 0) };
+        let Ok(copy) = owned_fd(copy) else {
+            continue;
+        };
+        let file = File::from(copy);
+        let Ok(meta) = file.metadata() else {
+            continue;
+        };
+        if !meta.file_type().is_char_device() || libc::major(meta.rdev()) != DRM_MAJOR {
+            continue;
+        }
+        let key = (meta.rdev(), drm_client_id(pid, fd));
+        if key.1.is_some() && seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        cards.push(Card(file));
+    }
+    cards
+}
+
+/// Writes the gamma ramp through handles borrowed from the running compositor,
+/// with no VT switch, and returns how many CRTCs took it.
+///
+/// Zero means this route is not available: no compositor found, no permission
+/// to borrow from it, or its session is not the foreground one, so its handle
+/// is not the DRM master. The caller should check [`showing`] afterwards and
+/// fall back to [`apply_all`] inside a VT bounce.
+///
+/// The borrowed handle is only ever read from and given a gamma ramp. It must
+/// never have master set or dropped on it: that would take the display away
+/// from the compositor itself.
+pub fn apply_borrowed(kelvin: u32, brightness: f64) -> usize {
+    let mut updated = 0;
+    for pid in compositor_pids() {
+        for card in borrow_cards(pid) {
+            let Ok(crtcs) = gamma_crtcs(&card) else {
+                continue;
+            };
+            for (crtc, size) in crtcs {
+                let [red, green, blue] = gamma::target(kelvin, brightness, size);
+                if card.set_gamma(crtc, &red, &green, &blue).is_ok() {
+                    updated += 1;
+                }
+            }
+        }
+    }
+    updated
 }
 
 /// How far, in 16-bit LUT units, a read-back entry may sit from an identity

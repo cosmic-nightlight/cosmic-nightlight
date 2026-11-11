@@ -1,3 +1,11 @@
+cosmic-nightlight (0.7.0-1) UNRELEASED; urgency=medium
+
+  * Night Light now changes the screen without the brief flicker. If your
+    system can't do it the new way, it changes the old way, as before.
+  * Flatpak: the first change after updating asks for your password once.
+
+ -- Daniel Watts <danielcwtts@gmail.com>  Wed, 11 Nov 2026 12:00:00 -0600
+
 cosmic-nightlight (0.6.1-1) noble; urgency=medium
 
   * The COSMIC Store page now says Night Light is an unofficial app, and

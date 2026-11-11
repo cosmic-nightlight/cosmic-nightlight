@@ -289,8 +289,9 @@ mishandle what the GUI sends (an argument removed or renamed, a unit or range
 redefined, a new argument the GUI relies on), or for a fix that only the helper
 can deliver. An old helper on the host keeps its bugs until it is replaced, and
 the bump is what replaces it. Adding an argument the GUI does not require is not
-a bump. Contract 2 is the first bump of the second kind: the command line is
-unchanged from contract 1.
+a bump. Contracts 2 and 3 are bumps of the second kind: the command line is
+unchanged from contract 1. Contract 3 delivers the helper that changes the
+screen without a VT bounce.
 
 ## The setup UI
 

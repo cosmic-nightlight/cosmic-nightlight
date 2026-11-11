@@ -5,7 +5,7 @@
 //! This is the only part of the project that runs as root (via `pkexec`).
 //! It keeps a deliberately tiny surface: parse a target temperature and
 //! brightness, then ask `nightlight-core` to write the gamma LUTs to DRM,
-//! performing the VT bounce required under COSMIC.
+//! through the compositor's own display handle or, failing that, the VT bounce.
 //!
 //! Usage:
 //!   cosmic-nightlight-helper --temp <kelvin> [--brightness <0.0-1.0>] [--session-vt <n>]
@@ -114,7 +114,7 @@ fn main() -> ExitCode {
 
     if !nightlight_core::is_root() {
         eprintln!(
-            "cosmic-nightlight-helper: must run as root (it switches VTs and grabs DRM master).\n\
+            "cosmic-nightlight-helper: must run as root (it writes to the display directly).\n\
              Invoke it via pkexec, not directly."
         );
         return ExitCode::FAILURE;
