@@ -9,6 +9,8 @@ cosmic-nightlight (0.7.0-1) UNRELEASED; urgency=medium
     brightness slider goes lower.
   * Uninstalling the package now puts the screen's colors back, instead of
     leaving the tint on.
+  * Logging out and quickly back in no longer leaves Night Light showing
+    as on with no tint.
   * Flatpak: the first change after updating asks for your password once.
 
  -- Daniel Watts <danielcwtts@gmail.com>  Wed, 11 Nov 2026 12:00:00 -0600

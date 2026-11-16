@@ -1809,16 +1809,18 @@ fn lock_file() -> Option<File> {
 
 /// Path of the file tracking what is currently on screen.
 ///
-/// It lives in the session's runtime directory, which is **not** where it
-/// belongs. The record describes hardware state, and hardware state outlives the
-/// session: a gamma LUT survives a logout and a user switch, as the whole design
-/// of this app depends on it surviving a VT bounce. Only a full modeset clears
-/// it, which is why a resume from suspend needs handling and a logout does not
-/// get it for free.
+/// It lives in the user's runtime directory, which does not line up with what
+/// it describes in either direction. The directory outlives a logout: systemd
+/// keeps it for `UserStopDelaySec` (10 seconds by default) after the last
+/// session ends, and for good with lingering or another session open. The
+/// gamma LUT, meanwhile, may not: the greeter's compositor can reset it, so a
+/// quick re-login found a record saying the tint was up on a neutral screen and
+/// never applied it.
 ///
-/// So the record dies at logout while the thing it describes does not. A new
-/// session therefore starts out not knowing what is on screen, and its first
-/// reconcile asks the helper, which reads the hardware; see [`assumed`].
+/// So a record only counts if it was written since the current compositor
+/// started; see [`record_predates_compositor`]. A new session therefore starts
+/// out not knowing what is on screen, and its first reconcile asks the helper,
+/// which reads the hardware; see [`assumed`].
 ///
 /// Named `-shown` because it holds a [`Shown`]. The older `-applied` file held
 /// only the temperature, and a process from before an upgrade may still be
@@ -1832,6 +1834,11 @@ fn applied_state_path() -> Option<PathBuf> {
 /// processes last applied one. `None` means "unknown", which callers must treat
 /// as "needs applying".
 pub fn applied() -> Option<Shown> {
+    // Not even this process's own memory survives a new compositor: a daemon
+    // run as a user service lives across a quick logout and back in.
+    if record_predates_compositor() {
+        return None;
+    }
     recorded_on_disk().or_else(|| {
         assumed()
             .lock()
@@ -1928,6 +1935,40 @@ fn clock_sample() -> &'static Mutex<Option<(Instant, SystemTime)>> {
 /// counts as not written, so we re-apply rather than trust it.
 fn record_written_since(instant: SystemTime) -> bool {
     record_modified().is_some_and(|modified| modified >= instant)
+}
+
+/// Whether the record on disk was written before the running compositor
+/// started, and so describes a screen from an earlier session (or from before a
+/// compositor restart) that may since have been reset.
+///
+/// The compositor creates its Wayland socket in the runtime directory when it
+/// starts, so the socket's mtime is that start. Every run mode has
+/// `WAYLAND_DISPLAY`, the daemon's user service included, which is why this is
+/// used rather than `XDG_SESSION_ID`, which a user service does not get.
+///
+/// No record, or no socket to compare with, counts as not stale: the first
+/// already reads as unknown, and the second is how this behaved before. Nor
+/// does a record we have stopped writing, since its mtime would then never
+/// catch up and every reconcile would apply again.
+fn record_predates_compositor() -> bool {
+    !RECORD_UNUSABLE.load(Ordering::Relaxed)
+        && predates(record_modified(), compositor_started())
+}
+
+/// The decision behind [`record_predates_compositor`], split out for tests.
+fn predates(record: Option<SystemTime>, compositor: Option<SystemTime>) -> bool {
+    matches!((record, compositor), (Some(record), Some(compositor)) if record < compositor)
+}
+
+/// When the running compositor started, from its Wayland socket's mtime.
+fn compositor_started() -> Option<SystemTime> {
+    let display = std::env::var_os("WAYLAND_DISPLAY")?;
+    // WAYLAND_DISPLAY may be an absolute path to the socket.
+    let socket = match PathBuf::from(&display) {
+        path if path.is_absolute() => path,
+        name => PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join(name),
+    };
+    std::fs::metadata(socket).ok()?.modified().ok()
 }
 
 /// When the record was last written, or `None` if it can't be stat'ed.
@@ -2735,6 +2776,21 @@ mod tests {
         assert_eq!(parse_shown("3500 920"), None);
         assert_eq!(parse_shown("3500 bright card1-eDP-1"), None);
         assert_eq!(parse_shown("3500 920 card1-eDP-1 extra"), None);
+    }
+
+    /// A quick logout and back in: the runtime directory, and the record in
+    /// it, outlived the old session, but the new compositor started after it.
+    #[test]
+    fn a_record_from_before_the_compositor_started_is_stale() {
+        let login = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let before = login - Duration::from_secs(21);
+        let after = login + Duration::from_secs(5);
+        assert!(predates(Some(before), Some(login)));
+        assert!(!predates(Some(after), Some(login)));
+        assert!(!predates(Some(login), Some(login)));
+        // Nothing to compare against: trust the record, as before.
+        assert!(!predates(Some(before), None));
+        assert!(!predates(None, Some(login)));
     }
 
     #[test]
