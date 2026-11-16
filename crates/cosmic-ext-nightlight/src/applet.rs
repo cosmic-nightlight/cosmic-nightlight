@@ -415,12 +415,12 @@ fn surface_task(action: cosmic::surface::Action) -> Task<Message> {
     cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(action)))
 }
 
-/// Launches `cosmic-nightlight --settings` as a detached child process.
+/// Launches `cosmic-ext-nightlight --settings` as a detached child process.
 ///
 /// The settings UI is a normal top-level window, which an applet's layer-shell
 /// surface can't host in-process, so we run it as a separate process.
 fn spawn_settings_window() {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cosmic-nightlight"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cosmic-ext-nightlight"));
     match std::process::Command::new(exe).arg("--settings").spawn() {
         Ok(mut child) => {
             // Wait on it from a thread of its own. Nothing here wants the exit
@@ -437,6 +437,6 @@ fn spawn_settings_window() {
                 let _ = child.wait();
             });
         }
-        Err(err) => eprintln!("cosmic-nightlight: failed to open settings window: {err}"),
+        Err(err) => eprintln!("cosmic-ext-nightlight: failed to open settings window: {err}"),
     }
 }

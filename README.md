@@ -48,23 +48,23 @@ This is an unofficial community project. It isn't made or endorsed by System76.
 
 **1. Get the package.** On Pop!_OS or Ubuntu:
 
-- Download the latest **`cosmic-nightlight_*.deb`** from the
+- Download the latest **`cosmic-ext-nightlight_*.deb`** from the
   [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
   page.
 - Open it with the **COSMIC Store** and click **Install**
-  (or run `sudo apt install ./cosmic-nightlight_*.deb`).
+  (or run `sudo apt install ./cosmic-ext-nightlight_*.deb`).
 
 On another system, open yours below:
 
 <details>
 <summary><b>Fedora</b></summary>
 
-You'll need Fedora 44 or newer. Download the latest **`cosmic-nightlight-*.rpm`**
+You'll need Fedora 44 or newer. Download the latest **`cosmic-ext-nightlight-*.rpm`**
 from the [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
 page and run:
 
 ```sh
-sudo dnf install ./cosmic-nightlight-*.rpm
+sudo dnf install ./cosmic-ext-nightlight-*.rpm
 ```
 
 </details>
@@ -72,12 +72,12 @@ sudo dnf install ./cosmic-nightlight-*.rpm
 <details>
 <summary><b>Arch Linux</b></summary>
 
-Download the latest **`cosmic-nightlight-*.pkg.tar.zst`** from the
+Download the latest **`cosmic-ext-nightlight-*.pkg.tar.zst`** from the
 [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
 page and run:
 
 ```sh
-sudo pacman -U ./cosmic-nightlight-*.pkg.tar.zst
+sudo pacman -U ./cosmic-ext-nightlight-*.pkg.tar.zst
 ```
 
 </details>
@@ -132,15 +132,15 @@ Paste all of this in, and change `25.11` to your version:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.1";
+    cosmic-ext-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.1";
   };
 
-  outputs = { nixpkgs, cosmic-nightlight, ... }: {
+  outputs = { nixpkgs, cosmic-ext-nightlight, ... }: {
     nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
       modules = [
         ./configuration.nix
-        cosmic-nightlight.nixosModules.default
-        { programs.cosmic-nightlight.enable = true; }
+        cosmic-ext-nightlight.nixosModules.default
+        { programs.cosmic-ext-nightlight.enable = true; }
       ];
     };
   };
@@ -158,27 +158,27 @@ sudo nixos-rebuild switch --flake /etc/nixos#nixos
 Use this command from now on whenever you rebuild your system.
 
 **Updating to a new release:** in `/etc/nixos/flake.nix`, change `v0.6.1` in
-the `cosmic-nightlight.url` line to the new version, then run
-`sudo nix flake update cosmic-nightlight --flake /etc/nixos` and the rebuild
+the `cosmic-ext-nightlight.url` line to the new version, then run
+`sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and the rebuild
 command above.
 
 **Trying the Nightly build:** use `nightly` in place of `v0.6.1` in that line.
 It gets fixes first but can have bugs. Running
-`sudo nix flake update cosmic-nightlight --flake /etc/nixos` and rebuilding
+`sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and rebuilding
 then brings you the newest one.
 
 **Already have a flake?** Add this line inside `inputs`:
 
 ```nix
-cosmic-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.1";
+cosmic-ext-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.1";
 ```
 
-Add `cosmic-nightlight` to the list after `outputs = {`, and add these two
+Add `cosmic-ext-nightlight` to the list after `outputs = {`, and add these two
 lines inside your system's `modules = [ ... ]` list:
 
 ```nix
-cosmic-nightlight.nixosModules.default
-{ programs.cosmic-nightlight.enable = true; }
+cosmic-ext-nightlight.nixosModules.default
+{ programs.cosmic-ext-nightlight.enable = true; }
 ```
 
 Then rebuild as you normally do.
@@ -192,10 +192,10 @@ The app isn't in the COSMIC Store yet. A flatpak version is being submitted,
 and until it's accepted, the packages above are the recommended install. To
 try it anyway:
 
-1. Download **`cosmic-nightlight-*.flatpak`** from the
+1. Download **`cosmic-ext-nightlight-*.flatpak`** from the
    [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
    page.
-2. `flatpak install --user ./cosmic-nightlight-*.flatpak`
+2. `flatpak install --user ./cosmic-ext-nightlight-*.flatpak`
 3. Add the applet as in step 2 below, or open the settings with
    `flatpak run io.github.cosmic_nightlight --settings`.
 
@@ -267,7 +267,7 @@ To build the `.deb`, `.rpm`, Arch or Nix package, see [PACKAGING.md](PACKAGING.m
 
 **Settings.** Choose a schedule, the night warmth, and the brightness (which dims
 the screen while the night light is on). Open it from the applet, from your app
-launcher, or with `cosmic-nightlight --settings`.
+launcher, or with `cosmic-ext-nightlight --settings`.
 
 **Keyboard shortcut.** Click **Add** next to **Keyboard Shortcut** in Settings,
 and Super+Shift+N turns Night Light on and off. (If that key is taken, it picks
@@ -291,19 +291,19 @@ keep the applet on your panel, turn on **Run in Background** in Settings (it
 only shows up when needed). Or use the systemd service:
 
 ```sh
-systemctl --user enable --now cosmic-nightlight.service
+systemctl --user enable --now cosmic-ext-nightlight.service
 ```
 
-(From a source install, copy `systemd/cosmic-nightlight.service` into
+(From a source install, copy `systemd/cosmic-ext-nightlight.service` into
 `~/.config/systemd/user/` first.)
 
 <details>
 <summary>Advanced: run the helper directly</summary>
 
 ```sh
-pkexec /usr/bin/cosmic-nightlight-helper --temp 3500            # warm tint
-pkexec /usr/bin/cosmic-nightlight-helper --temp 4000 --brightness 0.9
-pkexec /usr/bin/cosmic-nightlight-helper --off                 # reset
+pkexec /usr/bin/cosmic-ext-nightlight-helper --temp 3500            # warm tint
+pkexec /usr/bin/cosmic-ext-nightlight-helper --temp 4000 --brightness 0.9
+pkexec /usr/bin/cosmic-ext-nightlight-helper --off                 # reset
 ```
 
 (Use `/usr/local/bin/...` if you installed with `scripts/install.sh`.)
@@ -313,7 +313,7 @@ pkexec /usr/bin/cosmic-nightlight-helper --off                 # reset
 
 The app is English-only for now, but it's ready for translations. A translation
 is one file: a copy of
-[`crates/cosmic-nightlight/i18n/en/cosmic_nightlight.ftl`](crates/cosmic-nightlight/i18n/en/cosmic_nightlight.ftl)
+[`crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl`](crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl)
 with the text translated. No coding needed, and partial translations are
 welcome. See [docs/translating.md](docs/translating.md).
 
@@ -361,7 +361,7 @@ GUI:
 | --- | --- | --- |
 | [`nightlight-core`](crates/nightlight-core) | library | Color math ([`gamma.rs`](crates/nightlight-core/src/gamma.rs)), DRM writes ([`drm.rs`](crates/nightlight-core/src/drm.rs)), the VT switching fallback ([`vt.rs`](crates/nightlight-core/src/vt.rs)) |
 | [`nightlight-helper`](crates/nightlight-helper) | **root** (via `pkexec`) | Small CLI: reads `--temp`/`--brightness` and calls core |
-| [`cosmic-nightlight`](crates/cosmic-nightlight) | your user | The panel applet, `--settings` window and optional `--daemon`; calls the helper |
+| [`cosmic-ext-nightlight`](crates/cosmic-ext-nightlight) | your user | The panel applet, `--settings` window and optional `--daemon`; calls the helper |
 
 Any of the three modes can run the schedule. They share a lock and a record of
 what's on screen in `$XDG_RUNTIME_DIR`, so running several at once still causes
@@ -370,7 +370,7 @@ only one change.
 What happens on a tint change:
 
 ```
-daemon/GUI ──pkexec──▶ cosmic-nightlight-helper (root)
+daemon/GUI ──pkexec──▶ cosmic-ext-nightlight-helper (root)
                           │ 1. Borrow a copy of COSMIC's display handle
                           └ 2. Write the color curve to each display through it
 ```

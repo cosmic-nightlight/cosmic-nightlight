@@ -109,7 +109,7 @@ appstreamcli convert data/io.github.cosmic_nightlight.metainfo.xml out.yml --for
 desktop-file-validate data/*.desktop
 
 # What actually ships in the package
-dpkg-deb -c cosmic-nightlight_*.deb | grep -E "icons|metainfo"
+dpkg-deb -c cosmic-ext-nightlight_*.deb | grep -E "icons|metainfo"
 ```
 
 None of the above catches the five behaviors at the top. **To see what the Store

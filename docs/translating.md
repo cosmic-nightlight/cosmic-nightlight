@@ -17,8 +17,8 @@ Copy the English catalog into a directory named for your language and translate
 the values in it:
 
 ```sh
-cp -r crates/cosmic-nightlight/i18n/en crates/cosmic-nightlight/i18n/de
-$EDITOR crates/cosmic-nightlight/i18n/de/cosmic_nightlight.ftl
+cp -r crates/cosmic-ext-nightlight/i18n/en crates/cosmic-ext-nightlight/i18n/de
+$EDITOR crates/cosmic-ext-nightlight/i18n/de/cosmic_nightlight.ftl
 ```
 
 The directory name is a language tag: `de`, `pt-BR`, `zh-Hans`. Use the plain
@@ -27,7 +27,7 @@ text, in which case use both (`pt-BR`, `pt-PT`) — a user whose desktop asks fo
 `de-AT` will be given `de` when there is no `de-AT`.
 
 Keep the filename `cosmic_nightlight.ftl` — it is the `domain` set in
-`crates/cosmic-nightlight/i18n.toml`, and the build looks for exactly that name
+`crates/cosmic-ext-nightlight/i18n.toml`, and the build looks for exactly that name
 in every language directory. Nothing else has to be registered: the build picks
 up every directory under `i18n/`.
 
@@ -115,8 +115,8 @@ translating them would mean retranslating the list at every release.
 If you have Rust installed:
 
 ```sh
-cargo test -p cosmic-nightlight
-cargo run -p cosmic-nightlight -- --settings
+cargo test -p cosmic-ext-nightlight
+cargo run -p cosmic-ext-nightlight -- --settings
 ```
 
 The tests check your catalog against the English one for the two mistakes that
@@ -129,7 +129,7 @@ Force a language with `LANGUAGE`, which does not require having that locale
 generated:
 
 ```sh
-LANGUAGE=de cargo run -p cosmic-nightlight -- --settings
+LANGUAGE=de cargo run -p cosmic-ext-nightlight -- --settings
 ```
 
 The settings window shows nearly every message. The ones it doesn't are the

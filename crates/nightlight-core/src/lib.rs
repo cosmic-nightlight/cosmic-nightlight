@@ -174,6 +174,10 @@ fn settled(
 
 /// Where [`lock_host`] takes its lock. Under `/run` because only root can write
 /// there, and every caller of [`apply`] is root anyway.
+///
+/// Still named after the package's name before 0.7.0, on purpose. An upgrade
+/// can leave an old helper running beside a new one, and they only keep out of
+/// each other's way if they lock the same file.
 const HOST_LOCK_PATH: &str = "/run/cosmic-nightlight-helper.lock";
 
 /// Serializes applies across the whole machine, so only one VT bounce is ever
@@ -258,13 +262,13 @@ pub fn is_root() -> bool {
 /// ```
 pub const HELPER_CONTRACT: u32 = 4;
 
-/// The line `cosmic-nightlight-helper --version` prints.
+/// The line `cosmic-ext-nightlight-helper --version` prints.
 ///
 /// Written here and read back by [`parse_contract`] so the format cannot drift
 /// between the helper and the GUI interrogating it.
 pub fn version_line() -> String {
     format!(
-        "cosmic-nightlight-helper {} (contract {HELPER_CONTRACT})",
+        "cosmic-ext-nightlight-helper {} (contract {HELPER_CONTRACT})",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -294,7 +298,7 @@ mod tests {
         // What a helper predating `--version` leaves on stdout: nothing, having
         // written a usage error to stderr and exited non-zero.
         assert_eq!(parse_contract(""), None);
-        assert_eq!(parse_contract("cosmic-nightlight-helper 0.4.0"), None);
+        assert_eq!(parse_contract("cosmic-ext-nightlight-helper 0.4.0"), None);
         assert_eq!(parse_contract("(contract )"), None);
     }
 

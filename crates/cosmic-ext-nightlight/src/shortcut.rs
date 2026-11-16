@@ -64,7 +64,7 @@ pub fn command() -> String {
     if backend::in_flatpak() {
         format!("flatpak run {APP_ID} --toggle")
     } else {
-        "cosmic-nightlight --toggle".to_string()
+        "cosmic-ext-nightlight --toggle".to_string()
     }
 }
 
@@ -76,7 +76,7 @@ pub fn state() -> State {
     match read_custom(&context) {
         Ok(custom) => state_of(&custom, &command()),
         Err(err) => {
-            eprintln!("cosmic-nightlight: could not read the keyboard shortcuts: {err}");
+            eprintln!("cosmic-ext-nightlight: could not read the keyboard shortcuts: {err}");
             State::Unavailable
         }
     }
@@ -227,7 +227,70 @@ fn spawned(action: &RawValue) -> Option<String> {
 fn is_ours(command: &str) -> bool {
     let mut words = command.split_whitespace();
     let toggles = words.next_back() == Some("--toggle");
-    toggles && words.any(|word| word.ends_with("cosmic-nightlight") || word == APP_ID)
+    toggles
+        && words.any(|word| word.ends_with(BINARY) || word.ends_with(OLD_BINARY) || word == APP_ID)
+}
+
+/// Our binary, as the shortcut names it outside the flatpak.
+const BINARY: &str = "cosmic-ext-nightlight";
+
+/// The binary's name before 0.7.0, when the package was called
+/// `cosmic-nightlight`.
+const OLD_BINARY: &str = "cosmic-nightlight";
+
+/// Points a shortcut that runs the binary under its old name at the new one.
+///
+/// The package rename took the old binary away, so such a shortcut does nothing
+/// at all now. It keeps its key, and the user's other shortcuts are written back
+/// as they were. Runs at startup in every mode and writes only when it finds
+/// one, which after the first run is never.
+///
+/// Not in the flatpak. Its shortcut runs `flatpak run` with the app ID, which
+/// did not change, and an old command there belongs to a host install, which
+/// sees to its own.
+pub fn heal() {
+    if backend::in_flatpak() {
+        return;
+    }
+    let Ok(context) = Config::new(ID, VERSION) else {
+        return;
+    };
+    let Ok(mut custom) = read_custom(&context) else {
+        return;
+    };
+    if !heal_in(&mut custom, &command()) {
+        return;
+    }
+    match context.set("custom", &custom) {
+        Ok(()) => println!("cosmic-ext-nightlight: updated the keyboard shortcut"),
+        Err(err) => {
+            eprintln!("cosmic-ext-nightlight: could not update the keyboard shortcut: {err}")
+        }
+    }
+}
+
+/// [`heal`] on entries already read. Returns whether anything changed.
+fn heal_in(custom: &mut Entries, command: &str) -> bool {
+    let mut changed = false;
+    for (_, action) in &mut custom.0 {
+        if !spawned(action).is_some_and(|spawned| runs_old_binary(&spawned)) {
+            continue;
+        }
+        let Ok(new) = RawValue::from_rust(&Action::Spawn(command.to_string())) else {
+            return changed;
+        };
+        *action = new;
+        changed = true;
+    }
+    changed
+}
+
+/// Whether a command is our toggle, run through the binary's old name.
+fn runs_old_binary(command: &str) -> bool {
+    is_ours(command)
+        && command.split_whitespace().next().is_some_and(|program| {
+            program == OLD_BINARY || program.ends_with(&format!("/{OLD_BINARY}"))
+        })
 }
 
 /// The one action we need to recognize. Decoding any other variant as this
@@ -384,7 +447,7 @@ mod tests {
         let label = add_to(
             &mut custom,
             &Entries::default(),
-            "cosmic-nightlight --toggle",
+            "cosmic-ext-nightlight --toggle",
             "Night Light",
         )
         .expect("adds");
@@ -397,7 +460,7 @@ mod tests {
             assert_eq!(before.1.get_ron().trim(), after.1.get_ron().trim());
         }
         assert_eq!(
-            state_of(&reread, "cosmic-nightlight --toggle"),
+            state_of(&reread, "cosmic-ext-nightlight --toggle"),
             State::Bound("Super+Shift+n".into())
         );
     }
@@ -410,7 +473,7 @@ mod tests {
         let label = add_to(
             &mut custom,
             &defaults,
-            "cosmic-nightlight --toggle",
+            "cosmic-ext-nightlight --toggle",
             "Night Light",
         )
         .expect("adds");
@@ -423,14 +486,14 @@ mod tests {
         add_to(
             &mut custom,
             &Entries::default(),
-            "cosmic-nightlight --toggle",
+            "cosmic-ext-nightlight --toggle",
             "Night Light",
         )
         .unwrap();
         add_to(
             &mut custom,
             &Entries::default(),
-            "cosmic-nightlight --toggle",
+            "cosmic-ext-nightlight --toggle",
             "Night Light",
         )
         .unwrap();
@@ -440,7 +503,7 @@ mod tests {
     #[test]
     fn the_other_installs_shortcut_is_repointed_in_place() {
         let mut custom = parse(
-            r#"{ (modifiers: [Super, Alt], key: "F9"): Spawn("cosmic-nightlight --toggle") }"#,
+            r#"{ (modifiers: [Super, Alt], key: "F9"): Spawn("cosmic-ext-nightlight --toggle") }"#,
         );
         let command = "flatpak run io.github.cosmic_nightlight --toggle";
         let label = add_to(&mut custom, &Entries::default(), command, "Night Light").unwrap();
@@ -475,11 +538,52 @@ mod tests {
     }
 
     #[test]
+    fn a_shortcut_to_the_old_binary_is_repointed() {
+        let mut custom = parse(
+            r#"{
+            (modifiers: [Super], key: "t"): Spawn("cosmic-term"),
+            (modifiers: [Super, Shift], key: "n"): Spawn("/usr/bin/cosmic-nightlight --toggle"),
+            (modifiers: [Ctrl, Alt], key: "x"): SomethingFromANewerCosmic(42, "kept"),
+        }"#,
+        );
+        assert!(heal_in(&mut custom, "cosmic-ext-nightlight --toggle"));
+        assert_eq!(
+            state_of(&custom, "cosmic-ext-nightlight --toggle"),
+            State::Bound("Super+Shift+n".into())
+        );
+
+        let reread = parse(&written(&custom));
+        assert_eq!(reread.0.len(), 3);
+        assert_eq!(spawned(&reread.0[0].1).as_deref(), Some("cosmic-term"));
+        assert!(reread.0[2]
+            .1
+            .get_ron()
+            .contains("SomethingFromANewerCosmic"));
+
+        // Done once, there is nothing left to change.
+        assert!(!heal_in(&mut custom, "cosmic-ext-nightlight --toggle"));
+    }
+
+    #[test]
+    fn only_the_old_binary_is_repointed() {
+        let mut custom = parse(
+            r#"{
+            (modifiers: [Super], key: "a"): Spawn("cosmic-ext-nightlight --toggle"),
+            (modifiers: [Super], key: "b"): Spawn("flatpak run io.github.cosmic_nightlight --toggle"),
+            (modifiers: [Super], key: "c"): Spawn("cosmic-nightlight --settings"),
+        }"#,
+        );
+        assert!(!heal_in(&mut custom, "cosmic-ext-nightlight --toggle"));
+    }
+
+    #[test]
     fn only_our_toggle_counts_as_ours() {
         assert!(is_ours("cosmic-nightlight --toggle"));
-        assert!(is_ours("/usr/bin/cosmic-nightlight --toggle"));
+        assert!(is_ours("/usr/local/bin/cosmic-nightlight --toggle"));
+        assert!(is_ours("cosmic-ext-nightlight --toggle"));
+        assert!(is_ours("/usr/bin/cosmic-ext-nightlight --toggle"));
         assert!(is_ours("flatpak run io.github.cosmic_nightlight --toggle"));
-        assert!(!is_ours("cosmic-nightlight --settings"));
+        assert!(!is_ours("cosmic-ext-nightlight --settings"));
         assert!(!is_ours("other-app --toggle"));
     }
 }

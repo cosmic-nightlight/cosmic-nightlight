@@ -16,12 +16,12 @@ applet reaches the host through `flatpak-spawn --host pkexec`, and the privilege
 helper runs there.
 
 That means the helper has to run **on the host**. It ships at
-`/app/libexec/cosmic-nightlight-helper` and is used two ways: as the payload for
+`/app/libexec/cosmic-ext-nightlight-helper` and is used two ways: as the payload for
 a one-time, user-triggered setup that copies it to
-`/usr/local/bin/cosmic-nightlight-helper` and installs the polkit rule beside it,
+`/usr/local/bin/cosmic-ext-nightlight-helper` and installs the polkit rule beside it,
 and — before that setup has ever been run — directly, via the host-side path
 `/.flatpak-info` reports as `app-path`. Both `/usr/bin` and `/usr/local/bin` are
-whitelisted by `polkit/49-cosmic-nightlight.rules`, so nothing about the rule
+whitelisted by `polkit/49-cosmic-ext-nightlight.rules`, so nothing about the rule
 changes between the `.deb` and the flatpak.
 
 Until the setup has been run the app still works — pkexec just prompts for a
@@ -32,7 +32,7 @@ path inside the flatpak. That is the whole of what the setup buys.
 
 Fedora Atomic redirects `/usr/local` to `/var/usrlocal`. `pkexec` resolves
 symlinks before passing the executable path to polkit, so the rule must also
-allow `/var/usrlocal/bin/cosmic-nightlight-helper`. Older rules only allowed
+allow `/var/usrlocal/bin/cosmic-ext-nightlight-helper`. Older rules only allowed
 the `/usr/bin` and `/usr/local/bin` paths: setup could succeed, yet every tint
 change still required authentication, including automatic applies at login or
 after resume.
@@ -40,9 +40,9 @@ after resume.
 For an existing installation, install the corrected rule from this checkout:
 
 ```bash
-sudo install -o root -g root -m 0644 polkit/49-cosmic-nightlight.rules \
-    /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
-pkexec /usr/local/bin/cosmic-nightlight-helper --version
+sudo install -o root -g root -m 0644 polkit/49-cosmic-ext-nightlight.rules \
+    /etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
+pkexec /usr/local/bin/cosmic-ext-nightlight-helper --version
 ```
 
 Polkit reloads rule changes automatically. The version command should print the

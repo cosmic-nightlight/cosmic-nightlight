@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Backend bridge from the (unprivileged) GUI/daemon to the privileged
-//! `cosmic-nightlight-helper`.
+//! `cosmic-ext-nightlight-helper`.
 //!
 //! Setting the DRM gamma under COSMIC requires root (to switch VTs and grab
 //! the DRM master lock), so the GUI never touches DRM directly. Instead it
@@ -63,16 +63,16 @@ use crate::config;
 /// Sandboxed, a path only wins if its helper speaks our contract. See
 /// [`pick_installed_helper`] for why order alone is not enough.
 const HELPER_CANDIDATES: &[&str] = &[
-    "/usr/bin/cosmic-nightlight-helper",
-    "/usr/local/bin/cosmic-nightlight-helper",
+    "/usr/bin/cosmic-ext-nightlight-helper",
+    "/usr/local/bin/cosmic-ext-nightlight-helper",
 ];
 
 /// Where the polkit rule may live on the host. `install.sh` and the flatpak's
 /// host setup both write the first; the second is where a distro package would
 /// put it. Either one authorizes every path in [`HELPER_CANDIDATES`].
 const RULE_CANDIDATES: &[&str] = &[
-    "/etc/polkit-1/rules.d/49-cosmic-nightlight.rules",
-    "/usr/share/polkit-1/rules.d/49-cosmic-nightlight.rules",
+    "/etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules",
+    "/usr/share/polkit-1/rules.d/49-cosmic-ext-nightlight.rules",
 ];
 
 /// The path the flatpak's host setup installs to, and so the one to name in an
@@ -204,7 +204,7 @@ pub fn spawn_on_host_falling_back(
             .is_ok_and(|status| status.code() == Some(USAGE_ERROR));
         if refused {
             if let Err(err) = spawn_on_host_falling_back(program, rest, activation_token) {
-                eprintln!("cosmic-nightlight: {err}");
+                eprintln!("cosmic-ext-nightlight: {err}");
             }
         }
     });
@@ -346,7 +346,7 @@ fn bundled_host_path(program: &str) -> Option<String> {
 
 /// The helper we ship inside the flatpak, as the host sees it.
 fn bundled_helper_path() -> Option<String> {
-    bundled_host_path("cosmic-nightlight-helper")
+    bundled_host_path("cosmic-ext-nightlight-helper")
 }
 
 /// What probing the host turned up — which decides whether the answer is worth
@@ -564,7 +564,7 @@ fn would_prompt() -> bool {
     host_setup() != HostSetup::Ready || !in_passwordless_group()
 }
 
-/// The groups `polkit/49-cosmic-nightlight.rules` lets run the helper without a
+/// The groups `polkit/49-cosmic-ext-nightlight.rules` lets run the helper without a
 /// password. Keep the two in step.
 const PASSWORDLESS_GROUPS: [&str; 2] = ["sudo", "wheel"];
 
@@ -791,7 +791,7 @@ pub fn run_host_setup() -> Result<(), String> {
     // asked that decides whether a refusal arriving in the meantime answers this
     // request too.
     let requested_at = SystemTime::now();
-    let script = bundled_host_path("cosmic-nightlight-setup")
+    let script = bundled_host_path("cosmic-ext-nightlight-setup")
         .ok_or("could not find the setup program inside the flatpak")?;
 
     with_apply_lock(|| {
@@ -841,7 +841,7 @@ pub fn run_host_setup() -> Result<(), String> {
 /// install or removal is picked up without restarting. Sandboxed the same
 /// question costs a round trip out of the sandbox — see [`host_helper_path`].
 ///
-/// The `COSMIC_NIGHTLIGHT_HELPER` override is handled a level up, in
+/// The `COSMIC_EXT_NIGHTLIGHT_HELPER` override is handled a level up, in
 /// [`privileged_program`], so that it wins over the setup routing too.
 fn helper_path() -> String {
     if in_flatpak() {
@@ -875,7 +875,7 @@ fn libexec_helper_path() -> Option<PathBuf> {
 /// can be tested without depending on where the test binary lives.
 fn libexec_helper_beside(exe: &std::path::Path) -> Option<PathBuf> {
     let prefix = exe.parent()?.parent()?;
-    Some(prefix.join("libexec").join("cosmic-nightlight-helper"))
+    Some(prefix.join("libexec").join("cosmic-ext-nightlight-helper"))
 }
 
 /// The graphical-session VT, as the `--session-vt` argument to the helper, or
@@ -908,11 +908,11 @@ fn session_vt_args() -> Vec<String> {
 fn privileged_program() -> (String, bool) {
     // An override names the program outright, so honor it ahead of the setup
     // routing rather than installing something else over the top of it.
-    if let Ok(path) = std::env::var("COSMIC_NIGHTLIGHT_HELPER") {
+    if let Ok(path) = std::env::var("COSMIC_EXT_NIGHTLIGHT_HELPER") {
         return (path, false);
     }
     if in_flatpak() && host_setup() != HostSetup::Ready && !setup_is_ineffective() {
-        if let Some(setup) = bundled_host_path("cosmic-nightlight-setup") {
+        if let Some(setup) = bundled_host_path("cosmic-ext-nightlight-setup") {
             return (setup, true);
         }
     }
@@ -1746,7 +1746,7 @@ fn run_worker(receiver: Receiver<Request>) {
     }
 }
 
-/// Runs `f` holding an exclusive lock shared by every cosmic-nightlight process.
+/// Runs `f` holding an exclusive lock shared by every cosmic-ext-nightlight process.
 ///
 /// The applet, the settings window, and the daemon can all notice the same
 /// schedule boundary at once. Each apply bounces the VT to steal DRM master, so
@@ -1796,6 +1796,12 @@ fn apply_in_flight() -> bool {
 
 /// Opens (creating if needed) the file the apply lock is taken on. `None` when
 /// there is no runtime directory, or it can't be written.
+///
+/// This and the other files we keep in `$XDG_RUNTIME_DIR` still carry the
+/// package's name before 0.7.0, on purpose. Processes started before an upgrade
+/// run on beside new ones until the session ends, and they only share the lock
+/// and the record of what is on screen if the names match. The old packages'
+/// removal scripts also clear `cosmic-nightlight-shown` by that name.
 fn lock_file() -> Option<File> {
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
     let path = PathBuf::from(runtime_dir).join("cosmic-nightlight-apply.lock");
@@ -1920,7 +1926,7 @@ fn discard_record_if_resumed() {
         return;
     }
 
-    println!("cosmic-nightlight: resumed from suspend; re-applying the tint");
+    println!("cosmic-ext-nightlight: resumed from suspend; re-applying the tint");
     forget_applied();
 }
 
@@ -3350,10 +3356,10 @@ mod tests {
     fn the_libexec_helper_sits_beside_our_own_bin() {
         assert_eq!(
             libexec_helper_beside(std::path::Path::new(
-                "/nix/store/abc-cosmic-nightlight-0.6.0/bin/.cosmic-nightlight-wrapped"
+                "/nix/store/abc-cosmic-ext-nightlight-0.6.0/bin/.cosmic-ext-nightlight-wrapped"
             )),
             Some(PathBuf::from(
-                "/nix/store/abc-cosmic-nightlight-0.6.0/libexec/cosmic-nightlight-helper"
+                "/nix/store/abc-cosmic-ext-nightlight-0.6.0/libexec/cosmic-ext-nightlight-helper"
             ))
         );
     }

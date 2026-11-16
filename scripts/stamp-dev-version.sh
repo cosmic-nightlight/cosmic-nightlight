@@ -13,7 +13,7 @@
 # commits since it, which sorts after that release and before the next one:
 #
 #   debian/changelog            0.5.1+git23.g426b052-1   (dpkg)
-#   rpm/cosmic-nightlight.spec  0.5.1^git23.g426b052     (rpm's snapshot caret)
+#   rpm/cosmic-ext-nightlight.spec  0.5.1^git23.g426b052     (rpm's snapshot caret)
 #   arch/PKGBUILD               0.5.1.r23.g426b052       (Arch's VCS convention)
 #
 # Based on the last tag rather than the next version, so a build made after a
@@ -35,9 +35,9 @@ deb="$base+git$count.g$sha"
 rpm="$base^git$count.g$sha"
 arch="$base.r$count.g$sha"
 
-# Only the newest entry's version: `cosmic-nightlight (0.6.0-1) ...`.
+# Only the newest entry's version: `cosmic-ext-nightlight (0.6.0-1) ...`.
 sed -i "1s/([^)]*)/($deb-1)/" debian/changelog
-sed -i "s/^Version:\([[:space:]]*\).*/Version:\1$rpm/" rpm/cosmic-nightlight.spec
+sed -i "s/^Version:\([[:space:]]*\).*/Version:\1$rpm/" rpm/cosmic-ext-nightlight.spec
 sed -i "s/^pkgver=.*/pkgver=$arch/" arch/PKGBUILD
 
 echo "Development build of $tag + $count commits ($sha):"

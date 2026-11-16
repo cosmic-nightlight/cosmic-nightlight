@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MPL-2.0
 #
-# Uninstalls cosmic-nightlight, however it was installed — install.sh, the Debian
+# Uninstalls cosmic-ext-nightlight, however it was installed — install.sh, the Debian
 # package, or the flatpak.
 #
 # Beyond deleting files, this tears down everything that can start the applet
@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-echo ">> Uninstalling cosmic-nightlight components (requires sudo)..."
+echo ">> Uninstalling cosmic-ext-nightlight components (requires sudo)..."
 
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 
@@ -23,6 +23,10 @@ config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 # all loop over both, so upgrading past the rename and then uninstalling doesn't
 # strand the pre-rename "nightshift" install.
 app_ids=(io.github.cosmic_nightlight io.github.cosmic_nightshift)
+
+# Every name the files have had, current first. Before 0.7.0 the package was
+# called cosmic-nightlight, and its binaries, rule and units were named after it.
+names=(cosmic-ext-nightlight cosmic-nightlight)
 
 # 1. Un-register the panel applet FIRST. cosmic-panel restarts anything listed in
 #    its plugin config as soon as the process dies, so killing or uninstalling
@@ -59,7 +63,7 @@ done
 # 2. Stop whatever is already running, so it can't re-apply the tint while we
 #    tear down or on the next login. Cover the per-user and the package's
 #    system-wide (`--global`) enablement.
-for unit in cosmic-nightlight.service cosmic-nightshift.service; do
+for unit in cosmic-ext-nightlight.service cosmic-nightlight.service cosmic-nightshift.service; do
     systemctl --user disable --now "$unit" 2>/dev/null || true
     sudo systemctl --global disable "$unit" 2>/dev/null || true
     # `disable` is a no-op once the unit file itself is gone (an already-removed
@@ -70,8 +74,10 @@ done
 
 # The flatpak's uninstall cleanup (see flatpak-host-cleanup.sh). Stop it before
 # anything below changes a flatpak directory, so it can't race this script.
-sudo systemctl disable --now cosmic-nightlight-cleanup.path 2>/dev/null || true
-sudo systemctl disable cosmic-nightlight-cleanup@boot.service 2>/dev/null || true
+for name in "${names[@]}"; do
+    sudo systemctl disable --now "$name-cleanup.path" 2>/dev/null || true
+    sudo systemctl disable "$name-cleanup@boot.service" 2>/dev/null || true
+done
 
 # A flatpak instance isn't under systemd — it's a sandbox, so ask flatpak.
 if command -v flatpak >/dev/null 2>&1; then
@@ -102,10 +108,15 @@ done
 #    step skip silently and strand the screen warm with nothing left to fix it.
 #    The flatpak ships the same binary, and `current/active` resolves it without
 #    having to know the commit hash.
-helpers=(/usr/local/bin/cosmic-nightlight-helper /usr/bin/cosmic-nightlight-helper)
+helpers=()
+for name in "${names[@]}"; do
+    helpers+=("/usr/local/bin/$name-helper" "/usr/bin/$name-helper")
+done
 for app_id in "${app_ids[@]}"; do
     for flatpak_root in "$HOME/.local/share/flatpak" /var/lib/flatpak; do
-        helpers+=("$flatpak_root/app/$app_id/current/active/files/libexec/cosmic-nightlight-helper")
+        for name in "${names[@]}"; do
+            helpers+=("$flatpak_root/app/$app_id/current/active/files/libexec/$name-helper")
+        done
     done
 done
 
@@ -132,24 +143,30 @@ remove() {
         echo "Removed: $1"
     fi
 }
-remove /usr/local/bin/cosmic-nightlight-helper
-remove /usr/local/bin/cosmic-nightlight
-remove /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
+for name in "${names[@]}"; do
+    remove "/usr/local/bin/$name-helper"
+    remove "/usr/local/bin/$name"
+    remove "/etc/polkit-1/rules.d/49-$name.rules"
+done
 remove /usr/share/applications/io.github.cosmic_nightlight.desktop
 remove /usr/share/applications/io.github.cosmic_nightlight.settings.desktop
 remove /usr/share/metainfo/io.github.cosmic_nightlight.metainfo.xml
 remove /usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
 remove /usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
 # The flatpak's uninstall cleanup, which step 2 already stopped.
-remove /etc/systemd/system/cosmic-nightlight-cleanup.path
-remove "/etc/systemd/system/cosmic-nightlight-cleanup@.service"
-if [[ -d /var/lib/cosmic-nightlight ]]; then
-    sudo rm -rf /var/lib/cosmic-nightlight
-    echo "Removed: /var/lib/cosmic-nightlight"
-fi
+for name in "${names[@]}"; do
+    remove "/etc/systemd/system/$name-cleanup.path"
+    remove "/etc/systemd/system/$name-cleanup@.service"
+    if [[ -d "/var/lib/$name" ]]; then
+        sudo rm -rf "/var/lib/$name"
+        echo "Removed: /var/lib/$name"
+    fi
+done
 sudo systemctl daemon-reload 2>/dev/null || true
-# A user service some setups copy in by hand (see systemd/cosmic-nightlight.service).
-remove "$config_home/systemd/user/cosmic-nightlight.service"
+# A user service some setups copy in by hand (see systemd/cosmic-ext-nightlight.service).
+for name in "${names[@]}"; do
+    remove "$config_home/systemd/user/$name.service"
+done
 
 # 6. Remove the flatpak, which is an install wholly separate from everything
 #    above — it puts nothing under /usr/local and dpkg knows nothing about it, so
@@ -181,7 +198,8 @@ fi
 echo
 echo "Uninstallation complete."
 echo "If you installed the Debian package, also remove it with:"
-echo "  sudo apt purge cosmic-nightlight"
+echo "  sudo apt purge cosmic-ext-nightlight"
+echo "(or cosmic-nightlight, its name before 0.7.0)."
 echo "Purge rather than remove: 'remove' leaves the package in dpkg's 'rc' state,"
 echo "which keeps its config files and still lists it in 'dpkg -l'."
 echo "Your settings remain in $config_home/cosmic/io.github.cosmic_nightlight (delete to fully reset)."

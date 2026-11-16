@@ -8,7 +8,7 @@
 #   Cargo.toml                  [workspace.package] version
 #   debian/changelog            the newest entry's version
 #   data/…metainfo.xml          the newest <release version="…">
-#   rpm/cosmic-nightlight.spec  the Version: tag
+#   rpm/cosmic-ext-nightlight.spec  the Version: tag
 #   arch/PKGBUILD               the pkgver= line
 #
 # Disagreement fails differently in each case, and only the changelog one is
@@ -27,7 +27,7 @@ set -eu
 
 metainfo="data/io.github.cosmic_nightlight.metainfo.xml"
 
-# `cosmic-nightlight (0.5.0-1) noble; urgency=medium` -> `0.5.0`
+# `cosmic-ext-nightlight (0.5.0-1) noble; urgency=medium` -> `0.5.0`
 changelog_version=$(sed -n '1s/.*(\([^)]*\)).*/\1/p' debian/changelog)
 changelog_version=${changelog_version%-*}
 
@@ -36,7 +36,7 @@ metainfo_version=$(sed -n 's/.*<release version="\([^"]*\)".*/\1/p' "$metainfo" 
 
 # The RPM spec's own `Version:` tag, which rpmbuild reads.
 # Spaces or tabs may sit on either side of the value; keep only the value.
-rpm_version=$(sed -n 's/^Version:[[:space:]]*\([^[:space:]]*\).*/\1/p' rpm/cosmic-nightlight.spec | head -1)
+rpm_version=$(sed -n 's/^Version:[[:space:]]*\([^[:space:]]*\).*/\1/p' rpm/cosmic-ext-nightlight.spec | head -1)
 
 # The PKGBUILD's `pkgver=`, which makepkg reads. Quotes are allowed but optional.
 arch_version=$(sed -n "s/^pkgver=[\"']\{0,1\}\([^\"'[:space:]]*\).*/\1/p" arch/PKGBUILD | head -1)

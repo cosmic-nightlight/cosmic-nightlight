@@ -538,7 +538,7 @@ fn set_f64_if_changed(config: &Config, key: &str, value: f64) {
 
 fn report(key: &str, result: Result<(), cosmic::cosmic_config::Error>) {
     if let Err(err) = result {
-        eprintln!("cosmic-nightlight: failed to persist {key}: {err}");
+        eprintln!("cosmic-ext-nightlight: failed to persist {key}: {err}");
     }
 }
 

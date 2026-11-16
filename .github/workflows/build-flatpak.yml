@@ -107,14 +107,14 @@ jobs:
         run: |
           mkdir -p dist
           flatpak build-bundle flatpak/repo \
-            "dist/cosmic-nightlight-${GITHUB_REF_NAME#v}.flatpak" \
+            "dist/cosmic-ext-nightlight-${GITHUB_REF_NAME#v}.flatpak" \
             io.github.cosmic_nightlight master
           ls -lh dist/
 
       - name: Upload the bundle as a build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cosmic-nightlight-flatpak
+          name: cosmic-ext-nightlight-flatpak
           path: dist/*.flatpak
           if-no-files-found: error
 

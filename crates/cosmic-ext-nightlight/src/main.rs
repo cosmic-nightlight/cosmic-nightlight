@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `cosmic-nightlight` is a single binary with three run modes, selected by
+//! `cosmic-ext-nightlight` is a single binary with three run modes, selected by
 //! command-line flag:
 //!
 //! - (no args)    → run as a COSMIC panel applet (the status-bar icon + popup)
@@ -48,6 +48,9 @@ fn main() -> cosmic::iced::Result {
     migrate::remove_autostart_entries();
     // After the removal, which is what decides whether we still have one.
     autostart::heal();
+    // The binary and the systemd unit were renamed in 0.7.0.
+    shortcut::heal();
+    migrate::move_service_enablement();
 
     if args.iter().any(|arg| arg == "--daemon") {
         daemon::run(args.iter().any(|arg| arg == autostart::MANAGED_FLAG));
