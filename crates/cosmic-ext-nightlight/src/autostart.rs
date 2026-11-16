@@ -118,8 +118,8 @@ pub fn heal() {
         return;
     }
     match fs::write(&path, entry()) {
-        Ok(()) => println!("cosmic-nightlight: updated the autostart entry {path:?}"),
-        Err(err) => eprintln!("cosmic-nightlight: failed to update {path:?}: {err}"),
+        Ok(()) => println!("cosmic-ext-nightlight: updated the autostart entry {path:?}"),
+        Err(err) => eprintln!("cosmic-ext-nightlight: failed to update {path:?}: {err}"),
     }
 }
 
@@ -217,13 +217,13 @@ fn entry() -> String {
 /// setting is turned off.
 fn exec_line() -> String {
     if crate::backend::in_flatpak() {
-        format!("flatpak run --command=cosmic-nightlight {APP_ID} --daemon {MANAGED_FLAG}")
+        format!("flatpak run --command=cosmic-ext-nightlight {APP_ID} --daemon {MANAGED_FLAG}")
     } else {
         // `Exec` needs something resolvable against a login session's `PATH`,
         // which `/proc/self/exe` would not be for a build run out of a target
         // directory — but that is a developer's problem, and naming the binary
         // is what an installed copy wants.
-        format!("cosmic-nightlight --daemon {MANAGED_FLAG}")
+        format!("cosmic-ext-nightlight --daemon {MANAGED_FLAG}")
     }
 }
 
@@ -234,9 +234,13 @@ fn entry_path() -> Option<PathBuf> {
 
 /// `$XDG_CONFIG_HOME/autostart`, falling back to `$HOME/.config/autostart`.
 pub fn dir() -> Option<PathBuf> {
-    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+    Some(config_home()?.join("autostart"))
+}
+
+/// `$XDG_CONFIG_HOME`, falling back to `$HOME/.config`.
+pub fn config_home() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(config_home.join("autostart"))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
 }

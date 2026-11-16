@@ -80,7 +80,7 @@ pub fn init() {
     let localizer = DefaultLocalizer::new(&*LANGUAGE_LOADER, &Localizations);
 
     if let Err(err) = localizer.select(&DesktopLanguageRequester::requested_languages()) {
-        eprintln!("cosmic-nightlight: staying in English, could not load a translation: {err}");
+        eprintln!("cosmic-ext-nightlight: staying in English, could not load a translation: {err}");
     }
 
     // Again, because selecting a language builds bundles that did not exist when

@@ -1,4 +1,4 @@
-Source: cosmic-nightlight
+Source: cosmic-ext-nightlight
 Section: x11
 Priority: optional
 Maintainer: Daniel Watts <danielcwtts@gmail.com>
@@ -16,8 +16,10 @@ Standards-Version: 4.7.0
 Rules-Requires-Root: no
 Homepage: https://github.com/cosmic-nightlight/cosmic-nightlight
 
-Package: cosmic-nightlight
+Package: cosmic-ext-nightlight
 Architecture: any
+Conflicts: cosmic-nightlight
+Replaces: cosmic-nightlight
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},

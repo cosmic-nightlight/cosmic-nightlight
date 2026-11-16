@@ -19,7 +19,9 @@
       });
 
       overlays.default = final: prev: {
-        cosmic-nightlight = final.callPackage ./nix/package.nix { };
+        cosmic-ext-nightlight = final.callPackage ./nix/package.nix { };
+        # The name before 0.7.0, so overlays that use it keep working.
+        cosmic-nightlight = final.cosmic-ext-nightlight;
       };
 
       nixosModules.default = import ./nix/module.nix { inherit self; };

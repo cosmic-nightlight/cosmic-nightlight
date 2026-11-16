@@ -9,7 +9,7 @@ from pathlib import Path
 def main():
     directory = Path(__file__).resolve().parent
     manifest = json.loads((directory / "io.github.cosmic_nightlight.json").read_text())
-    module = next(m for m in manifest["modules"] if m["name"] == "cosmic-nightlight")
+    module = next(m for m in manifest["modules"] if m["name"] == "cosmic-ext-nightlight")
     module["sources"][0] = {
         "type": "dir",
         "path": "..",

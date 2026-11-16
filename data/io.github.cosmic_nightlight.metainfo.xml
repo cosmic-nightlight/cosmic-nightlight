@@ -203,8 +203,8 @@
     <!-- The COSMIC Store's Applets page lists a component only if it provides
          this ID; without it the applet misses the section built for applets. -->
     <id>com.system76.CosmicApplet</id>
-    <binary>cosmic-nightlight</binary>
-    <binary>cosmic-nightlight-helper</binary>
+    <binary>cosmic-ext-nightlight</binary>
+    <binary>cosmic-ext-nightlight-helper</binary>
   </provides>
 
   <content_rating type="oars-1.1" />

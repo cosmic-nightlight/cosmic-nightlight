@@ -51,20 +51,20 @@ applet (sandbox) → flatpak-spawn --host → pkexec → helper (host, root)
 ```
 
 The helper therefore has to run on the host. It ships at
-`/app/libexec/cosmic-nightlight-helper`, which serves two purposes.
+`/app/libexec/cosmic-ext-nightlight-helper`, which serves two purposes.
 
 First, it is the payload for a **one-time, user-triggered setup**
 ([`scripts/flatpak-host-setup.sh`](../scripts/flatpak-host-setup.sh)), which
 copies it to `/usr/local/bin/` and installs the polkit rule beside it. Both of
 those paths are already whitelisted by
-[`polkit/49-cosmic-nightlight.rules`](../polkit/49-cosmic-nightlight.rules), so
+[`polkit/49-cosmic-ext-nightlight.rules`](../polkit/49-cosmic-ext-nightlight.rules), so
 nothing about the rule differs between the `.deb` and the flatpak.
 
 Second — and this is what keeps the app from being broken on arrival — it is
 runnable *where it sits*, before any setup has happened. A flatpak's own files
 are visible on the host, and `/.flatpak-info` names that location as `app-path`,
 so `probe_host_helper` in
-[`backend.rs`](../crates/cosmic-nightlight/src/backend.rs) tries the two
+[`backend.rs`](../crates/cosmic-ext-nightlight/src/backend.rs) tries the two
 whitelisted host paths first and falls back to the bundled copy's host path.
 pkexec will run it; no rule names that path, so it prompts every time.
 
@@ -178,7 +178,7 @@ There is no separate setup step, because there does not need to be. Before the
 setup, *every* privileged call costs a prompt; spending the first one on the
 install as well as the change is strictly better than spending it on the change
 alone and asking again at sunset. So the first privileged call routes through
-`cosmic-nightlight-setup`, which installs and then forwards the same arguments to
+`cosmic-ext-nightlight-setup`, which installs and then forwards the same arguments to
 what it installed. See `privileged_program` in `backend.rs`.
 
 The polkit dialog names that program, so the install is disclosed where consent
@@ -267,7 +267,7 @@ is **not** the app version: keying off the app version would re-prompt on every
 release, which is the nag this exists to avoid. `--version` prints both:
 
 ```
-cosmic-nightlight-helper 0.4.0 (contract 1)
+cosmic-ext-nightlight-helper 0.4.0 (contract 1)
 ```
 
 The format is written by `version_line` and read back by `parse_contract`, which
@@ -342,14 +342,14 @@ left that uses it. `scripts/uninstall.sh` removes them, but a Store user has no
 checkout and should not need a terminal.
 
 So the setup also installs something on the host that notices the app is gone.
-`scripts/flatpak-host-cleanup.sh` is copied to `/var/lib/cosmic-nightlight/` and
+`scripts/flatpak-host-cleanup.sh` is copied to `/var/lib/cosmic-ext-nightlight/` and
 run by two systemd units:
 
-- **`cosmic-nightlight-cleanup.path`** watches the system installation's `app/`
+- **`cosmic-ext-nightlight-cleanup.path`** watches the system installation's `app/`
   directory and every login user's `~/.local/share/flatpak/app`, and starts the
   `watch` instance on any change. An uninstall removes the app's directory there,
   so the cleanup runs within seconds.
-- **`cosmic-nightlight-cleanup@boot.service`** runs the same check at boot, for
+- **`cosmic-ext-nightlight-cleanup@boot.service`** runs the same check at boot, for
   anything the watch missed: the machine was off, the user's home was added after
   the setup, or a path systemd could not watch.
 
@@ -408,21 +408,21 @@ two `rm` lines in the README.
 
 | Path in the flatpak | Purpose |
 |---|---|
-| `/app/bin/cosmic-nightlight` | the applet and settings window |
-| `/app/libexec/cosmic-nightlight-helper` | payload for the setup; never run in-sandbox |
-| `/app/libexec/cosmic-nightlight-setup` | the one-time host setup script |
-| `/app/libexec/cosmic-nightlight-cleanup` | payload for the setup; the uninstall cleanup |
+| `/app/bin/cosmic-ext-nightlight` | the applet and settings window |
+| `/app/libexec/cosmic-ext-nightlight-helper` | payload for the setup; never run in-sandbox |
+| `/app/libexec/cosmic-ext-nightlight-setup` | the one-time host setup script |
+| `/app/libexec/cosmic-ext-nightlight-cleanup` | payload for the setup; the uninstall cleanup |
 | `/app/share/polkit-1/rules.d/49-…rules` | payload for the setup |
 
 Installed on the host by the setup:
 
 | Path | Owner |
 |---|---|
-| `/usr/local/bin/cosmic-nightlight-helper` | `root:root 0755` |
-| `/etc/polkit-1/rules.d/49-cosmic-nightlight.rules` | `root:root 0644` |
-| `/var/lib/cosmic-nightlight/` (`cleanup.sh`, `sums`, `roots`) | `root:root 0755` |
-| `/etc/systemd/system/cosmic-nightlight-cleanup.path` | `root:root 0644` |
-| `/etc/systemd/system/cosmic-nightlight-cleanup@.service` | `root:root 0644` |
+| `/usr/local/bin/cosmic-ext-nightlight-helper` | `root:root 0755` |
+| `/etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules` | `root:root 0644` |
+| `/var/lib/cosmic-ext-nightlight/` (`cleanup.sh`, `sums`, `roots`) | `root:root 0755` |
+| `/etc/systemd/system/cosmic-ext-nightlight-cleanup.path` | `root:root 0644` |
+| `/etc/systemd/system/cosmic-ext-nightlight-cleanup@.service` | `root:root 0644` |
 
 Everything in the second table removes itself once the app is uninstalled. See
 [Cleaning up after an uninstall](#cleaning-up-after-an-uninstall).
@@ -529,7 +529,7 @@ Established by building the flatpak and running it, since none of it is in a spe
 
 Done, on branch `flatpak-sandbox-support`:
 
-- sandbox detection and host routing in `crates/cosmic-nightlight/src/backend.rs`
+- sandbox detection and host routing in `crates/cosmic-ext-nightlight/src/backend.rs`
 - the fallback to the bundled helper, so a fresh install tints the screen before
   the setup has ever been run
 - the manifest, in [`flatpak/`](../flatpak/)

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 #
-# Arch Linux packaging for cosmic-nightlight.
+# Arch Linux packaging for cosmic-ext-nightlight.
 #
 # .github/workflows/build-arch.yml builds this inside an Arch container. To build
 # it by hand on Arch, run `makepkg -si` in this directory: it downloads the
@@ -8,15 +8,15 @@
 # of it here under the name makepkg would download, and makepkg uses that:
 #
 #   pkgver=$(sed -n 's/^pkgver=//p' arch/PKGBUILD)
-#   git archive --prefix="cosmic-nightlight-$pkgver/" \
-#       -o arch/"cosmic-nightlight-$pkgver.tar.gz" HEAD
+#   git archive --prefix="cosmic-ext-nightlight-$pkgver/" \
+#       -o arch/"cosmic-ext-nightlight-$pkgver.tar.gz" HEAD
 #   (cd arch && makepkg -si)
 #
 # The pkgver below is one of the places the release version is written. Keep it
 # in step with Cargo.toml, debian/changelog, the metainfo and the RPM spec;
 # scripts/check-version.sh checks all of them at once.
 
-pkgname=cosmic-nightlight
+pkgname=cosmic-ext-nightlight
 pkgver=0.7.0
 pkgrel=1
 pkgdesc='Night light and screen tint for the COSMIC desktop'
@@ -34,12 +34,15 @@ depends=(
     # The privileged helper is reached through pkexec, which polkit provides.
     'polkit'
 )
+# The name before 0.7.0. Installing this replaces it.
+conflicts=('cosmic-nightlight')
+replaces=('cosmic-nightlight')
 makedepends=('cargo' 'git')
 # makepkg's LTO flags are meant for C and break the C parts some crates build.
 # No separate debug package, matching the .rpm.
 options=('!lto' '!debug')
 # Clears the tint when the package is removed.
-install=cosmic-nightlight.install
+install=cosmic-ext-nightlight.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 # The CI build swaps in an archive of the checkout under the same name, which
 # no fixed checksum could match.
@@ -55,7 +58,7 @@ build() {
     cd "$pkgname-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
-    cargo build --frozen --release -p nightlight-helper -p cosmic-nightlight
+    cargo build --frozen --release -p nightlight-helper -p cosmic-ext-nightlight
 }
 
 check() {
@@ -68,10 +71,10 @@ check() {
 package() {
     cd "$pkgname-$pkgver"
 
-    install -Dm0755 target/release/cosmic-nightlight-helper \
-        "$pkgdir/usr/bin/cosmic-nightlight-helper"
-    install -Dm0755 target/release/cosmic-nightlight \
-        "$pkgdir/usr/bin/cosmic-nightlight"
+    install -Dm0755 target/release/cosmic-ext-nightlight-helper \
+        "$pkgdir/usr/bin/cosmic-ext-nightlight-helper"
+    install -Dm0755 target/release/cosmic-ext-nightlight \
+        "$pkgdir/usr/bin/cosmic-ext-nightlight"
 
     install -Dm0644 data/io.github.cosmic_nightlight.desktop \
         "$pkgdir/usr/share/applications/io.github.cosmic_nightlight.desktop"
@@ -83,15 +86,19 @@ package() {
         "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg"
     install -Dm0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png \
         "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png"
-    install -Dm0644 polkit/49-cosmic-nightlight.rules \
-        "$pkgdir/usr/share/polkit-1/rules.d/49-cosmic-nightlight.rules"
+    install -Dm0644 polkit/49-cosmic-ext-nightlight.rules \
+        "$pkgdir/usr/share/polkit-1/rules.d/49-cosmic-ext-nightlight.rules"
 
     # Ship the user service but leave it disabled, as the .deb and .rpm do. The
     # applet keeps to the schedule on its own, so the daemon only covers the case
     # of the applet not being on the panel. Pacman never enables units anyway.
     # Taken from debian/ rather than systemd/, which points ExecStart at
     # /usr/local/bin and so names the wrong path for a packaged build.
-    install -Dm0644 debian/cosmic-nightlight.user.service \
+    install -Dm0644 debian/cosmic-ext-nightlight.user.service \
+        "$pkgdir/usr/lib/systemd/user/cosmic-ext-nightlight.service"
+    # The unit's name before 0.7.0, so a service enabled under it still starts.
+    # The app moves the enablement over to the new name the first time it runs.
+    ln -s cosmic-ext-nightlight.service \
         "$pkgdir/usr/lib/systemd/user/cosmic-nightlight.service"
 
     install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

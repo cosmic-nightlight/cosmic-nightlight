@@ -5,7 +5,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 # Keep cargo's caches inside the build tree so the build is self-contained.
 export CARGO_HOME = $(CURDIR)/debian/cargo_home
 
-DEB_DESTDIR = $(CURDIR)/debian/cosmic-nightlight
+DEB_DESTDIR = $(CURDIR)/debian/cosmic-ext-nightlight
 
 %:
 	dh $@
@@ -15,16 +15,16 @@ DEB_DESTDIR = $(CURDIR)/debian/cosmic-nightlight
 # offline (libcosmic is a git dependency).
 override_dh_auto_build:
 	cargo build --release --locked \
-		-p nightlight-helper -p cosmic-nightlight
+		-p nightlight-helper -p cosmic-ext-nightlight
 
 override_dh_auto_test:
 	cargo test --release --locked -p nightlight-core
 
 override_dh_auto_install:
-	install -D -m0755 target/release/cosmic-nightlight-helper \
-		$(DEB_DESTDIR)/usr/bin/cosmic-nightlight-helper
-	install -D -m0755 target/release/cosmic-nightlight \
-		$(DEB_DESTDIR)/usr/bin/cosmic-nightlight
+	install -D -m0755 target/release/cosmic-ext-nightlight-helper \
+		$(DEB_DESTDIR)/usr/bin/cosmic-ext-nightlight-helper
+	install -D -m0755 target/release/cosmic-ext-nightlight \
+		$(DEB_DESTDIR)/usr/bin/cosmic-ext-nightlight
 	install -D -m0644 data/io.github.cosmic_nightlight.desktop \
 		$(DEB_DESTDIR)/usr/share/applications/io.github.cosmic_nightlight.desktop
 	install -D -m0644 data/io.github.cosmic_nightlight.settings.desktop \
@@ -35,8 +35,8 @@ override_dh_auto_install:
 		$(DEB_DESTDIR)/usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
 	install -D -m0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png \
 		$(DEB_DESTDIR)/usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
-	install -D -m0644 polkit/49-cosmic-nightlight.rules \
-		$(DEB_DESTDIR)/usr/share/polkit-1/rules.d/49-cosmic-nightlight.rules
+	install -D -m0644 polkit/49-cosmic-ext-nightlight.rules \
+		$(DEB_DESTDIR)/usr/share/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
 
 override_dh_auto_clean:
 	rm -rf target debian/cargo_home
@@ -45,6 +45,6 @@ override_dh_auto_clean:
 # schedule itself, so the daemon only covers the case of not keeping the applet
 # on the panel; enabling the unit for everyone would run a second scheduler on
 # every login for no gain. Anyone who wants one can `systemctl --user enable
-# cosmic-nightlight.service` by hand.
+# cosmic-ext-nightlight.service` by hand.
 override_dh_installsystemduser:
 	dh_installsystemduser --no-enable

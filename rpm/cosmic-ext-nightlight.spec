@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: MPL-2.0
 #
-# RPM packaging for cosmic-nightlight.
+# RPM packaging for cosmic-ext-nightlight.
 #
 # .github/workflows/build-rpm.yml builds this inside a Fedora container. To build
 # it by hand on Fedora, rpmbuild wants a source archive rather than a working
 # tree, so make one first:
 #
-#   version=$(rpmspec -q --srpm --qf '%{version}' rpm/cosmic-nightlight.spec)
+#   version=$(rpmspec -q --srpm --qf '%{version}' rpm/cosmic-ext-nightlight.spec)
 #   mkdir -p ~/rpmbuild/SOURCES
-#   git archive --prefix="cosmic-nightlight-$version/" \
-#       -o ~/rpmbuild/SOURCES/"cosmic-nightlight-$version.tar.gz" HEAD
-#   rpmbuild -bb rpm/cosmic-nightlight.spec
+#   git archive --prefix="cosmic-ext-nightlight-$version/" \
+#       -o ~/rpmbuild/SOURCES/"cosmic-ext-nightlight-$version.tar.gz" HEAD
+#   rpmbuild -bb rpm/cosmic-ext-nightlight.spec
 #
 # The version below is one of the places the release version is written. Keep it
 # in step with Cargo.toml, debian/changelog and the metainfo;
@@ -20,7 +20,7 @@
 # symbols out of and would abort on the empty debuginfo package it finds.
 %global debug_package %{nil}
 
-Name:           cosmic-nightlight
+Name:           cosmic-ext-nightlight
 Version:        0.7.0
 Release:        1%{?dist}
 Summary:        Night light and screen tint for the COSMIC desktop
@@ -45,6 +45,10 @@ BuildRequires:  systemd-rpm-macros
 # The privileged helper is reached through pkexec, which polkit provides.
 Requires:       polkit
 
+# The name before 0.7.0. Installing this replaces it.
+Obsoletes:      cosmic-nightlight < 0.7.0
+Provides:       cosmic-nightlight = %{version}-%{release}
+
 %description
 A night-light utility for the COSMIC desktop that warms the screen color
 temperature on a schedule, either following sunset and sunrise or a schedule you
@@ -60,16 +64,16 @@ display, and switches back. The tint then persists.
 %autosetup
 
 %build
-cargo build --release --locked -p nightlight-helper -p cosmic-nightlight
+cargo build --release --locked -p nightlight-helper -p cosmic-ext-nightlight
 
 %check
 cargo test --release --locked -p nightlight-core
 
 %install
-install -D -m0755 target/release/cosmic-nightlight-helper \
-    %{buildroot}%{_bindir}/cosmic-nightlight-helper
-install -D -m0755 target/release/cosmic-nightlight \
-    %{buildroot}%{_bindir}/cosmic-nightlight
+install -D -m0755 target/release/cosmic-ext-nightlight-helper \
+    %{buildroot}%{_bindir}/cosmic-ext-nightlight-helper
+install -D -m0755 target/release/cosmic-ext-nightlight \
+    %{buildroot}%{_bindir}/cosmic-ext-nightlight
 
 install -D -m0644 data/io.github.cosmic_nightlight.desktop \
     %{buildroot}%{_datadir}/applications/io.github.cosmic_nightlight.desktop
@@ -81,25 +85,29 @@ install -D -m0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.s
     %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
 install -D -m0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png \
     %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
-install -D -m0644 polkit/49-cosmic-nightlight.rules \
-    %{buildroot}%{_datadir}/polkit-1/rules.d/49-cosmic-nightlight.rules
+install -D -m0644 polkit/49-cosmic-ext-nightlight.rules \
+    %{buildroot}%{_datadir}/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
 
 # Ship the user service but leave it disabled, exactly as the .deb does. The
 # applet keeps to the schedule on its own, so the daemon only covers the case of
 # the applet not being on the panel; enabling it for every user would run a second
 # scheduler at every login for no gain. Anyone who wants one can run
-# `systemctl --user enable --now cosmic-nightlight.service`.
+# `systemctl --user enable --now cosmic-ext-nightlight.service`.
 # Taken from debian/ rather than systemd/, which points ExecStart at
 # /usr/local/bin and so names the wrong path for a packaged build.
-install -D -m0644 debian/cosmic-nightlight.user.service \
-    %{buildroot}%{_userunitdir}/cosmic-nightlight.service
+install -D -m0644 debian/cosmic-ext-nightlight.user.service \
+    %{buildroot}%{_userunitdir}/cosmic-ext-nightlight.service
+%{_userunitdir}/cosmic-nightlight.service
+# The unit's name before 0.7.0, so a service enabled under it still starts.
+# The app moves the enablement over to the new name the first time it runs.
+ln -s cosmic-ext-nightlight.service %{buildroot}%{_userunitdir}/cosmic-nightlight.service
 
 # $1 is how many copies of the package remain: 0 on a removal, 1 on an upgrade.
 %preun
 if [ "$1" -eq 0 ]; then
     # Put the screen's colors back while the helper is still here to do it. The
     # helper does nothing if the screen is already clear.
-    %{_bindir}/cosmic-nightlight-helper --off >/dev/null 2>&1 || :
+    %{_bindir}/cosmic-ext-nightlight-helper --off >/dev/null 2>&1 || :
 fi
 
 %postun
@@ -112,15 +120,15 @@ fi
 %files
 %license LICENSE
 %doc README.md
-%{_bindir}/cosmic-nightlight
-%{_bindir}/cosmic-nightlight-helper
+%{_bindir}/cosmic-ext-nightlight
+%{_bindir}/cosmic-ext-nightlight-helper
 %{_datadir}/applications/io.github.cosmic_nightlight.desktop
 %{_datadir}/applications/io.github.cosmic_nightlight.settings.desktop
 %{_datadir}/metainfo/io.github.cosmic_nightlight.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
 %{_datadir}/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
-%{_datadir}/polkit-1/rules.d/49-cosmic-nightlight.rules
-%{_userunitdir}/cosmic-nightlight.service
+%{_datadir}/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
+%{_userunitdir}/cosmic-ext-nightlight.service
 
 %changelog
 * Wed Nov 11 2026 Daniel Watts <danielcwtts@gmail.com> - 0.7.0-1

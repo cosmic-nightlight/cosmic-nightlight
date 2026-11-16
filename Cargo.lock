@@ -928,21 +928,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosmic-freedesktop-icons"
-version = "0.4.0"
-source = "git+https://github.com/pop-os/freedesktop-icons#ab4c57b8e416c6af9297cb04d101889896fd9a92"
-dependencies = [
- "bstr",
- "btoi",
- "memchr",
- "memmap2 0.9.12",
- "thiserror 2.0.18",
- "tracing",
- "xdg",
-]
-
-[[package]]
-name = "cosmic-nightlight"
+name = "cosmic-ext-nightlight"
 version = "0.7.0"
 dependencies = [
  "chrono",
@@ -954,6 +940,20 @@ dependencies = [
  "ron",
  "rust-embed",
  "serde",
+]
+
+[[package]]
+name = "cosmic-freedesktop-icons"
+version = "0.4.0"
+source = "git+https://github.com/pop-os/freedesktop-icons#ab4c57b8e416c6af9297cb04d101889896fd9a92"
+dependencies = [
+ "bstr",
+ "btoi",
+ "memchr",
+ "memmap2 0.9.12",
+ "thiserror 2.0.18",
+ "tracing",
+ "xdg",
 ]
 
 [[package]]

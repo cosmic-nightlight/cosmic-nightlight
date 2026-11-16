@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The settings window (`cosmic-nightlight --settings`).
+//! The settings window (`cosmic-ext-nightlight --settings`).
 //!
 //! A normal libcosmic top-level window for the less-frequent configuration: the
 //! night temperature and brightness, the schedule mode, and the times the tint
@@ -484,7 +484,7 @@ impl cosmic::Application for SettingsWindow {
                 // as the icon appears.
                 Ok(()) => self.applet_present = Some(true),
                 Err(err) => {
-                    eprintln!("cosmic-nightlight: could not add the applet: {err}");
+                    eprintln!("cosmic-ext-nightlight: could not add the applet: {err}");
                     // Panel and dock have separate applet pages, and the panel
                     // is the one we tried to add to, so it is the one to open.
                     return self.open_cosmic_settings(PANEL_APPLET_PAGE);
@@ -496,7 +496,7 @@ impl cosmic::Application for SettingsWindow {
                     self.shortcut_error = None;
                 }
                 Err(err) => {
-                    eprintln!("cosmic-nightlight: could not add the keyboard shortcut: {err}");
+                    eprintln!("cosmic-ext-nightlight: could not add the keyboard shortcut: {err}");
                     self.shortcut_error = Some(err);
                 }
             },
@@ -507,7 +507,7 @@ impl cosmic::Application for SettingsWindow {
                 if let Err(err) =
                     backend::spawn_on_host_falling_back("cosmic-settings", page, token)
                 {
-                    eprintln!("cosmic-nightlight: {err}");
+                    eprintln!("cosmic-ext-nightlight: {err}");
                 }
             }
         }
@@ -806,7 +806,7 @@ impl SettingsWindow {
             Ok(()) => {
                 self.autostart_error = None;
                 println!(
-                    "cosmic-nightlight: the applet is on the panel, so background running \
+                    "cosmic-ext-nightlight: the applet is on the panel, so background running \
                      is no longer needed and has been turned off"
                 );
             }

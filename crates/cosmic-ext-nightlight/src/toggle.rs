@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! One-shot toggle mode (`cosmic-nightlight --toggle`).
+//! One-shot toggle mode (`cosmic-ext-nightlight --toggle`).
 //!
 //! Flips the night light the way the applet's switch does, then exits. It is
 //! meant to be bound to a keyboard shortcut in COSMIC Settings, since a Wayland
@@ -29,8 +29,8 @@ pub fn run() -> bool {
     let state = on.then_some(settings.temperature);
     if backend::apply(state, settings.brightness as f32) {
         match state {
-            Some(kelvin) => println!("cosmic-nightlight: turned on at {kelvin}K"),
-            None => println!("cosmic-nightlight: turned off"),
+            Some(kelvin) => println!("cosmic-ext-nightlight: turned on at {kelvin}K"),
+            None => println!("cosmic-ext-nightlight: turned off"),
         }
         true
     } else {
@@ -38,7 +38,7 @@ pub fn run() -> bool {
         // dismissed, most often): put the setting back, so it still describes
         // the screen and nothing re-prompts for it later.
         config::store_override(&handler, previous);
-        eprintln!("cosmic-nightlight: could not change the night light");
+        eprintln!("cosmic-ext-nightlight: could not change the night light");
         false
     }
 }

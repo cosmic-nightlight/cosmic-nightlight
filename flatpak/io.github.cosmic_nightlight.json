@@ -8,7 +8,7 @@
     "sdk-extensions": [
         "org.freedesktop.Sdk.Extension.rust-stable"
     ],
-    "command": "cosmic-nightlight",
+    "command": "cosmic-ext-nightlight",
     "finish-args": [
         "--share=ipc",
         "--socket=wayland",
@@ -22,20 +22,20 @@
     "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin",
         "env": {
-            "CARGO_HOME": "/run/build/cosmic-nightlight/cargo"
+            "CARGO_HOME": "/run/build/cosmic-ext-nightlight/cargo"
         }
     },
     "modules": [
         {
-            "name": "cosmic-nightlight",
+            "name": "cosmic-ext-nightlight",
             "buildsystem": "simple",
             "build-commands": [
-                "cargo --offline build --release --locked -p cosmic-nightlight -p nightlight-helper",
-                "install -Dm755 target/release/cosmic-nightlight /app/bin/cosmic-nightlight",
-                "install -Dm755 target/release/cosmic-nightlight-helper /app/libexec/cosmic-nightlight-helper",
-                "install -Dm755 scripts/flatpak-host-setup.sh /app/libexec/cosmic-nightlight-setup",
-                "install -Dm644 scripts/flatpak-host-cleanup.sh /app/libexec/cosmic-nightlight-cleanup",
-                "install -Dm644 polkit/49-cosmic-nightlight.rules /app/share/polkit-1/rules.d/49-cosmic-nightlight.rules",
+                "cargo --offline build --release --locked -p cosmic-ext-nightlight -p nightlight-helper",
+                "install -Dm755 target/release/cosmic-ext-nightlight /app/bin/cosmic-ext-nightlight",
+                "install -Dm755 target/release/cosmic-ext-nightlight-helper /app/libexec/cosmic-ext-nightlight-helper",
+                "install -Dm755 scripts/flatpak-host-setup.sh /app/libexec/cosmic-ext-nightlight-setup",
+                "install -Dm644 scripts/flatpak-host-cleanup.sh /app/libexec/cosmic-ext-nightlight-cleanup",
+                "install -Dm644 polkit/49-cosmic-ext-nightlight.rules /app/share/polkit-1/rules.d/49-cosmic-ext-nightlight.rules",
                 "install -Dm644 data/io.github.cosmic_nightlight.desktop /app/share/applications/io.github.cosmic_nightlight.desktop",
                 "install -Dm644 data/io.github.cosmic_nightlight.settings.desktop /app/share/applications/io.github.cosmic_nightlight.settings.desktop",
                 "install -Dm644 data/io.github.cosmic_nightlight.metainfo.xml /app/share/metainfo/io.github.cosmic_nightlight.metainfo.xml",
