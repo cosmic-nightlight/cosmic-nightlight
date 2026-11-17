@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 <div align="center">
-  <img src="data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.CosmicExtNightlight.svg" width="96" alt="">
+  <img src="data/icons/hicolor/scalable/apps/io.github.cosmic_ext_nightlight.svg" width="96" alt="">
   <h1>Night Light for COSMIC™</h1>
   <p>
     <a href="#install">Install</a> ·
@@ -192,7 +192,7 @@ try it anyway:
    page.
 2. `flatpak install --user ./cosmic-ext-nightlight-*.flatpak`
 3. Add the applet as in step 2 below, or open the settings with
-   `flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --settings`.
+   `flatpak run io.github.cosmic_ext_nightlight --settings`.
 
 If you have the flatpak from 0.6, this one installs beside it. Run the command
 in step 3 once. That moves your settings and panel icon over and removes the old
@@ -203,7 +203,7 @@ helper on your system. A sandboxed app can't change screen colors on its own
 ([why](docs/flatpak-design.md)).
 
 To remove it, uninstall it from the COSMIC Store or run
-`flatpak uninstall io.github.cosmic_nightlight.CosmicExtNightlight`. The helper removes itself a few
+`flatpak uninstall io.github.cosmic_ext_nightlight`. The helper removes itself a few
 seconds later.
 
 If you set up the helper with version 0.5.1 or earlier, it stays behind. Remove it with:
@@ -229,8 +229,8 @@ python3 -m venv venv
 curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
 ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json
 
-flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.CosmicExtNightlight.json
-flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --settings
+flatpak-builder --force-clean --user --install build io.github.cosmic_ext_nightlight.json
+flatpak run io.github.cosmic_ext_nightlight --settings
 ```
 
 This builds the latest release. To build your local changes instead, run

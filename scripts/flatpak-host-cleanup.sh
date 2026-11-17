@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-app_id=io.github.cosmic_nightlight.CosmicExtNightlight
+app_id=io.github.cosmic_ext_nightlight
 
 helper=/usr/local/bin/cosmic-ext-nightlight-helper
 rule=/etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules

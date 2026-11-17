@@ -16,12 +16,12 @@ from three catalogs, and only one takes submissions:
 | Catalog | How you get in |
 |---|---|
 | System (DEP-11 from apt repos) | Requires Ubuntu universe or System76 packaging it. No submission process. |
-| Flathub | Not tried. Until 0.7.0 the app ID had three components where Flathub requires four for `io.github.*`. Its other rules have not been checked against the host helper. |
+| Flathub | App ID has three components; Flathub requires four for `io.github.*`. |
 | **COSMIC Flatpak** | **A normal pull request.** The target. |
 
 The Applets page itself is not flatpak-only — `categories()` in the Store's
 `main.rs` searches every backend and filters only on the component kind and a
-`provides` ID, which `data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml` already
+`provides` ID, which `data/io.github.cosmic_ext_nightlight.metainfo.xml` already
 carries. It is the *catalogs* that are closed, not the page.
 
 ## The constraint
@@ -407,7 +407,7 @@ two `rm` lines in the README.
 ## Replacing the flatpak from before 0.7.0
 
 The app ID changed in 0.7.0, from `io.github.cosmic_nightlight` to
-`io.github.cosmic_nightlight.CosmicExtNightlight`. To flatpak those are two
+`io.github.cosmic_ext_nightlight`. To flatpak those are two
 unrelated apps. Installing 0.7.0 leaves 0.6 installed beside it, still on the
 panel, with a second Night Light in the launcher. A package can declare that it
 replaces another. A flatpak can only do that through its repo, and the 0.6
@@ -419,8 +419,8 @@ So the new app does the replacing, the first time it runs in any mode but
 1. It carries over the settings, the panel entry, a dock pin, the keyboard
    shortcut and the autostart entry, as the packages do. See PACKAGING.md.
    Renaming the panel entry is what stops cosmic-panel starting the old applet.
-2. It asks the host for `flatpak list` and looks for the old ID, matched whole.
-   The new ID starts with the old one, so a prefix match would find this app.
+2. It asks the host for `flatpak list` and looks for the old ID, matched whole
+   so that no other app can be taken for it.
 3. It runs `flatpak kill` and `flatpak uninstall --noninteractive -y
    --delete-data` on the old ID, in each installation that has it.
 

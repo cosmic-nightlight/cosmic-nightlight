@@ -9,12 +9,12 @@ Name=Night Light
 GenericName=Color Temperature
 Comment=Warm the screen color temperature on a schedule
 Exec=cosmic-ext-nightlight
-Icon=io.github.cosmic_nightlight.CosmicExtNightlight
+Icon=io.github.cosmic_ext_nightlight
 Terminal=false
 Categories=Utility;Settings;DesktopSettings;
 Keywords=night;light;shift;redshift;gamma;color;temperature;blue;warm;
 StartupNotify=true
-StartupWMClass=io.github.cosmic_nightlight.CosmicExtNightlight
+StartupWMClass=io.github.cosmic_ext_nightlight
 # Marks this as a COSMIC panel applet so it appears in the panel/dock applet
 # picker. NoDisplay keeps it out of the regular app launcher (launching the
 # applet outside the panel has no anchor); use the Settings entry instead.

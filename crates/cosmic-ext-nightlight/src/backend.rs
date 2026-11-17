@@ -643,8 +643,8 @@ fn retire_old_flatpak_now() {
 /// The installations that have the old flatpak, from the output of
 /// `flatpak list --app --columns=application,installation`.
 ///
-/// The ID has to match whole. Ours starts with the old one, so a prefix match
-/// would find this very app and uninstall it.
+/// The ID has to match whole, so that only the old app is ever uninstalled:
+/// not this one, and not an app whose ID merely starts the same way.
 fn old_flatpak_installations(listing: &str) -> Vec<String> {
     listing
         .lines()
@@ -2598,8 +2598,9 @@ mod tests {
 
     #[test]
     fn only_the_old_app_id_is_found_for_removal() {
-        let listing = "io.github.cosmic_nightlight.CosmicExtNightlight\tuser\n\
+        let listing = "io.github.cosmic_ext_nightlight\tuser\n\
                        io.github.cosmic_nightlight\tsystem\n\
+                       io.github.cosmic_nightlight.Other\tuser\n\
                        org.mozilla.firefox\tsystem\n\
                        io.github.cosmic_nightlight\tuser\n\
                        io.github.cosmic_nightlight\textra-drive\n";
@@ -2608,10 +2609,7 @@ mod tests {
             ["system", "user", "extra-drive"]
         );
         // With only this version installed there is nothing to remove.
-        assert!(old_flatpak_installations(
-            "io.github.cosmic_nightlight.CosmicExtNightlight\tuser\n"
-        )
-        .is_empty());
+        assert!(old_flatpak_installations("io.github.cosmic_ext_nightlight\tuser\n").is_empty());
         assert!(old_flatpak_installations("").is_empty());
         // A line without the installation column names nothing we could act on.
         assert!(old_flatpak_installations("io.github.cosmic_nightlight\n").is_empty());

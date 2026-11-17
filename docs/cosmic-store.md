@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 # What the COSMIC Store actually reads
 
-How `data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml` renders on the Store's app
+How `data/io.github.cosmic_ext_nightlight.metainfo.xml` renders on the Store's app
 page, and the handful of behaviors that will silently mangle it. For *why* the
 app ships as a flatpak at all, see [flatpak-design.md](flatpak-design.md).
 
@@ -45,26 +45,28 @@ on the host — which is why the app now ships an icon of its own.
 
 ## Decisions, and why
 
-**The app ID is `io.github.cosmic_nightlight.CosmicExtNightlight`.** Until 0.7.0 it was
-`io.github.cosmic_nightlight`, which named the GitHub org and nothing else. That
-prefix originally mapped to a GitHub account that had never been registered; that
-was resolved by creating the `cosmic-nightlight` org and **transferring** the repo
-rather than re-uploading, which preserved history, issues, stars and tags and
-301'd the old paths. The `-` → `_` convention matches `cosmic-utils` →
-`io.github.cosmic_utils`.
+**The app ID is `io.github.cosmic_ext_nightlight`.** Until 0.7.0 it was
+`io.github.cosmic_nightlight`, after the `cosmic-nightlight` org the repo lives in.
+That read as the app naming itself "COSMIC Night Light", which is what the
+cosmic-flatpak review of
+[#392](https://github.com/pop-os/cosmic-flatpak/pull/392) objected to. Third-party
+apps there carry `cosmic-ext` or `CosmicExt` in their names, and the new ID does
+too. It was changed before the Store accepted the app, while nobody had it
+installed from there: after that, an ID change needs the Store's repo to rebase
+every install. What the app does to carry an existing install over is described
+in [PACKAGING.md](../PACKAGING.md).
 
-The old ID had three components, and its last one read as the app naming itself
-"COSMIC Night Light", which is what the cosmic-flatpak review of
-[#392](https://github.com/pop-os/cosmic-flatpak/pull/392) objected to. Every
-other app in cosmic-flatpak is `<owner>.<App>`, most of them `CosmicExt…` or
-`cosmic-ext-…`. The new ID follows that, and has the four components Flathub
-requires of `io.github.*`. It was changed before the Store accepted the app, while
-nobody had it installed from there: after that, an ID change needs the Store's
-repo to rebase every install. What the app does to carry an existing install over
-is described in [PACKAGING.md](../PACKAGING.md).
+An `io.github.<name>` ID claims the GitHub account of that name, with `-` written
+as `_` (as in `cosmic-utils` → `io.github.cosmic_utils`). So the
+`cosmic-ext-nightlight` org exists to hold the name, and has to stay ours for as
+long as the ID is in use. The repo itself is still in `cosmic-nightlight`, where
+every link shared so far points. The ID does not depend on where the repo lives,
+so the repo can move or be renamed without the ID changing again.
 
-The ID still starts with the org's name. If the org ever has to be renamed, the
-ID would have to change again.
+Flathub requires `io.github.*` IDs to have at least four components and this has
+three, so Flathub would reject it. cosmic-flatpak states no ID rule and its CI
+only checks that the manifest builds, but every other `io.github.*` app there
+uses four components, so a reviewer may remark on it.
 
 **`<developer id="io.github.danielcwtts">` is unchanged by the org transfer.**
 That identifies the person, not the project, and the account is still owned.
@@ -108,10 +110,10 @@ PPA — still requires users to add the PPA first, which defeats the point.
 
 ```bash
 # Validator (expect exit 0, plus the deliberate developer-name deprecation info)
-appstreamcli validate --pedantic --explain data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml
+appstreamcli validate --pedantic --explain data/io.github.cosmic_ext_nightlight.metainfo.xml
 
 # What the DEP-11 catalog entry compiles to
-appstreamcli convert data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml out.yml --format=yaml
+appstreamcli convert data/io.github.cosmic_ext_nightlight.metainfo.xml out.yml --format=yaml
 
 # Desktop entries
 desktop-file-validate data/*.desktop

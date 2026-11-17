@@ -19,7 +19,7 @@ set -uo pipefail
 STASH="$(mktemp -d /tmp/nightlight-test-stash.XXXXXX)"
 HELPER=/usr/local/bin/cosmic-ext-nightlight-helper
 RULE=/etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
-CFG="$HOME/.config/cosmic/io.github.cosmic_nightlight.CosmicExtNightlight/v1/override"
+CFG="$HOME/.config/cosmic/io.github.cosmic_ext_nightlight/v1/override"
 LOG="$STASH/daemon.log"
 RUN_SECONDS=90
 
@@ -139,7 +139,7 @@ cat <<EOF
 EOF
 read -rp "   Press Enter to start. " _
 
-timeout "$RUN_SECONDS" flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --daemon >"$LOG" 2>&1
+timeout "$RUN_SECONDS" flatpak run io.github.cosmic_ext_nightlight --daemon >"$LOG" 2>&1
 echo
 echo ">> Done. Daemon output:"
 echo "---------------------------------------------------------------"

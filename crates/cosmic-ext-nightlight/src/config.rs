@@ -3,7 +3,7 @@
 //! Persistent settings shared by every run mode (applet, settings window,
 //! daemon). They are stored through libcosmic's `cosmic_config` so the three
 //! processes — all running as the same user — read and write the same state at
-//! `~/.config/cosmic/io.github.cosmic_nightlight.CosmicExtNightlight/v1/<key>`.
+//! `~/.config/cosmic/io.github.cosmic_ext_nightlight/v1/<key>`.
 //!
 //! Reads fall back to [`Settings::default`] when a key is missing or the config
 //! directory is unavailable; writes are best-effort (a missing config handle
@@ -18,10 +18,11 @@ use crate::solar;
 /// Config namespace; also the applet's application/desktop id. Every run mode
 /// shares this namespace, so it is what [`handler`] opens regardless of which
 /// one is running.
-pub const APP_ID: &str = "io.github.cosmic_nightlight.CosmicExtNightlight";
+pub const APP_ID: &str = "io.github.cosmic_ext_nightlight";
 
-/// [`APP_ID`] before 0.7.0. It named the GitHub organization and nothing else,
-/// which read as the app calling itself "COSMIC Night Light".
+/// [`APP_ID`] before 0.7.0. It lacked the `ext` that marks an app as not being
+/// part of COSMIC itself, so it read as the app calling itself "COSMIC Night
+/// Light".
 ///
 /// Everything a user's system still files under this name is carried over at
 /// startup by [`crate::migrate`]: the settings, the panel entry, a dock pin, the
@@ -29,7 +30,7 @@ pub const APP_ID: &str = "io.github.cosmic_nightlight.CosmicExtNightlight";
 pub const OLD_APP_ID: &str = "io.github.cosmic_nightlight";
 
 /// The settings window's own application id, which is the desktop id of
-/// `io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop`.
+/// `io.github.cosmic_ext_nightlight.Settings.desktop`.
 ///
 /// It must differ from [`APP_ID`]: a dock or task switcher identifies a window by
 /// the id it reports and then looks for the desktop entry of the same name to get
@@ -41,7 +42,7 @@ pub const OLD_APP_ID: &str = "io.github.cosmic_nightlight";
 /// This is only the window's identity. The config namespace stays [`APP_ID`] for
 /// every run mode, so the applet and the settings window still read and write the
 /// same settings.
-pub const SETTINGS_APP_ID: &str = "io.github.cosmic_nightlight.CosmicExtNightlight.Settings";
+pub const SETTINGS_APP_ID: &str = "io.github.cosmic_ext_nightlight.Settings";
 
 /// [`SETTINGS_APP_ID`] before 0.7.0, which is what a dock pin made back then
 /// still names.

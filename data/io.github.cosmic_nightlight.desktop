@@ -14,6 +14,6 @@
 Type=Application
 Name=Night Light
 Exec=cosmic-ext-nightlight
-Icon=io.github.cosmic_nightlight.CosmicExtNightlight
+Icon=io.github.cosmic_ext_nightlight
 Terminal=false
 NoDisplay=true

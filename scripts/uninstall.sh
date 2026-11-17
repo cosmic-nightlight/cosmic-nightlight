@@ -22,7 +22,7 @@ config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 # Every app id this has shipped under, current first. The teardown steps below
 # loop over all of them, so upgrading past a rename and then uninstalling doesn't
 # strand what an earlier version left under its own id.
-app_ids=(io.github.cosmic_nightlight.CosmicExtNightlight io.github.cosmic_nightlight io.github.cosmic_nightshift)
+app_ids=(io.github.cosmic_ext_nightlight io.github.cosmic_nightlight io.github.cosmic_nightshift)
 
 # Every name the files have had, current first. Before 0.7.0 the package was
 # called cosmic-nightlight, and its binaries, rule and units were named after it.
@@ -149,13 +149,13 @@ for name in "${names[@]}"; do
     remove "/etc/polkit-1/rules.d/49-$name.rules"
 done
 # Under the app id now, and under the one before 0.7.0.
-for id in io.github.cosmic_nightlight.CosmicExtNightlight io.github.cosmic_nightlight; do
+for id in io.github.cosmic_ext_nightlight io.github.cosmic_nightlight; do
     remove "/usr/share/applications/$id.desktop"
     remove "/usr/share/metainfo/$id.metainfo.xml"
     remove "/usr/share/icons/hicolor/scalable/apps/$id.svg"
     remove "/usr/share/icons/hicolor/128x128/apps/$id.png"
 done
-remove /usr/share/applications/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop
+remove /usr/share/applications/io.github.cosmic_ext_nightlight.Settings.desktop
 remove /usr/share/applications/io.github.cosmic_nightlight.settings.desktop
 # The flatpak's uninstall cleanup, which step 2 already stopped.
 for name in "${names[@]}"; do
@@ -206,6 +206,6 @@ echo "  sudo apt purge cosmic-ext-nightlight"
 echo "(or cosmic-nightlight, its name before 0.7.0)."
 echo "Purge rather than remove: 'remove' leaves the package in dpkg's 'rc' state,"
 echo "which keeps its config files and still lists it in 'dpkg -l'."
-echo "Your settings remain in $config_home/cosmic/io.github.cosmic_nightlight.CosmicExtNightlight"
+echo "Your settings remain in $config_home/cosmic/io.github.cosmic_ext_nightlight"
 echo "(and io.github.cosmic_nightlight, from before 0.7.0). Delete both to fully reset."
 echo "If the polkit rule is still active, you may need to: sudo systemctl restart polkit"

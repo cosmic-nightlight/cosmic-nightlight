@@ -5,7 +5,7 @@ The manifest here is the one submitted to
 [pop-os/cosmic-flatpak](https://github.com/pop-os/cosmic-flatpak), which is what
 puts the applet in the COSMIC Store. It is kept in this repo so it stays in step
 with the code; submitting means copying it plus `cargo-sources.json` to
-`app/io.github.cosmic_nightlight.CosmicExtNightlight/` over there.
+`app/io.github.cosmic_ext_nightlight/` over there.
 
 ## Why the sandbox needs a host helper
 
@@ -93,19 +93,19 @@ local manifest before every build. Stop if either generation command fails:
 ```bash
 ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json &&
 python3 generate-local-manifest.py &&
-flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.CosmicExtNightlight.local.json
+flatpak-builder --force-clean --user --install build io.github.cosmic_ext_nightlight.local.json
 ```
 
 The script copies the main manifest and replaces the app's git source with the
 working directory, excluding build artifacts. This preserves permissions and
 build commands without maintaining a second manifest by hand. The generated
-`io.github.cosmic_nightlight.CosmicExtNightlight.local.json` is gitignored.
+`io.github.cosmic_ext_nightlight.local.json` is gitignored.
 
 To build the pinned release instead, generate `cargo-sources.json` from the
 `Cargo.lock` at the main manifest's pinned commit, then run:
 
 ```bash
-flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.CosmicExtNightlight.json
+flatpak-builder --force-clean --user --install build io.github.cosmic_ext_nightlight.json
 ```
 
 CI regenerates dependency sources and sets the main manifest's source to the ref

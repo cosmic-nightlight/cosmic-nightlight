@@ -8,7 +8,7 @@ from pathlib import Path
 
 def main():
     directory = Path(__file__).resolve().parent
-    manifest = json.loads((directory / "io.github.cosmic_nightlight.CosmicExtNightlight.json").read_text())
+    manifest = json.loads((directory / "io.github.cosmic_ext_nightlight.json").read_text())
     module = next(m for m in manifest["modules"] if m["name"] == "cosmic-ext-nightlight")
     module["sources"][0] = {
         "type": "dir",
@@ -21,7 +21,7 @@ def main():
             "flatpak/venv",
         ],
     }
-    output = directory / "io.github.cosmic_nightlight.CosmicExtNightlight.local.json"
+    output = directory / "io.github.cosmic_ext_nightlight.local.json"
     output.write_text(json.dumps(manifest, indent=4) + "\n")
     print(output)
 

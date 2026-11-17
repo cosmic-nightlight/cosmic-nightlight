@@ -83,20 +83,20 @@ package() {
     # through this link as the new version.
     ln -s cosmic-ext-nightlight "$pkgdir/usr/bin/cosmic-nightlight"
 
-    install -Dm0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.desktop \
-        "$pkgdir/usr/share/applications/io.github.cosmic_nightlight.CosmicExtNightlight.desktop"
+    install -Dm0644 data/io.github.cosmic_ext_nightlight.desktop \
+        "$pkgdir/usr/share/applications/io.github.cosmic_ext_nightlight.desktop"
     # The applet's entry under its pre-0.7.0 ID, which a panel set up before
     # the upgrade still starts it by. See the comment in the file.
     install -Dm0644 data/io.github.cosmic_nightlight.desktop \
         "$pkgdir/usr/share/applications/io.github.cosmic_nightlight.desktop"
-    install -Dm0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop \
-        "$pkgdir/usr/share/applications/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop"
-    install -Dm0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml \
-        "$pkgdir/usr/share/metainfo/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml"
-    install -Dm0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.CosmicExtNightlight.svg \
-        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.CosmicExtNightlight.svg"
-    install -Dm0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.CosmicExtNightlight.png \
-        "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.CosmicExtNightlight.png"
+    install -Dm0644 data/io.github.cosmic_ext_nightlight.Settings.desktop \
+        "$pkgdir/usr/share/applications/io.github.cosmic_ext_nightlight.Settings.desktop"
+    install -Dm0644 data/io.github.cosmic_ext_nightlight.metainfo.xml \
+        "$pkgdir/usr/share/metainfo/io.github.cosmic_ext_nightlight.metainfo.xml"
+    install -Dm0644 data/icons/hicolor/scalable/apps/io.github.cosmic_ext_nightlight.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.cosmic_ext_nightlight.svg"
+    install -Dm0644 data/icons/hicolor/128x128/apps/io.github.cosmic_ext_nightlight.png \
+        "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.cosmic_ext_nightlight.png"
     install -Dm0644 polkit/49-cosmic-ext-nightlight.rules \
         "$pkgdir/usr/share/polkit-1/rules.d/49-cosmic-ext-nightlight.rules"
 

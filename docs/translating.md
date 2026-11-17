@@ -51,10 +51,10 @@ especially in the time pickers.
 **The app name in menus and the Store.** These live in two other files. Add a
 translated line next to each English one:
 
-- In `data/io.github.cosmic_nightlight.CosmicExtNightlight.desktop` and
-  `data/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop`, add `Name[de]=`,
+- In `data/io.github.cosmic_ext_nightlight.desktop` and
+  `data/io.github.cosmic_ext_nightlight.Settings.desktop`, add `Name[de]=`,
   `GenericName[de]=`, `Comment[de]=` and `Keywords[de]=` lines.
-- In `data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml`, copy `<name>`, `<summary>`,
+- In `data/io.github.cosmic_ext_nightlight.metainfo.xml`, copy `<name>`, `<summary>`,
   the description paragraphs and screenshot captions with `xml:lang="de"` added,
   like `<name xml:lang="de">Nachtlicht für COSMIC</name>`. Leave the release notes
   in English.

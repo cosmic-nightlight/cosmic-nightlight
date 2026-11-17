@@ -527,7 +527,7 @@ mod tests {
         let mut custom = parse(
             r#"{ (modifiers: [Super, Alt], key: "F9"): Spawn("cosmic-ext-nightlight --toggle") }"#,
         );
-        let command = "flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --toggle";
+        let command = "flatpak run io.github.cosmic_ext_nightlight --toggle";
         let label = add_to(&mut custom, &Entries::default(), command, "Night Light").unwrap();
         assert_eq!(label, "Super+Alt+F9");
         assert_eq!(custom.0.len(), 1);
@@ -612,7 +612,7 @@ mod tests {
 
     #[test]
     fn a_flatpak_shortcut_to_the_old_app_id_is_repointed() {
-        let command = "flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --toggle";
+        let command = "flatpak run io.github.cosmic_ext_nightlight --toggle";
         let mut custom = parse(
             r#"{
             (modifiers: [Super], key: "a"): Spawn("cosmic-nightlight --toggle"),
@@ -643,7 +643,7 @@ mod tests {
         assert!(is_ours("/usr/bin/cosmic-ext-nightlight --toggle"));
         assert!(is_ours("flatpak run io.github.cosmic_nightlight --toggle"));
         assert!(is_ours(
-            "flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --toggle"
+            "flatpak run io.github.cosmic_ext_nightlight --toggle"
         ));
         assert!(!is_ours("flatpak run io.github.someone_else.App --toggle"));
         assert!(!is_ours("cosmic-ext-nightlight --settings"));
