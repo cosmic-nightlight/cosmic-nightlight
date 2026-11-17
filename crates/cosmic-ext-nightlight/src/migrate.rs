@@ -5,13 +5,81 @@
 use std::fs;
 use std::io;
 
-use crate::autostart;
-use crate::config::APP_ID;
+use std::path::Path;
 
-/// App ids this binary has shipped under. The pre-rename one is here because a
-/// Night Shift → Night Light upgrade leaves its autostart entry behind under the
-/// old name, where nothing since has been able to see it.
-const APP_IDS: &[&str] = &[APP_ID, "io.github.cosmic_nightshift"];
+use crate::autostart;
+use crate::config::{APP_ID, CONFIG_VERSION, OLD_APP_ID};
+
+/// App ids this binary has shipped under. The earlier ones are here because an
+/// upgrade leaves an autostart entry behind under the old name, where nothing
+/// since has been able to see it. An entry under [`OLD_APP_ID`] that carries
+/// [`autostart::MARKER`] is a live setting, which [`autostart::adopt_old_entry`]
+/// has already moved by the time this list is used.
+const APP_IDS: &[&str] = &[APP_ID, OLD_APP_ID, "io.github.cosmic_nightshift"];
+
+/// Copies the settings saved under [`OLD_APP_ID`] to where this version reads
+/// them, so an upgrade keeps the schedule, warmth and brightness.
+///
+/// `cosmic_config` files settings under the app ID, which changed in 0.7.0.
+/// This has to run before anything opens our config, as opening it creates the
+/// new directory, empty, and every setting would read as its default.
+///
+/// The old directory is left where it is. A 0.6 flatpak installed beside this
+/// one still reads it, and so would a downgrade.
+pub fn import_settings() {
+    if let Some(config_home) = autostart::config_home() {
+        import_settings_in(&config_home.join("cosmic"));
+    }
+}
+
+/// [`import_settings`] under a given `cosmic` config directory.
+///
+/// Settings already saved under the new ID are never touched: the copy happens
+/// only while that directory is missing or empty. It is built beside the real
+/// one and renamed into place, so another of our processes starting at the same
+/// moment sees either no settings yet or all of them, never half.
+fn import_settings_in(cosmic: &Path) {
+    let version = format!("v{CONFIG_VERSION}");
+    let old = cosmic.join(OLD_APP_ID).join(&version);
+    let new_parent = cosmic.join(APP_ID);
+    let new = new_parent.join(&version);
+
+    if !old.is_dir() || fs::read_dir(&new).is_ok_and(|mut entries| entries.next().is_some()) {
+        return;
+    }
+
+    let staging = new_parent.join(format!(".{version}.import-{}", std::process::id()));
+    let copied = (|| -> io::Result<usize> {
+        let _ = fs::remove_dir_all(&staging);
+        fs::create_dir_all(&staging)?;
+        let mut count = 0;
+        for entry in fs::read_dir(&old)? {
+            let entry = entry?;
+            // Each setting is one plain file. Anything else is not ours.
+            if entry.file_type()?.is_file() {
+                fs::copy(entry.path(), staging.join(entry.file_name()))?;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            // Replaces an empty directory, and fails if another process has
+            // filled it in the meantime, which is the outcome we want then.
+            fs::rename(&staging, &new)?;
+        }
+        Ok(count)
+    })();
+    let _ = fs::remove_dir_all(&staging);
+
+    match copied {
+        Ok(0) => {}
+        Ok(_) => println!("cosmic-ext-nightlight: carried the settings over from {old:?}"),
+        Err(err) => {
+            eprintln!(
+                "cosmic-ext-nightlight: could not carry the settings over from {old:?}: {err}"
+            )
+        }
+    }
+}
 
 /// Removes the XDG autostart entry that the old "Start on login" toggle wrote.
 ///
@@ -131,7 +199,7 @@ fn move_service_enablement_in(config_home: &std::path::Path) {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     fn scratch(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -181,6 +249,73 @@ mod tests {
 
         assert!(fs::symlink_metadata(wants.join(OLD_UNIT)).is_ok());
         assert!(fs::symlink_metadata(wants.join(UNIT)).is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A `cosmic` config directory holding settings saved under the old app ID.
+    fn old_settings(root: &Path) -> PathBuf {
+        let old = root.join(OLD_APP_ID).join("v1");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("temperature"), "3200").unwrap();
+        fs::write(old.join("schedule"), "\"custom\"").unwrap();
+        old
+    }
+
+    #[test]
+    fn settings_under_the_old_app_id_are_carried_over() {
+        let root = scratch("import");
+        let old = old_settings(&root);
+
+        import_settings_in(&root);
+
+        let new = root.join(APP_ID).join("v1");
+        assert_eq!(fs::read_to_string(new.join("temperature")).unwrap(), "3200");
+        assert_eq!(
+            fs::read_to_string(new.join("schedule")).unwrap(),
+            "\"custom\""
+        );
+        // The old ones stay, for a 0.6 install that is still around.
+        assert!(old.join("temperature").is_file());
+        // Nothing of the staging directory is left behind.
+        assert_eq!(fs::read_dir(root.join(APP_ID)).unwrap().count(), 1);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn settings_are_carried_into_an_empty_directory() {
+        let root = scratch("import-empty");
+        old_settings(&root);
+        let new = root.join(APP_ID).join("v1");
+        fs::create_dir_all(&new).unwrap();
+
+        import_settings_in(&root);
+
+        assert_eq!(fs::read_to_string(new.join("temperature")).unwrap(), "3200");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn settings_already_under_the_new_app_id_are_kept() {
+        let root = scratch("import-kept");
+        old_settings(&root);
+        let new = root.join(APP_ID).join("v1");
+        fs::create_dir_all(&new).unwrap();
+        fs::write(new.join("temperature"), "4500").unwrap();
+
+        import_settings_in(&root);
+
+        assert_eq!(fs::read_to_string(new.join("temperature")).unwrap(), "4500");
+        assert!(!new.join("schedule").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_fresh_install_gets_no_settings_directory() {
+        let root = scratch("import-fresh");
+
+        import_settings_in(&root);
+
+        assert!(!root.join(APP_ID).exists());
         fs::remove_dir_all(&root).unwrap();
     }
 }

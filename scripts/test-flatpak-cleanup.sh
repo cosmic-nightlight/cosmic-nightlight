@@ -16,7 +16,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cleanup="$(realpath "${1:-$here/flatpak-host-cleanup.sh}")"
-app_id=io.github.cosmic_nightlight
+app_id=io.github.cosmic_nightlight.CosmicExtNightlight
 
 command -v bwrap >/dev/null || {
     echo "bwrap is not installed" >&2

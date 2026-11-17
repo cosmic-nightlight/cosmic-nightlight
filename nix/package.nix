@@ -95,15 +95,19 @@ rustPlatform.buildRustPackage (
     postInstall = ''
       install -Dm0755 ${helper}/bin/cosmic-ext-nightlight-helper -t $out/libexec
 
+      install -Dm0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.desktop \
+        -t $out/share/applications
+      # The applet's entry under its pre-0.7.0 ID, which a panel set up before
+      # the upgrade still starts it by. See the comment in the file.
       install -Dm0644 data/io.github.cosmic_nightlight.desktop \
         -t $out/share/applications
-      install -Dm0644 data/io.github.cosmic_nightlight.settings.desktop \
+      install -Dm0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop \
         -t $out/share/applications
-      install -Dm0644 data/io.github.cosmic_nightlight.metainfo.xml \
+      install -Dm0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml \
         -t $out/share/metainfo
-      install -Dm0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg \
+      install -Dm0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.CosmicExtNightlight.svg \
         -t $out/share/icons/hicolor/scalable/apps
-      install -Dm0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png \
+      install -Dm0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.CosmicExtNightlight.png \
         -t $out/share/icons/hicolor/128x128/apps
 
       # Shipped but not enabled, as in the other packages. The applet keeps to the

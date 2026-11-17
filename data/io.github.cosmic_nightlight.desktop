@@ -1,22 +1,19 @@
 [Desktop Entry]
-# Translations go in this file, not in the Fluent catalogs: the desktop and the
-# software centers read this entry directly, before anything of ours has run.
-# Add a suffixed line beside each of Name, GenericName, Comment and Keywords —
-# `Name[de]=...` — and leave the unsuffixed lines as the English fallback. See
-# docs/translating.md.
+# The applet's desktop entry under the app ID it had before 0.7.0. Not for the
+# flatpak, which can only export entries named after its own ID.
+#
+# cosmic-panel starts an applet by looking up the entry its config names, and a
+# panel set up before the upgrade still names this one. Without it the applet
+# would silently leave the panel. With it the applet starts, renames its panel
+# entry to the new ID (config::adopt_panel_entry), and is restarted from the
+# real entry. Drop this file once upgrades from 0.6 no longer matter.
+#
+# There is no X-CosmicApplet key on purpose. cosmic-panel does not need it, and
+# COSMIC Settings lists only entries that have it, so the applet picker shows
+# Night Light once.
 Type=Application
 Name=Night Light
-GenericName=Color Temperature
-Comment=Warm the screen color temperature on a schedule
 Exec=cosmic-ext-nightlight
-Icon=io.github.cosmic_nightlight
+Icon=io.github.cosmic_nightlight.CosmicExtNightlight
 Terminal=false
-Categories=Utility;Settings;DesktopSettings;
-Keywords=night;light;shift;redshift;gamma;color;temperature;blue;warm;
-StartupNotify=true
-StartupWMClass=io.github.cosmic_nightlight
-# Marks this as a COSMIC panel applet so it appears in the panel/dock applet
-# picker. NoDisplay keeps it out of the regular app launcher (launching the
-# applet outside the panel has no anchor); use the Settings entry instead.
-X-CosmicApplet=true
 NoDisplay=true

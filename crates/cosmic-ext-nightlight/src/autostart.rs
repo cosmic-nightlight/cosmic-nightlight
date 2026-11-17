@@ -37,7 +37,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::config::APP_ID;
+use crate::config::{APP_ID, OLD_APP_ID};
 
 /// Marks a daemon as the one this setting manages, as opposed to one started by
 /// the systemd unit or by hand.
@@ -120,6 +120,59 @@ pub fn heal() {
     match fs::write(&path, entry()) {
         Ok(()) => println!("cosmic-ext-nightlight: updated the autostart entry {path:?}"),
         Err(err) => eprintln!("cosmic-ext-nightlight: failed to update {path:?}: {err}"),
+    }
+}
+
+/// Takes over the entry a version before 0.7.0 wrote under [`OLD_APP_ID`], so
+/// "Run in Background" stays on across the upgrade.
+///
+/// The entry is filed under the app ID, which changed, so this version would
+/// otherwise read the setting as off while the old entry went on starting a
+/// daemon at every login that no switch could stop.
+///
+/// The new entry is written before the old one is removed, so a failure in
+/// between leaves the setting on. Removing the old one is also what stops a
+/// daemon from before the upgrade that is still running: its entry is its
+/// switch. That daemon reads the old settings, so it has to go, and a new one is
+/// started in its place. The new one waits for the old to let go of the slot.
+/// See [`crate::daemon::run`].
+///
+/// `is_managed_daemon` is for the daemon the old entry itself started at login,
+/// which is already the replacement and needs no other.
+///
+/// An old entry without [`MARKER`] is the "Start on login" fossil, and is left
+/// for [`crate::migrate::remove_autostart_entries`].
+pub fn adopt_old_entry(is_managed_daemon: bool) {
+    let Some(dir) = dir() else {
+        return;
+    };
+    let old = dir.join(format!("{OLD_APP_ID}.desktop"));
+    if !fs::read_to_string(&old).is_ok_and(|entry| entry.contains(MARKER)) {
+        return;
+    }
+
+    if !is_enabled() {
+        let Some(path) = entry_path() else {
+            return;
+        };
+        if let Err(err) = fs::write(&path, entry()) {
+            eprintln!("cosmic-ext-nightlight: could not write {path:?}: {err}");
+            return;
+        }
+    }
+    match fs::remove_file(&old) {
+        Ok(()) => println!("cosmic-ext-nightlight: moved the autostart entry from {old:?}"),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => {
+            eprintln!("cosmic-ext-nightlight: could not remove {old:?}: {err}");
+            return;
+        }
+    }
+
+    if !is_managed_daemon {
+        if let Err(err) = start_daemon() {
+            eprintln!("cosmic-ext-nightlight: {err}");
+        }
     }
 }
 

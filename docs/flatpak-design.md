@@ -16,12 +16,12 @@ from three catalogs, and only one takes submissions:
 | Catalog | How you get in |
 |---|---|
 | System (DEP-11 from apt repos) | Requires Ubuntu universe or System76 packaging it. No submission process. |
-| Flathub | App ID has three components; Flathub requires four for `io.github.*`. |
+| Flathub | Not tried. Until 0.7.0 the app ID had three components where Flathub requires four for `io.github.*`. Its other rules have not been checked against the host helper. |
 | **COSMIC Flatpak** | **A normal pull request.** The target. |
 
 The Applets page itself is not flatpak-only — `categories()` in the Store's
 `main.rs` searches every backend and filters only on the component kind and a
-`provides` ID, which `data/io.github.cosmic_nightlight.metainfo.xml` already
+`provides` ID, which `data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml` already
 carries. It is the *catalogs* that are closed, not the page.
 
 ## The constraint

@@ -22,7 +22,9 @@ The `debian/` directory here produces a single binary package,
 | `/usr/bin/cosmic-ext-nightlight-helper` | privileged DRM/VT helper (run via pkexec) |
 | `/usr/bin/cosmic-ext-nightlight` | libcosmic GUI + `--daemon` scheduler |
 | `/usr/share/polkit-1/rules.d/49-cosmic-ext-nightlight.rules` | passwordless pkexec for `wheel`/`sudo` |
-| `/usr/share/applications/io.github.cosmic_nightlight.desktop` | launcher entry |
+| `/usr/share/applications/io.github.cosmic_nightlight.CosmicExtNightlight.desktop` | the applet's entry, which the panel starts it by |
+| `/usr/share/applications/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop` | launcher entry for the settings window |
+| `/usr/share/applications/io.github.cosmic_nightlight.desktop` | the applet's entry under its pre-0.7.0 app ID |
 | `/usr/lib/systemd/user/cosmic-ext-nightlight.service` | per-user scheduler unit |
 | `/usr/lib/systemd/user/cosmic-nightlight.service` | alias of the unit under its pre-0.7.0 name |
 
@@ -30,7 +32,18 @@ Before 0.7.0 the package was called `cosmic-nightlight`, and every package forma
 declares that it replaces it (`Conflicts`/`Replaces`, `Obsoletes`, `replaces`).
 The alias keeps a service enabled under the old name starting; the app moves the
 enablement to the new name the first time it runs (`migrate.rs`), so the alias can
-go in a later release. The app ID, `io.github.cosmic_nightlight`, did not change.
+go in a later release.
+
+The app ID changed in 0.7.0 as well, from `io.github.cosmic_nightlight` to
+`io.github.cosmic_nightlight.CosmicExtNightlight`. Settings, the panel entry, a dock pin,
+the keyboard shortcut and the autostart entry are all filed under it, and the app
+carries each one over the first time it runs (`migrate.rs`, `config.rs`,
+`autostart.rs`, `shortcut.rs`). The one piece a package has to supply is the
+applet's desktop entry under the old ID. cosmic-panel starts an applet by the
+entry its config names, so without that file the applet would never start to
+rename its own panel entry. Every package format and `install.sh` ship it. It is
+hidden from the applet picker, and can go in a later release together with the
+alias.
 
 ## Build dependencies
 
@@ -193,7 +206,7 @@ The Store draws from three catalogs, and only one of them takes submissions:
 | Catalog | How you get in |
 | --- | --- |
 | System (DEP-11 from apt repos) | Requires Ubuntu universe or System76 packaging it. No submission process. |
-| Flathub | Blocked on the app ID: three components where `io.github.*` needs four. |
+| Flathub | Not tried. Until 0.7.0 the app ID had three components where `io.github.*` needs four. Its other rules have not been checked against the host helper. |
 | **COSMIC Flatpak** | **A normal pull request.** The target. |
 
 So the route in is the flatpak, not the `.deb` — see

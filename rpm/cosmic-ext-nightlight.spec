@@ -80,16 +80,20 @@ install -D -m0755 target/release/cosmic-ext-nightlight \
 # the new version.
 ln -s cosmic-ext-nightlight %{buildroot}%{_bindir}/cosmic-nightlight
 
+install -D -m0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.desktop \
+    %{buildroot}%{_datadir}/applications/io.github.cosmic_nightlight.CosmicExtNightlight.desktop
+# The applet's entry under its pre-0.7.0 ID, which a panel set up before the
+# upgrade still starts it by. See the comment in the file.
 install -D -m0644 data/io.github.cosmic_nightlight.desktop \
     %{buildroot}%{_datadir}/applications/io.github.cosmic_nightlight.desktop
-install -D -m0644 data/io.github.cosmic_nightlight.settings.desktop \
-    %{buildroot}%{_datadir}/applications/io.github.cosmic_nightlight.settings.desktop
-install -D -m0644 data/io.github.cosmic_nightlight.metainfo.xml \
-    %{buildroot}%{_datadir}/metainfo/io.github.cosmic_nightlight.metainfo.xml
-install -D -m0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg \
-    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
-install -D -m0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png \
-    %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
+install -D -m0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop \
+    %{buildroot}%{_datadir}/applications/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop
+install -D -m0644 data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml \
+    %{buildroot}%{_datadir}/metainfo/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml
+install -D -m0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.CosmicExtNightlight.svg \
+    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.CosmicExtNightlight.svg
+install -D -m0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.CosmicExtNightlight.png \
+    %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.CosmicExtNightlight.png
 install -D -m0644 polkit/49-cosmic-ext-nightlight.rules \
     %{buildroot}%{_datadir}/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
 
@@ -144,11 +148,12 @@ done
 %{_bindir}/cosmic-ext-nightlight-helper
 %{_bindir}/cosmic-nightlight
 %{_bindir}/cosmic-nightlight-helper
+%{_datadir}/applications/io.github.cosmic_nightlight.CosmicExtNightlight.desktop
 %{_datadir}/applications/io.github.cosmic_nightlight.desktop
-%{_datadir}/applications/io.github.cosmic_nightlight.settings.desktop
-%{_datadir}/metainfo/io.github.cosmic_nightlight.metainfo.xml
-%{_datadir}/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg
-%{_datadir}/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png
+%{_datadir}/applications/io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop
+%{_datadir}/metainfo/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml
+%{_datadir}/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.CosmicExtNightlight.svg
+%{_datadir}/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.CosmicExtNightlight.png
 %{_datadir}/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
 %{_userunitdir}/cosmic-ext-nightlight.service
 

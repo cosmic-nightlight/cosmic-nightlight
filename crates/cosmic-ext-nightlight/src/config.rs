@@ -3,7 +3,7 @@
 //! Persistent settings shared by every run mode (applet, settings window,
 //! daemon). They are stored through libcosmic's `cosmic_config` so the three
 //! processes — all running as the same user — read and write the same state at
-//! `~/.config/cosmic/io.github.cosmic_nightlight/v1/<key>`.
+//! `~/.config/cosmic/io.github.cosmic_nightlight.CosmicExtNightlight/v1/<key>`.
 //!
 //! Reads fall back to [`Settings::default`] when a key is missing or the config
 //! directory is unavailable; writes are best-effort (a missing config handle
@@ -18,10 +18,18 @@ use crate::solar;
 /// Config namespace; also the applet's application/desktop id. Every run mode
 /// shares this namespace, so it is what [`handler`] opens regardless of which
 /// one is running.
-pub const APP_ID: &str = "io.github.cosmic_nightlight";
+pub const APP_ID: &str = "io.github.cosmic_nightlight.CosmicExtNightlight";
+
+/// [`APP_ID`] before 0.7.0. It named the GitHub organization and nothing else,
+/// which read as the app calling itself "COSMIC Night Light".
+///
+/// Everything a user's system still files under this name is carried over at
+/// startup by [`crate::migrate`]: the settings, the panel entry, a dock pin, the
+/// keyboard shortcut and the autostart entry.
+pub const OLD_APP_ID: &str = "io.github.cosmic_nightlight";
 
 /// The settings window's own application id, which is the desktop id of
-/// `io.github.cosmic_nightlight.settings.desktop`.
+/// `io.github.cosmic_nightlight.CosmicExtNightlight.Settings.desktop`.
 ///
 /// It must differ from [`APP_ID`]: a dock or task switcher identifies a window by
 /// the id it reports and then looks for the desktop entry of the same name to get
@@ -33,10 +41,14 @@ pub const APP_ID: &str = "io.github.cosmic_nightlight";
 /// This is only the window's identity. The config namespace stays [`APP_ID`] for
 /// every run mode, so the applet and the settings window still read and write the
 /// same settings.
-pub const SETTINGS_APP_ID: &str = "io.github.cosmic_nightlight.settings";
+pub const SETTINGS_APP_ID: &str = "io.github.cosmic_nightlight.CosmicExtNightlight.Settings";
+
+/// [`SETTINGS_APP_ID`] before 0.7.0, which is what a dock pin made back then
+/// still names.
+pub const OLD_SETTINGS_APP_ID: &str = "io.github.cosmic_nightlight.settings";
 
 /// Bumped if the on-disk schema ever changes incompatibly.
-const CONFIG_VERSION: u64 = 1;
+pub const CONFIG_VERSION: u64 = 1;
 
 const KEY_OVERRIDE: &str = "override";
 const KEY_TEMPERATURE: &str = "temperature";
@@ -560,6 +572,10 @@ fn report(key: &str, result: Result<(), cosmic::cosmic_config::Error>) {
 /// the applet ids it shows. Those ids are desktop-file basenames, so ours is
 /// [`APP_ID`] — flatpak's export preserves it, so this works sandboxed too.
 ///
+/// An entry under [`OLD_APP_ID`] counts as well. The packages still ship a
+/// desktop entry of that name which starts this same applet, so until
+/// [`adopt_panel_entry`] has renamed it, that entry is our applet on the panel.
+///
 /// None of this is a documented interface. It is cosmic-panel's private config,
 /// which is the reason for the fail-open above rather than for not asking.
 pub fn applet_on_panel() -> Option<bool> {
@@ -590,7 +606,7 @@ pub fn applet_on_panel() -> Option<bool> {
         [center, left, right]
             .iter()
             .flatten()
-            .any(|id| id == APP_ID)
+            .any(|id| is_applet(id))
     }))
 }
 
@@ -706,14 +722,200 @@ fn pick_panel(entries: &[String]) -> Option<&str> {
         .map(String::as_str)
 }
 
+/// Whether a panel entry is our applet, under its name now or before 0.7.0.
+fn is_applet(id: &str) -> bool {
+    id == APP_ID || id == OLD_APP_ID
+}
+
 /// The wings with [`APP_ID`] added at the start of the right one, so it sits
 /// beside the other status applets rather than after the power button.
 fn with_applet(wings: Option<(Vec<String>, Vec<String>)>) -> (Vec<String>, Vec<String>) {
     let (left, mut right) = wings.unwrap_or_default();
-    if !left.iter().chain(&right).any(|id| id == APP_ID) {
+    if !left.iter().chain(&right).any(|id| is_applet(id)) {
         right.insert(0, APP_ID.to_string());
     }
     (left, right)
+}
+
+/// Renames the panel entry an earlier version left under [`OLD_APP_ID`], so the
+/// applet stays where the user put it.
+///
+/// cosmic-panel starts an applet by looking up the desktop entry named in its
+/// config. The packages ship a hidden entry under the old name for exactly this
+/// moment: it is what gets the applet started after an upgrade, and the applet
+/// then moves its own panel entry to the new name here. cosmic-panel watches the
+/// config and restarts the applet under that name straight away. Once nobody is
+/// upgrading from 0.6 any more, that old desktop entry can be dropped.
+///
+/// Runs at startup in every mode, and writes only when it finds the old name,
+/// which after the first run is never. The same rules as
+/// [`add_applet_to_panel`] apply: this is cosmic-panel's private config, so a
+/// list is written back only after it was read successfully, and only if it
+/// held the old name.
+///
+/// Nothing is renamed unless our own desktop entry is installed. A build run
+/// out of a target directory has none, and pointing the panel at a name with no
+/// entry behind it would take the applet off the panel.
+pub fn adopt_panel_entry() {
+    if desktop_entry_installed() {
+        adopt_panel_entry_in(&|name| Config::new(name, 1).ok());
+    }
+}
+
+/// [`adopt_panel_entry`] on configs opened by `open`, so it can be tested on a
+/// directory of its own.
+fn adopt_panel_entry_in(open: &dyn Fn(&str) -> Option<Config>) {
+    let Some(entries) = open("com.system76.CosmicPanel")
+        .and_then(|config| config.get::<Vec<String>>("entries").ok())
+    else {
+        return;
+    };
+
+    let panels: Vec<(String, Config)> = entries
+        .into_iter()
+        .filter_map(|entry| {
+            let config = open(&format!("com.system76.CosmicPanel.{entry}"))?;
+            Some((entry, config))
+        })
+        .collect();
+
+    // Whether the new name is on a panel already. It is for anyone who added
+    // the applet again by hand after upgrading, and then the old entry is a
+    // duplicate to remove, not one to rename.
+    let mut present = panels.iter().any(|(_, panel)| {
+        let center = panel.get::<Option<Vec<String>>>("plugins_center");
+        let wings = panel.get::<Option<(Vec<String>, Vec<String>)>>("plugins_wings");
+        let (left, right) = wings.ok().flatten().unwrap_or_default();
+        center
+            .ok()
+            .flatten()
+            .iter()
+            .flatten()
+            .chain(&left)
+            .chain(&right)
+            .any(|id| id == APP_ID)
+    });
+
+    for (entry, panel) in &panels {
+        if let Ok(Some(mut center)) = panel.get::<Option<Vec<String>>>("plugins_center") {
+            if rename_applet(&mut center, &mut present) {
+                report_adoption(entry, panel.set("plugins_center", Some(center)));
+            }
+        }
+        if let Ok(Some((mut left, mut right))) =
+            panel.get::<Option<(Vec<String>, Vec<String>)>>("plugins_wings")
+        {
+            // Not `||`, which would skip the right wing once the left changed.
+            let left_changed = rename_applet(&mut left, &mut present);
+            let right_changed = rename_applet(&mut right, &mut present);
+            if left_changed || right_changed {
+                report_adoption(entry, panel.set("plugins_wings", Some((left, right))));
+            }
+        }
+    }
+}
+
+fn report_adoption(entry: &str, result: Result<(), cosmic::cosmic_config::Error>) {
+    match result {
+        Ok(()) => println!("cosmic-ext-nightlight: renamed the applet on panel {entry}"),
+        Err(err) => {
+            eprintln!("cosmic-ext-nightlight: could not rename the applet on panel {entry}: {err}")
+        }
+    }
+}
+
+/// Renames [`OLD_APP_ID`] to [`APP_ID`] in one list of applets, keeping its
+/// place. Returns whether the list changed.
+///
+/// `present` says whether the new name is already on a panel, and is set once it
+/// is. From then on an old entry is dropped, so the applet is never shown twice.
+fn rename_applet(ids: &mut Vec<String>, present: &mut bool) -> bool {
+    let before = ids.len();
+    let mut renamed = false;
+    ids.retain_mut(|id| {
+        if id != OLD_APP_ID {
+            return true;
+        }
+        if *present {
+            return false;
+        }
+        *id = APP_ID.to_string();
+        *present = true;
+        renamed = true;
+        true
+    });
+    renamed || ids.len() != before
+}
+
+/// Whether the desktop entry cosmic-panel would start us from is installed.
+///
+/// The flatpak always has one: flatpak exports it on install, to a directory on
+/// the host that the sandbox cannot see to check.
+fn desktop_entry_installed() -> bool {
+    if crate::backend::in_flatpak() {
+        return true;
+    }
+    let name = format!("applications/{APP_ID}.desktop");
+    let nonempty = |var: &str| std::env::var_os(var).filter(|value| !value.is_empty());
+
+    let data_home = nonempty("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share"))
+        });
+    let data_dirs =
+        nonempty("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+
+    data_home
+        .into_iter()
+        .chain(std::env::split_paths(&data_dirs))
+        .any(|dir| dir.join(&name).is_file())
+}
+
+/// Renames a dock pin of the settings window made before 0.7.0, which names
+/// [`OLD_SETTINGS_APP_ID`].
+///
+/// The dock keeps its pins as a list of desktop ids and shows nothing for one
+/// that no longer has a desktop entry, so without this the pin would vanish with
+/// the upgrade. Read with `get_local`, since a pin is only ever in the user's
+/// own file, and written back only if it held the old name. The order of the
+/// other pins is kept.
+pub fn adopt_dock_pin() {
+    if let Ok(dock) = Config::new("com.system76.CosmicAppList", 1) {
+        adopt_dock_pin_in(&dock);
+    }
+}
+
+/// [`adopt_dock_pin`] on a config already opened.
+fn adopt_dock_pin_in(dock: &Config) {
+    let Ok(mut favorites) = dock.get_local::<Vec<String>>("favorites") else {
+        return;
+    };
+    if !rename_pin(&mut favorites) {
+        return;
+    }
+    match dock.set("favorites", favorites) {
+        Ok(()) => println!("cosmic-ext-nightlight: renamed the pin on the dock"),
+        Err(err) => eprintln!("cosmic-ext-nightlight: could not rename the pin on the dock: {err}"),
+    }
+}
+
+/// [`adopt_dock_pin`] on a list already read. Returns whether it changed.
+fn rename_pin(favorites: &mut Vec<String>) -> bool {
+    if !favorites.iter().any(|id| id == OLD_SETTINGS_APP_ID) {
+        return false;
+    }
+    if favorites.iter().any(|id| id == SETTINGS_APP_ID) {
+        favorites.retain(|id| id != OLD_SETTINGS_APP_ID);
+    } else {
+        for id in favorites.iter_mut().filter(|id| *id == OLD_SETTINGS_APP_ID) {
+            *id = SETTINGS_APP_ID.to_string();
+        }
+        // Two pins of the old name would now be two of the new one.
+        let mut seen = false;
+        favorites.retain(|id| id != SETTINGS_APP_ID || !std::mem::replace(&mut seen, true));
+    }
+    true
 }
 
 /// Returns whether the system is configured to use 24-hour time.
@@ -1248,5 +1450,154 @@ mod tests {
     #[test]
     fn with_applet_fills_a_panel_with_no_wings() {
         assert_eq!(with_applet(None), (vec![], ids(&[APP_ID])));
+    }
+
+    #[test]
+    fn with_applet_counts_the_old_name_as_already_there() {
+        let wings = (ids(&[]), ids(&[OLD_APP_ID, "power"]));
+        assert_eq!(with_applet(Some(wings.clone())), wings);
+    }
+
+    #[test]
+    fn the_old_panel_entry_is_renamed_in_place() {
+        let mut list = ids(&["audio", OLD_APP_ID, "power"]);
+        let mut present = false;
+        assert!(rename_applet(&mut list, &mut present));
+        assert_eq!(list, ids(&["audio", APP_ID, "power"]));
+        assert!(present);
+
+        // Done once, there is nothing left to change.
+        assert!(!rename_applet(&mut list, &mut present));
+    }
+
+    #[test]
+    fn an_old_panel_entry_beside_the_new_one_is_dropped() {
+        let mut list = ids(&[OLD_APP_ID, "audio", OLD_APP_ID]);
+        let mut present = true;
+        assert!(rename_applet(&mut list, &mut present));
+        assert_eq!(list, ids(&["audio"]));
+
+        // One list renames it, and the next list then only drops its copy.
+        let (mut left, mut right) = (ids(&[OLD_APP_ID]), ids(&[OLD_APP_ID, "power"]));
+        let mut present = false;
+        assert!(rename_applet(&mut left, &mut present));
+        assert!(rename_applet(&mut right, &mut present));
+        assert_eq!((left, right), (ids(&[APP_ID]), ids(&["power"])));
+    }
+
+    #[test]
+    fn a_panel_without_the_old_entry_is_left_alone() {
+        let mut list = ids(&["audio", APP_ID, "power"]);
+        let mut present = true;
+        assert!(!rename_applet(&mut list, &mut present));
+        assert_eq!(list, ids(&["audio", APP_ID, "power"]));
+    }
+
+    /// A config directory with a `Panel` and a `Dock`, and the function that
+    /// opens configs in it.
+    fn panels(label: &str) -> (std::path::PathBuf, impl Fn(&str) -> Option<Config>) {
+        let root = std::env::temp_dir().join(format!(
+            "cosmic-nightlight-test-{}-{label}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let open = {
+            let root = root.clone();
+            move |name: &str| Config::with_custom_path(name, 1, root.clone()).ok()
+        };
+        open("com.system76.CosmicPanel")
+            .unwrap()
+            .set("entries", ids(&["Panel", "Dock"]))
+            .unwrap();
+        (root, open)
+    }
+
+    #[test]
+    fn a_panel_from_before_the_rename_is_carried_over_on_disk() {
+        let (root, open) = panels("adopt");
+        let panel = open("com.system76.CosmicPanel.Panel").unwrap();
+        let wings = (ids(&["workspaces"]), ids(&[OLD_APP_ID, "audio", "power"]));
+        panel.set("plugins_wings", Some(wings)).unwrap();
+        panel.set("plugins_center", Some(ids(&["time"]))).unwrap();
+        let dock = open("com.system76.CosmicPanel.Dock").unwrap();
+        dock.set("plugins_center", Some(ids(&["app-list", OLD_APP_ID])))
+            .unwrap();
+
+        adopt_panel_entry_in(&open);
+
+        // Renamed where it first appears, and the second copy dropped.
+        assert_eq!(
+            panel
+                .get::<Option<(Vec<String>, Vec<String>)>>("plugins_wings")
+                .unwrap(),
+            Some((ids(&["workspaces"]), ids(&[APP_ID, "audio", "power"])))
+        );
+        assert_eq!(
+            panel.get::<Option<Vec<String>>>("plugins_center").unwrap(),
+            Some(ids(&["time"]))
+        );
+        assert_eq!(
+            dock.get::<Option<Vec<String>>>("plugins_center").unwrap(),
+            Some(ids(&["app-list"]))
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_panel_without_the_applet_is_not_written_to() {
+        let (root, open) = panels("adopt-untouched");
+        let panel = open("com.system76.CosmicPanel.Panel").unwrap();
+        panel.set("plugins_center", Some(ids(&["time"]))).unwrap();
+        let file = root.join("cosmic/com.system76.CosmicPanel.Panel/v1/plugins_center");
+        let before = std::fs::metadata(&file).unwrap().modified().unwrap();
+
+        adopt_panel_entry_in(&open);
+
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().modified().unwrap(),
+            before
+        );
+        // Never created for a panel that had none of its own.
+        assert!(!root
+            .join("cosmic/com.system76.CosmicPanel.Panel/v1/plugins_wings")
+            .exists());
+        assert!(!root
+            .join("com.system76.CosmicPanel.Dock/v1/plugins_wings")
+            .exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_dock_pin_from_before_the_rename_is_carried_over_on_disk() {
+        let (root, open) = panels("adopt-pin");
+        let dock = open("com.system76.CosmicAppList").unwrap();
+        dock.set("favorites", ids(&["firefox", OLD_SETTINGS_APP_ID]))
+            .unwrap();
+
+        adopt_dock_pin_in(&dock);
+
+        assert_eq!(
+            dock.get::<Vec<String>>("favorites").unwrap(),
+            ids(&["firefox", SETTINGS_APP_ID])
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_old_dock_pin_is_renamed_in_place() {
+        let mut pins = ids(&["firefox", OLD_SETTINGS_APP_ID, "com.system76.CosmicFiles"]);
+        assert!(rename_pin(&mut pins));
+        assert_eq!(
+            pins,
+            ids(&["firefox", SETTINGS_APP_ID, "com.system76.CosmicFiles"])
+        );
+        assert!(!rename_pin(&mut pins));
+    }
+
+    #[test]
+    fn an_old_dock_pin_beside_the_new_one_is_dropped() {
+        let mut pins = ids(&[SETTINGS_APP_ID, "firefox", OLD_SETTINGS_APP_ID]);
+        assert!(rename_pin(&mut pins));
+        assert_eq!(pins, ids(&[SETTINGS_APP_ID, "firefox"]));
     }
 }

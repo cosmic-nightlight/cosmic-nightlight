@@ -25,7 +25,7 @@
 #   ./scripts/check-version.sh          # just check the five agree
 set -eu
 
-metainfo="data/io.github.cosmic_nightlight.metainfo.xml"
+metainfo="data/io.github.cosmic_nightlight.CosmicExtNightlight.metainfo.xml"
 
 # `cosmic-ext-nightlight (0.5.0-1) noble; urgency=medium` -> `0.5.0`
 changelog_version=$(sed -n '1s/.*(\([^)]*\)).*/\1/p' debian/changelog)

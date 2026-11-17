@@ -31,7 +31,7 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::backend;
-use crate::config::APP_ID;
+use crate::config::{APP_ID, OLD_APP_ID};
 use crate::fl;
 
 const ID: &str = "com.system76.CosmicSettings.Shortcuts";
@@ -228,7 +228,12 @@ fn is_ours(command: &str) -> bool {
     let mut words = command.split_whitespace();
     let toggles = words.next_back() == Some("--toggle");
     toggles
-        && words.any(|word| word.ends_with(BINARY) || word.ends_with(OLD_BINARY) || word == APP_ID)
+        && words.any(|word| {
+            word.ends_with(BINARY)
+                || word.ends_with(OLD_BINARY)
+                || word == APP_ID
+                || word == OLD_APP_ID
+        })
 }
 
 /// Our binary, as the shortcut names it outside the flatpak.
@@ -238,27 +243,27 @@ const BINARY: &str = "cosmic-ext-nightlight";
 /// `cosmic-nightlight`.
 const OLD_BINARY: &str = "cosmic-nightlight";
 
-/// Points a shortcut that runs the binary under its old name at the new one.
+/// Points a shortcut that runs us under a name from before 0.7.0 at the name
+/// we have now.
 ///
-/// The package rename took the old binary away, so such a shortcut does nothing
-/// at all now. It keeps its key, and the user's other shortcuts are written back
-/// as they were. Runs at startup in every mode and writes only when it finds
-/// one, which after the first run is never.
+/// Outside the flatpak that is the binary, which the package rename took away.
+/// In the flatpak it is the app ID that `flatpak run` is given. Either way the
+/// old command no longer reaches this version. The shortcut keeps its key, and
+/// the user's other shortcuts are written back as they were. Runs at startup in
+/// every mode and writes only when it finds one, which after the first run is
+/// never.
 ///
-/// Not in the flatpak. Its shortcut runs `flatpak run` with the app ID, which
-/// did not change, and an old command there belongs to a host install, which
-/// sees to its own.
+/// Each kind of install sees to its own command only. A `flatpak run` shortcut
+/// found by a host install belongs to a flatpak, and the other way round.
+/// [`add`] is what moves a shortcut between the two, when the user asks.
 pub fn heal() {
-    if backend::in_flatpak() {
-        return;
-    }
     let Ok(context) = Config::new(ID, VERSION) else {
         return;
     };
     let Ok(mut custom) = read_custom(&context) else {
         return;
     };
-    if !heal_in(&mut custom, &command()) {
+    if !heal_in(&mut custom, &command(), backend::in_flatpak()) {
         return;
     }
     match context.set("custom", &custom) {
@@ -270,10 +275,17 @@ pub fn heal() {
 }
 
 /// [`heal`] on entries already read. Returns whether anything changed.
-fn heal_in(custom: &mut Entries, command: &str) -> bool {
+fn heal_in(custom: &mut Entries, command: &str, in_flatpak: bool) -> bool {
     let mut changed = false;
     for (_, action) in &mut custom.0 {
-        if !spawned(action).is_some_and(|spawned| runs_old_binary(&spawned)) {
+        let stale = spawned(action).is_some_and(|spawned| {
+            if in_flatpak {
+                runs_old_app_id(&spawned)
+            } else {
+                runs_old_binary(&spawned)
+            }
+        });
+        if !stale {
             continue;
         }
         let Ok(new) = RawValue::from_rust(&Action::Spawn(command.to_string())) else {
@@ -291,6 +303,16 @@ fn runs_old_binary(command: &str) -> bool {
         && command.split_whitespace().next().is_some_and(|program| {
             program == OLD_BINARY || program.ends_with(&format!("/{OLD_BINARY}"))
         })
+}
+
+/// Whether a command is our toggle, run through the flatpak's old app ID.
+fn runs_old_app_id(command: &str) -> bool {
+    is_ours(command)
+        && command
+            .split_whitespace()
+            .next()
+            .is_some_and(|program| program == "flatpak" || program.ends_with("/flatpak"))
+        && command.split_whitespace().any(|word| word == OLD_APP_ID)
 }
 
 /// The one action we need to recognize. Decoding any other variant as this
@@ -505,7 +527,7 @@ mod tests {
         let mut custom = parse(
             r#"{ (modifiers: [Super, Alt], key: "F9"): Spawn("cosmic-ext-nightlight --toggle") }"#,
         );
-        let command = "flatpak run io.github.cosmic_nightlight --toggle";
+        let command = "flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --toggle";
         let label = add_to(&mut custom, &Entries::default(), command, "Night Light").unwrap();
         assert_eq!(label, "Super+Alt+F9");
         assert_eq!(custom.0.len(), 1);
@@ -546,7 +568,11 @@ mod tests {
             (modifiers: [Ctrl, Alt], key: "x"): SomethingFromANewerCosmic(42, "kept"),
         }"#,
         );
-        assert!(heal_in(&mut custom, "cosmic-ext-nightlight --toggle"));
+        assert!(heal_in(
+            &mut custom,
+            "cosmic-ext-nightlight --toggle",
+            false
+        ));
         assert_eq!(
             state_of(&custom, "cosmic-ext-nightlight --toggle"),
             State::Bound("Super+Shift+n".into())
@@ -561,7 +587,11 @@ mod tests {
             .contains("SomethingFromANewerCosmic"));
 
         // Done once, there is nothing left to change.
-        assert!(!heal_in(&mut custom, "cosmic-ext-nightlight --toggle"));
+        assert!(!heal_in(
+            &mut custom,
+            "cosmic-ext-nightlight --toggle",
+            false
+        ));
     }
 
     #[test]
@@ -573,7 +603,36 @@ mod tests {
             (modifiers: [Super], key: "c"): Spawn("cosmic-nightlight --settings"),
         }"#,
         );
-        assert!(!heal_in(&mut custom, "cosmic-ext-nightlight --toggle"));
+        assert!(!heal_in(
+            &mut custom,
+            "cosmic-ext-nightlight --toggle",
+            false
+        ));
+    }
+
+    #[test]
+    fn a_flatpak_shortcut_to_the_old_app_id_is_repointed() {
+        let command = "flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --toggle";
+        let mut custom = parse(
+            r#"{
+            (modifiers: [Super], key: "a"): Spawn("cosmic-nightlight --toggle"),
+            (modifiers: [Super], key: "b"): Spawn("flatpak run io.github.cosmic_nightlight --toggle"),
+            (modifiers: [Super], key: "c"): Spawn("flatpak run io.github.cosmic_nightlight --settings"),
+        }"#,
+        );
+        assert!(heal_in(&mut custom, command, true));
+        assert_eq!(state_of(&custom, command), State::Bound("Super+b".into()));
+        // A host install's shortcut is not the flatpak's to change.
+        assert_eq!(
+            spawned(&custom.0[0].1).as_deref(),
+            Some("cosmic-nightlight --toggle")
+        );
+        assert_eq!(
+            spawned(&custom.0[2].1).as_deref(),
+            Some("flatpak run io.github.cosmic_nightlight --settings")
+        );
+
+        assert!(!heal_in(&mut custom, command, true));
     }
 
     #[test]
@@ -583,6 +642,10 @@ mod tests {
         assert!(is_ours("cosmic-ext-nightlight --toggle"));
         assert!(is_ours("/usr/bin/cosmic-ext-nightlight --toggle"));
         assert!(is_ours("flatpak run io.github.cosmic_nightlight --toggle"));
+        assert!(is_ours(
+            "flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --toggle"
+        ));
+        assert!(!is_ours("flatpak run io.github.someone_else.App --toggle"));
         assert!(!is_ours("cosmic-ext-nightlight --settings"));
         assert!(!is_ours("other-app --toggle"));
     }

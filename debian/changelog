@@ -16,7 +16,9 @@ cosmic-ext-nightlight (0.7.0-1) UNRELEASED; urgency=medium
   * The package is now called cosmic-ext-nightlight and replaces
     cosmic-nightlight. Settings, the panel icon and the keyboard shortcut
     carry over.
-  * Flatpak: the first change after updating asks for your password once.
+  * Flatpak: remove the old one first with
+    "flatpak uninstall io.github.cosmic_nightlight". The first change after
+    installing asks for your password once.
 
  -- Daniel Watts <danielcwtts@gmail.com>  Wed, 11 Nov 2026 12:00:00 -0600
 

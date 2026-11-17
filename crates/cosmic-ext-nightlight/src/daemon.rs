@@ -33,6 +33,16 @@ const POLL_INTERVAL: Duration = TICK_INTERVAL;
 const SESSION_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_READY_POLL: Duration = Duration::from_millis(500);
 
+/// How long a managed daemon waits for the slot before deciding another one
+/// really has the job.
+///
+/// A daemon from before an upgrade exits once its autostart entry is gone, but
+/// only when it next polls, and the one started to replace it gets here first.
+/// See [`autostart::adopt_old_entry`]. This covers two of the old daemon's
+/// polls. An ordinary duplicate just leaves that much later, having done nothing.
+const SLOT_HANDOVER_TIMEOUT: Duration = Duration::from_secs(40);
+const SLOT_HANDOVER_POLL: Duration = Duration::from_secs(1);
+
 /// Runs the daemon loop. Applies a change only when the desired tint actually
 /// differs from what's already applied, so we don't trigger a VT bounce on every
 /// poll.
@@ -44,14 +54,22 @@ const SESSION_READY_POLL: Duration = Duration::from_millis(500);
 /// until it is stopped the same way it was started, and ignores all of this.
 pub fn run(managed: bool) {
     // Before the VT wait, so a duplicate started by a login that raced the
-    // window costs nothing rather than sitting out the timeout first.
+    // window does not sit out that timeout too.
     let _slot = if managed {
-        match autostart::claim_slot() {
-            autostart::Slot::Taken => {
-                println!("cosmic-ext-nightlight: another background process is already running");
-                return;
+        let deadline = Instant::now() + SLOT_HANDOVER_TIMEOUT;
+        loop {
+            match autostart::claim_slot() {
+                autostart::Slot::Free(guard) => break guard,
+                autostart::Slot::Taken if Instant::now() < deadline => {
+                    thread::sleep(SLOT_HANDOVER_POLL);
+                }
+                autostart::Slot::Taken => {
+                    println!(
+                        "cosmic-ext-nightlight: another background process is already running"
+                    );
+                    return;
+                }
             }
-            autostart::Slot::Free(guard) => guard,
         }
     } else {
         None
