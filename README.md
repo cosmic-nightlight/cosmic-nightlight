@@ -194,9 +194,9 @@ try it anyway:
 3. Add the applet as in step 2 below, or open the settings with
    `flatpak run io.github.cosmic_nightlight.CosmicExtNightlight --settings`.
 
-If you have the flatpak from 0.6, remove it first with
-`flatpak uninstall io.github.cosmic_nightlight`. After installing this one, open
-Night Light Settings once, and your settings and panel icon come back.
+If you have the flatpak from 0.6, this one installs beside it. Run the command
+in step 3 once. That moves your settings and panel icon over and removes the old
+version for you.
 
 The first time you turn it on, it asks for your password once to install a small
 helper on your system. A sandboxed app can't change screen colors on its own

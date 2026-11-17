@@ -404,6 +404,44 @@ Not covered: a host set up before this shipped has no cleanup installed until
 the setup runs again, so those users still need `scripts/uninstall.sh` or the
 two `rm` lines in the README.
 
+## Replacing the flatpak from before 0.7.0
+
+The app ID changed in 0.7.0, from `io.github.cosmic_nightlight` to
+`io.github.cosmic_nightlight.CosmicExtNightlight`. To flatpak those are two
+unrelated apps. Installing 0.7.0 leaves 0.6 installed beside it, still on the
+panel, with a second Night Light in the launcher. A package can declare that it
+replaces another. A flatpak can only do that through its repo, and the 0.6
+flatpak was a file from the Releases page with no repo behind it.
+
+So the new app does the replacing, the first time it runs in any mode but
+`--toggle`:
+
+1. It carries over the settings, the panel entry, a dock pin, the keyboard
+   shortcut and the autostart entry, as the packages do. See PACKAGING.md.
+   Renaming the panel entry is what stops cosmic-panel starting the old applet.
+2. It asks the host for `flatpak list` and looks for the old ID, matched whole.
+   The new ID starts with the old one, so a prefix match would find this app.
+3. It runs `flatpak kill` and `flatpak uninstall --noninteractive -y
+   --delete-data` on the old ID, in each installation that has it.
+
+Step 3 waits while `/etc/systemd/system/cosmic-nightlight-cleanup.path` exists.
+That is the old flatpak's own uninstall cleanup, and it answers an uninstall by
+resetting the screen through the old helper. With the night light on, that would
+blink the screen and take the tint away. Our host setup removes the old cleanup
+(`remove_old_install`), so for someone who had set the old one up, the old
+flatpak goes right after the one password prompt 0.7.0 asks for anyway.
+
+`--noninteractive` means no prompt can come out of this. A user install needs
+none. A system-wide one is removed for an administrator and left alone for
+anyone else.
+
+None of it runs for someone who never had the old app. The check starts from
+whether `~/.config/cosmic/io.github.cosmic_nightlight` exists, and once the old
+flatpak is found gone, a marker in the app's data directory ends it for good.
+
+Like the host setup, this is **runtime behavior and invisible to the manifest**,
+and belongs in the submission's description for the same reason.
+
 ## What ships where
 
 | Path in the flatpak | Purpose |

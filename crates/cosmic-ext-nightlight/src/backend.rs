@@ -514,8 +514,157 @@ pub fn host_setup() -> HostSetup {
     let state = probe_host_setup();
     if state == HostSetup::Ready {
         HOST_SETUP_READY.store(true, Ordering::Relaxed);
+        // The setup that just finished is what takes the old flatpak's uninstall
+        // cleanup off the host, and that is what this was waiting for.
+        retire_old_flatpak();
     }
     state
+}
+
+/// The path unit of the uninstall cleanup that the host setup of a 0.6 flatpak
+/// installed. See [`retire_old_flatpak`].
+const OLD_CLEANUP_UNIT: &str = "/etc/systemd/system/cosmic-nightlight-cleanup.path";
+
+/// Guards [`retire_old_flatpak`] against running twice at once in one process.
+static RETIRING_OLD_FLATPAK: AtomicBool = AtomicBool::new(false);
+
+/// Uninstalls the flatpak from before 0.7.0, which had another app ID.
+///
+/// Flatpak treats a new ID as a new app, so installing this version leaves the
+/// old one installed beside it: a second Night Light in the launcher and in the
+/// applet picker, reading settings this one no longer writes. Nothing in flatpak
+/// connects the two, so the new one removes the old.
+///
+/// By the time this runs, [`crate::migrate`] has carried over everything the old
+/// one had, and the panel entry has been renamed, so cosmic-panel is no longer
+/// starting the old applet.
+///
+/// It waits while the old flatpak's own uninstall cleanup is still on the host.
+/// That cleanup reacts to the uninstall by resetting the screen's colors through
+/// the old helper, which would blink the screen and take the tint away with the
+/// night light on. Our host setup removes that cleanup (`remove_old_install` in
+/// flatpak-host-setup.sh), and [`host_setup`] calls this again once it has. A
+/// flatpak that never ran the old setup has no cleanup to wait for.
+///
+/// Costs nothing for anyone who never had the old one: without its settings
+/// directory this returns before running a single command. Once the old flatpak
+/// is found gone, a marker in our data directory stops the question being asked
+/// again. The work happens on a thread, since it is several commands on the host
+/// and no run mode should wait for them.
+///
+/// `--noninteractive` keeps this silent. A system-wide install is removed for
+/// an administrator, as flatpak's own rule allows, and anyone else is left with
+/// the old one rather than shown a password prompt they did not ask for.
+pub fn retire_old_flatpak() {
+    if !in_flatpak() || !had_old_app_id() || old_flatpak_marker().is_some_and(|m| m.exists()) {
+        return;
+    }
+    if RETIRING_OLD_FLATPAK.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    thread::spawn(|| {
+        retire_old_flatpak_now();
+        RETIRING_OLD_FLATPAK.store(false, Ordering::Relaxed);
+    });
+}
+
+/// Whether this user has settings under the old app ID, which anyone who ran
+/// the old flatpak does.
+fn had_old_app_id() -> bool {
+    crate::autostart::config_home()
+        .is_some_and(|home| home.join("cosmic").join(config::OLD_APP_ID).is_dir())
+}
+
+/// The file that records the old flatpak as gone. In the sandbox this is under
+/// `~/.var/app/<our ID>/data`, so it lasts as long as our own install does.
+fn old_flatpak_marker() -> Option<PathBuf> {
+    let data_home = std::env::var_os("XDG_DATA_HOME").filter(|dir| !dir.is_empty())?;
+    Some(PathBuf::from(data_home).join("old-flatpak-retired"))
+}
+
+fn retire_old_flatpak_now() {
+    let listed = Command::new("flatpak-spawn")
+        .args(["--host", "flatpak", "list", "--app"])
+        .arg("--columns=application,installation")
+        .stderr(Stdio::null())
+        .output();
+    // A list we could not get says nothing about what is installed.
+    let Ok(listed) = listed else {
+        return;
+    };
+    if !listed.status.success() {
+        return;
+    }
+    let installations = old_flatpak_installations(&String::from_utf8_lossy(&listed.stdout));
+
+    if installations.is_empty() {
+        if let Some(marker) = old_flatpak_marker() {
+            if let Some(dir) = marker.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(marker, "");
+        }
+        return;
+    }
+    if host_has_file(OLD_CLEANUP_UNIT) {
+        return;
+    }
+
+    // Whatever of the old one is still running would be left without its files.
+    let _ = Command::new("flatpak-spawn")
+        .args(["--host", "flatpak", "kill", config::OLD_APP_ID])
+        .stderr(Stdio::null())
+        .status();
+
+    for installation in installations {
+        let removed = Command::new("flatpak-spawn")
+            .args(["--host", "flatpak", "uninstall", "--noninteractive", "-y"])
+            .arg("--delete-data")
+            .arg(installation_flag(&installation))
+            .arg(config::OLD_APP_ID)
+            .stdout(Stdio::null())
+            .status();
+        match removed {
+            Ok(status) if status.success() => println!(
+                "cosmic-ext-nightlight: removed the flatpak from before 0.7.0 ({installation})"
+            ),
+            Ok(status) => eprintln!(
+                "cosmic-ext-nightlight: could not remove the flatpak from before 0.7.0 \
+                 ({installation}): {status}"
+            ),
+            Err(err) => eprintln!(
+                "cosmic-ext-nightlight: could not remove the flatpak from before 0.7.0 \
+                 ({installation}): {err}"
+            ),
+        }
+    }
+}
+
+/// The installations that have the old flatpak, from the output of
+/// `flatpak list --app --columns=application,installation`.
+///
+/// The ID has to match whole. Ours starts with the old one, so a prefix match
+/// would find this very app and uninstall it.
+fn old_flatpak_installations(listing: &str) -> Vec<String> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let mut columns = line.split('\t').map(str::trim);
+            let application = columns.next()?;
+            let installation = columns.next()?;
+            (application == config::OLD_APP_ID && !installation.is_empty())
+                .then(|| installation.to_string())
+        })
+        .collect()
+}
+
+/// The `flatpak` option that names an installation from that column.
+fn installation_flag(installation: &str) -> String {
+    match installation {
+        "user" => "--user".to_string(),
+        "system" => "--system".to_string(),
+        custom => format!("--installation={custom}"),
+    }
 }
 
 fn probe_host_setup() -> HostSetup {
@@ -2446,6 +2595,37 @@ mod tests {
     use super::*;
 
     use crate::config::Schedule;
+
+    #[test]
+    fn only_the_old_app_id_is_found_for_removal() {
+        let listing = "io.github.cosmic_nightlight.CosmicExtNightlight\tuser\n\
+                       io.github.cosmic_nightlight\tsystem\n\
+                       org.mozilla.firefox\tsystem\n\
+                       io.github.cosmic_nightlight\tuser\n\
+                       io.github.cosmic_nightlight\textra-drive\n";
+        assert_eq!(
+            old_flatpak_installations(listing),
+            ["system", "user", "extra-drive"]
+        );
+        // With only this version installed there is nothing to remove.
+        assert!(old_flatpak_installations(
+            "io.github.cosmic_nightlight.CosmicExtNightlight\tuser\n"
+        )
+        .is_empty());
+        assert!(old_flatpak_installations("").is_empty());
+        // A line without the installation column names nothing we could act on.
+        assert!(old_flatpak_installations("io.github.cosmic_nightlight\n").is_empty());
+    }
+
+    #[test]
+    fn each_installation_gets_its_own_flag() {
+        assert_eq!(installation_flag("user"), "--user");
+        assert_eq!(installation_flag("system"), "--system");
+        assert_eq!(
+            installation_flag("extra-drive"),
+            "--installation=extra-drive"
+        );
+    }
 
     /// A closed lid (eDP asleep) with an external monitor lit must still apply
     /// to the monitor, so one awake display is enough to proceed.

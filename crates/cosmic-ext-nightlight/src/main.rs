@@ -64,6 +64,11 @@ fn main() -> cosmic::iced::Result {
     // Last, because cosmic-panel restarts the applet once its entry is renamed,
     // and that applet may be us.
     config::adopt_panel_entry();
+    // After everything it had has been carried over. Not for `--toggle`, which
+    // is gone again before the removal could finish.
+    if !args.iter().any(|arg| arg == "--toggle") {
+        backend::retire_old_flatpak();
+    }
 
     if is_daemon {
         daemon::run(is_managed);

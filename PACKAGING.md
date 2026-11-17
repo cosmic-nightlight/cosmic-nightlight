@@ -45,6 +45,12 @@ rename its own panel entry. Every package format and `install.sh` ship it. It is
 hidden from the applet picker, and can go in a later release together with the
 alias.
 
+The flatpak cannot ship that entry, since flatpak only exports files named after
+the app's own ID, and flatpak treats the new ID as a separate app. So a 0.6
+flatpak stays installed beside this one until this one has been opened once. It
+then carries everything over as above and uninstalls the old flatpak itself
+(`retire_old_flatpak` in `backend.rs`).
+
 ## Build dependencies
 
 ```sh
