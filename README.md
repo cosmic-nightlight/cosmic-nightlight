@@ -10,9 +10,9 @@
   </p>
 </div>
 
-Night Light is an applet for the COSMIC desktop (Pop!_OS) that warms your
-screen's colors to cut blue light at night. It sits on your panel or dock:
-click it to turn it on or off and set the warmth. In Settings you can have it
+Night Light is an applet for the COSMIC desktop that warms your screen's colors
+to cut blue light at night. It sits on your panel or dock: click it to turn it
+on or off and set the warmth. In Settings you can have it
 follow the real sunset and sunrise, or set your own schedule, and adjust the
 brightness.
 
