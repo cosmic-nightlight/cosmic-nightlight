@@ -20,7 +20,9 @@ who works on it.
 - **Don't explain or defend design choices.** Nobody asked.
 - **Plain words.** Avoid jargon like DRM, CRTC, LUT and polkit unless there's no
   other way to say it.
-- **No em dashes.** Use a period or a comma.
+- **No em dashes, and don't join two sentences with a colon or semicolon.**
+  Use a period or a comma. A colon is fine before a list, a command or a code
+  block.
 - **Use full links** (`https://github.com/.../blob/vX.Y.Z/docs/...`), since
   relative links break on the release page.
 - **Credit reporters and contributors**, e.g. "Reported by @name in #8."

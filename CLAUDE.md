@@ -9,6 +9,8 @@ short and plain, and follow [docs/release-notes/README.md](docs/release-notes/RE
 - Say what the user notices, not how the code works.
 - One or two sentences per item. Link to a doc for the details.
 - No em dashes, no jargon, and don't explain design decisions.
+- Don't join two sentences with a colon or semicolon. Use a period. A colon
+  before a list, a command or a code block is fine.
 - Leave out CI, test and internal changes.
 
 Code comments and docs aimed at developers (like `docs/flatpak-design.md`) can

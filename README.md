@@ -11,8 +11,8 @@
 </div>
 
 Night Light is an applet for the COSMIC desktop that warms your screen's colors
-to cut blue light at night. It sits on your panel or dock: click it to turn it
-on or off and set the warmth. In Settings you can have it
+to cut blue light at night. It sits on your panel or dock. Click it to turn
+it on or off and set the warmth. In Settings you can have it
 follow the real sunset and sunrise, or set your own schedule, and adjust the
 brightness.
 
@@ -29,12 +29,12 @@ This is an unofficial community project. It isn't made or endorsed by System76.
 <td align="center">
 <img src="docs/screenshots/applet_light.png#gh-light-mode-only" height="300" alt="Night Light applet popup">
 <img src="docs/screenshots/applet_dark.png#gh-dark-mode-only" height="300" alt="Night Light applet popup">
-<br><sub>The panel popup: on/off toggle and warmth slider</sub>
+<br><sub>The panel popup, with the on/off toggle and warmth slider</sub>
 </td>
 <td align="center">
 <img src="docs/screenshots/settings_light.png#gh-light-mode-only" height="300" alt="Night Light settings window">
 <img src="docs/screenshots/settings_dark.png#gh-dark-mode-only" height="300" alt="Night Light settings window">
-<br><sub>The settings window: schedule, warmth and brightness</sub>
+<br><sub>The settings window, with the schedule, warmth and brightness</sub>
 </td>
 </tr>
 </table>
@@ -307,9 +307,8 @@ pkexec /usr/bin/cosmic-ext-nightlight-helper --off                 # reset
 ## Translating
 
 The app is English-only for now, but it's ready for translations. A translation
-is one file: a copy of
-[`crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl`](crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl)
-with the text translated. No coding needed, and partial translations are
+is one file, a translated copy of
+[`crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl`](crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl). No coding needed, and partial translations are
 welcome. See [docs/translating.md](docs/translating.md).
 
 ## Known limitations
