@@ -2,7 +2,6 @@
 <div align="center">
   <img src="data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg" width="96" alt="">
   <h1>Night Light for COSMIC™</h1>
-  <p>Warmer screen colors at night, for the COSMIC desktop.</p>
   <p>
     <a href="#install">Install</a> ·
     <a href="#using-it">Using it</a> ·
