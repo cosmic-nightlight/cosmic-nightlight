@@ -75,6 +75,10 @@ install -D -m0755 target/release/cosmic-ext-nightlight-helper \
 ln -s cosmic-ext-nightlight-helper %{buildroot}%{_bindir}/cosmic-nightlight-helper
 install -D -m0755 target/release/cosmic-ext-nightlight \
     %{buildroot}%{_bindir}/cosmic-ext-nightlight
+# The app's name before 0.7.0. The panel restarts an applet with the command it
+# first ran, so the applet %%posttrans restarts comes back through this link as
+# the new version.
+ln -s cosmic-ext-nightlight %{buildroot}%{_bindir}/cosmic-nightlight
 
 install -D -m0644 data/io.github.cosmic_nightlight.desktop \
     %{buildroot}%{_datadir}/applications/io.github.cosmic_nightlight.desktop
@@ -118,11 +122,27 @@ if [ "$1" -eq 0 ]; then
     rm -f /run/user/*/cosmic-nightlight-shown
 fi
 
+%posttrans
+# Restart panel applets still running a binary this upgrade replaced, so the
+# new version shows up now instead of at the next login. The panel starts the
+# applet with no arguments and brings it back within milliseconds. The settings
+# window and the service have arguments and are left alone.
+for exe in /proc/[0-9]*/exe; do
+    case "$(readlink "$exe" 2>/dev/null)" in
+        "%{_bindir}/cosmic-ext-nightlight (deleted)" | "%{_bindir}/cosmic-nightlight (deleted)") ;;
+        *) continue ;;
+    esac
+    dir=${exe%%/exe}
+    [ "$(tr -cd '\0' <"$dir/cmdline" 2>/dev/null | wc -c)" -eq 1 ] || continue
+    kill "${dir#/proc/}" 2>/dev/null || :
+done
+
 %files
 %license LICENSE
 %doc README.md
 %{_bindir}/cosmic-ext-nightlight
 %{_bindir}/cosmic-ext-nightlight-helper
+%{_bindir}/cosmic-nightlight
 %{_bindir}/cosmic-nightlight-helper
 %{_datadir}/applications/io.github.cosmic_nightlight.desktop
 %{_datadir}/applications/io.github.cosmic_nightlight.settings.desktop

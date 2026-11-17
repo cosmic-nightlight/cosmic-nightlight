@@ -78,6 +78,10 @@ package() {
     ln -s cosmic-ext-nightlight-helper "$pkgdir/usr/bin/cosmic-nightlight-helper"
     install -Dm0755 target/release/cosmic-ext-nightlight \
         "$pkgdir/usr/bin/cosmic-ext-nightlight"
+    # The app's name before 0.7.0. The panel restarts an applet with the
+    # command it first ran, so the applet post_upgrade restarts comes back
+    # through this link as the new version.
+    ln -s cosmic-ext-nightlight "$pkgdir/usr/bin/cosmic-nightlight"
 
     install -Dm0644 data/io.github.cosmic_nightlight.desktop \
         "$pkgdir/usr/share/applications/io.github.cosmic_nightlight.desktop"

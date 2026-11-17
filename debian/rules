@@ -29,6 +29,10 @@ override_dh_auto_install:
 		$(DEB_DESTDIR)/usr/bin/cosmic-nightlight-helper
 	install -D -m0755 target/release/cosmic-ext-nightlight \
 		$(DEB_DESTDIR)/usr/bin/cosmic-ext-nightlight
+	# The app's name before 0.7.0. The panel restarts an applet with the
+	# command it first ran, so the applet the postinst restarts comes back
+	# through this link as the new version.
+	ln -s cosmic-ext-nightlight $(DEB_DESTDIR)/usr/bin/cosmic-nightlight
 	install -D -m0644 data/io.github.cosmic_nightlight.desktop \
 		$(DEB_DESTDIR)/usr/share/applications/io.github.cosmic_nightlight.desktop
 	install -D -m0644 data/io.github.cosmic_nightlight.settings.desktop \
