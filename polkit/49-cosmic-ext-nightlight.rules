@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //
 // Allows members of the "wheel" or "sudo" group to run the
-// cosmic-nightlight privileged helper via pkexec without re-entering
+// cosmic-ext-nightlight privileged helper via pkexec without re-entering
 // their password each time the tint changes.
 //
 // pkexec authorizes program launches through the generic
@@ -17,9 +17,16 @@
 polkit.addRule(function (action, subject) {
     var program = action.lookup("program");
     var is_helper =
-        program == "/usr/bin/cosmic-nightlight-helper" ||
-        program == "/usr/local/bin/cosmic-nightlight-helper" ||
-        program == "/var/usrlocal/bin/cosmic-nightlight-helper";
+        program == "/usr/bin/cosmic-ext-nightlight-helper" ||
+        program == "/usr/local/bin/cosmic-ext-nightlight-helper" ||
+        program == "/var/usrlocal/bin/cosmic-ext-nightlight-helper" ||
+        // The helper's name before 0.7.0, which the .deb, .rpm and Arch
+        // packages ship as a link to the new one. An applet started before the
+        // upgrade keeps calling it until the next login. pkexec reports the
+        // path it was given, not where a link points, so the old name needs
+        // its own entry or that applet asks for a password on every change.
+        // Drop it together with the link.
+        program == "/usr/bin/cosmic-nightlight-helper";
     if (
         action.id == "org.freedesktop.policykit.exec" &&
         is_helper &&

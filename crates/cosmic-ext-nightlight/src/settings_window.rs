@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The settings window (`cosmic-nightlight --settings`).
+//! The settings window (`cosmic-ext-nightlight --settings`).
 //!
 //! A normal libcosmic top-level window for the less-frequent configuration: the
 //! night temperature and brightness, the schedule mode, and the times the tint
@@ -162,6 +162,9 @@ pub struct SettingsWindow {
     shortcut: shortcut::State,
     /// Why the last attempt to add the shortcut didn't take, if it didn't.
     shortcut_error: Option<String>,
+    /// Whether changes on this machine flicker the screen, which decides
+    /// whether the window says so. See [`config::flickers`].
+    flickers: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -180,6 +183,8 @@ pub enum Message {
     /// The keyboard shortcut was added, changed or removed, here or in COSMIC
     /// Settings.
     ShortcutChanged(shortcut::State),
+    /// Whether changes flicker the screen, as learned by the last one.
+    FlickersChanged(bool),
     Tick,
     /// A toggle's apply came back. `previous` is the override to fall back to
     /// if it didn't land.
@@ -280,6 +285,7 @@ impl cosmic::Application for SettingsWindow {
             autostart_error: None,
             shortcut: shortcut::state(),
             shortcut_error: None,
+            flickers: config::flickers(),
         };
 
         // Before the first render, so a setting the applet has made redundant is
@@ -362,6 +368,7 @@ impl cosmic::Application for SettingsWindow {
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
                 self.temperature_dragging = true;
+                self.preview_if_tinted();
             }
             Message::TemperatureCommitted => {
                 self.temperature_dragging = false;
@@ -372,6 +379,7 @@ impl cosmic::Application for SettingsWindow {
             Message::BrightnessChanged(value) => {
                 self.brightness = value;
                 self.brightness_dragging = true;
+                self.preview_if_tinted();
             }
             Message::BrightnessCommitted => {
                 self.brightness_dragging = false;
@@ -410,6 +418,9 @@ impl cosmic::Application for SettingsWindow {
             }
             Message::ShortcutChanged(state) => {
                 self.shortcut = state;
+            }
+            Message::FlickersChanged(flickers) => {
+                self.flickers = flickers;
             }
             Message::Tick => {
                 // Before anything decides: the steps below reconcile the screen
@@ -482,7 +493,7 @@ impl cosmic::Application for SettingsWindow {
                 // as the icon appears.
                 Ok(()) => self.applet_present = Some(true),
                 Err(err) => {
-                    eprintln!("cosmic-nightlight: could not add the applet: {err}");
+                    eprintln!("cosmic-ext-nightlight: could not add the applet: {err}");
                     // Panel and dock have separate applet pages, and the panel
                     // is the one we tried to add to, so it is the one to open.
                     return self.open_cosmic_settings(PANEL_APPLET_PAGE);
@@ -494,7 +505,7 @@ impl cosmic::Application for SettingsWindow {
                     self.shortcut_error = None;
                 }
                 Err(err) => {
-                    eprintln!("cosmic-nightlight: could not add the keyboard shortcut: {err}");
+                    eprintln!("cosmic-ext-nightlight: could not add the keyboard shortcut: {err}");
                     self.shortcut_error = Some(err);
                 }
             },
@@ -505,7 +516,7 @@ impl cosmic::Application for SettingsWindow {
                 if let Err(err) =
                     backend::spawn_on_host_falling_back("cosmic-settings", page, token)
                 {
-                    eprintln!("cosmic-nightlight: {err}");
+                    eprintln!("cosmic-ext-nightlight: {err}");
                 }
             }
         }
@@ -518,6 +529,7 @@ impl cosmic::Application for SettingsWindow {
             config::subscription().map(Message::ConfigUpdated),
             config::panel_subscription().map(Message::PanelChanged),
             shortcut::subscription().map(Message::ShortcutChanged),
+            config::flickers_subscription().map(Message::FlickersChanged),
             cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
         ])
     }
@@ -525,17 +537,18 @@ impl cosmic::Application for SettingsWindow {
     fn view(&self) -> Element<'_, Self::Message> {
         let tint_on = self.settings.tint_on();
 
+        // `title` is just `header` with a heading in it, so building the header
+        // by hand hangs the flicker note off the section instead of off a row.
+        // Every control below it flickers, and the toggle already spends its
+        // description on the schedule status.
+        let mut header = widget::Column::new()
+            .spacing(2)
+            .push(widget::text::heading(fl!("app-name")));
+        if self.flickers {
+            header = header.push(widget::text::caption(config::flicker_note()));
+        }
         let night_light = widget::settings::section()
-            // `title` is just `header` with a heading in it, so building the
-            // header by hand hangs the flicker note off the section instead of
-            // off a row. Every control below it flickers, and the toggle already
-            // spends its description on the schedule status.
-            .header(
-                widget::Column::new()
-                    .spacing(2)
-                    .push(widget::text::heading(fl!("app-name")))
-                    .push(widget::text::caption(config::flicker_note())),
-            )
+            .header(header)
             .add(
                 widget::settings::item::builder(fl!("app-name"))
                     .description(config::status_text(&self.settings, tint_on))
@@ -813,7 +826,7 @@ impl SettingsWindow {
             Ok(()) => {
                 self.autostart_error = None;
                 println!(
-                    "cosmic-nightlight: the applet is on the panel, so background running \
+                    "cosmic-ext-nightlight: the applet is on the panel, so background running \
                      is no longer needed and has been turned off"
                 );
             }
@@ -941,13 +954,21 @@ impl SettingsWindow {
 
     /// Pushes the current temperature and brightness to the screen, but only if a
     /// tint is up: with the night light off the screen shows a neutral ramp, which
-    /// neither setting affects, so applying would cost a flicker for no change.
+    /// neither setting affects, so there is nothing to apply.
     fn apply_if_tinted(&self) {
         if self.settings.tint_on() {
             backend::apply_in_background(
                 Some(self.settings.temperature),
                 self.settings.brightness as f32,
             );
+        }
+    }
+
+    /// Shows the sliders' live positions on the screen while one is dragged, but
+    /// only if a tint is up, for the same reason as [`Self::apply_if_tinted`].
+    fn preview_if_tinted(&self) {
+        if self.settings.tint_on() {
+            backend::preview_in_background(self.temperature as u32, self.brightness);
         }
     }
 

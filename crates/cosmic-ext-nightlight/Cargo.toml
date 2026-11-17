@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MPL-2.0
 [package]
-name = "cosmic-nightlight"
+name = "cosmic-ext-nightlight"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "cosmic-nightlight"
+name = "cosmic-ext-nightlight"
 path = "src/main.rs"
 
 [dependencies]

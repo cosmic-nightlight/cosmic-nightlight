@@ -20,7 +20,9 @@ who works on it.
 - **Don't explain or defend design choices.** Nobody asked.
 - **Plain words.** Avoid jargon like DRM, CRTC, LUT and polkit unless there's no
   other way to say it.
-- **No em dashes.** Use a period or a comma.
+- **No em dashes, and don't join two sentences with a colon or semicolon.**
+  Use a period or a comma. A colon is fine before a list, a command or a code
+  block.
 - **Use full links** (`https://github.com/.../blob/vX.Y.Z/docs/...`), since
   relative links break on the release page.
 - **Credit reporters and contributors**, e.g. "Reported by @name in #8."
@@ -48,9 +50,9 @@ One sentence on what this release is about.
 
 ## Install
 
-1. Download **`cosmic-nightlight_X.Y.Z-1_amd64.deb`** from the Assets section below.
+1. Download **`cosmic-ext-nightlight_X.Y.Z-1_amd64.deb`** from the Assets section below.
 2. Open it with the **COSMIC Store** and click **Install**
-   (or run `sudo apt install ./cosmic-nightlight_X.Y.Z-1_amd64.deb`).
+   (or run `sudo apt install ./cosmic-ext-nightlight_X.Y.Z-1_amd64.deb`).
 3. Add the applet: **COSMIC Settings → Desktop → Panel** (or **Dock**) **→ Configure applets → Add applet → Night Light**.
 
 **On Fedora, Arch Linux or NixOS, or want the Flatpak?** See the [install steps in the README](https://github.com/cosmic-nightlight/cosmic-nightlight/blob/vX.Y.Z/README.md#install).

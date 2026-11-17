@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Privileged backend for cosmic-nightlight.
+//! Privileged backend for cosmic-ext-nightlight.
 //!
 //! This is the only part of the project that runs as root (via `pkexec`).
 //! It keeps a deliberately tiny surface: parse a target temperature and
 //! brightness, then ask `nightlight-core` to write the gamma LUTs to DRM,
-//! performing the VT bounce required under COSMIC.
+//! through the compositor's own display handle or, failing that, the VT bounce.
 //!
 //! Usage:
-//!   cosmic-nightlight-helper --temp <kelvin> [--brightness <0.0-1.0>] [--session-vt <n>]
-//!   cosmic-nightlight-helper --off          (reset to a neutral ramp)
-//!   cosmic-nightlight-helper --version      (app version + CLI contract number)
+//!   cosmic-ext-nightlight-helper --temp <kelvin> [--brightness <0.0-1.0>] [--session-vt <n>]
+//!                            [--fade-ms <milliseconds>] [--live]
+//!   cosmic-ext-nightlight-helper --off          (reset to a neutral ramp)
+//!   cosmic-ext-nightlight-helper --version      (app version + CLI contract number)
 //!
 //! Those arguments are a frozen contract, because the flatpak build installs a
 //! copy of this binary on the host that is *not* refreshed when the app updates.
@@ -20,6 +21,14 @@
 //! Exits 0 when every display took the change, 1 when none did or the
 //! arguments were wrong, and `nightlight_core::EXIT_PARTIAL` (2) when some
 //! displays changed and others could not.
+//!
+//! `--fade-ms` moves the screen to the new colors over that long instead of at
+//! once. `--live` is for previews while a slider is dragged: the change is made
+//! only if it needs no VT bounce, and otherwise nothing is touched and the exit
+//! code is `nightlight_core::EXIT_NO_LIVE` (3).
+//!
+//! After a change it prints `nightlight_core::route_line` on stdout, which
+//! tells the GUI whether the change needed the VT bounce.
 //!
 //! `--session-vt` is the caller's graphical-session VT (from `XDG_VTNR`, which
 //! `pkexec` strips from the environment). When given, the VT bounce only runs
@@ -32,6 +41,7 @@ struct Args {
     kelvin: u32,
     brightness: f64,
     session_vt: Option<i32>,
+    options: nightlight_core::Options,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -39,6 +49,7 @@ fn parse_args() -> Result<Args, String> {
     let mut brightness: f64 = 1.0;
     let mut session_vt: Option<i32> = None;
     let mut off = false;
+    let mut options = nightlight_core::Options::default();
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -56,6 +67,12 @@ fn parse_args() -> Result<Args, String> {
                 let v = args.next().ok_or("--session-vt requires a value")?;
                 session_vt = Some(v.parse().map_err(|_| format!("invalid session VT: {v}"))?);
             }
+            "--fade-ms" => {
+                let v = args.next().ok_or("--fade-ms requires a value")?;
+                let ms: u64 = v.parse().map_err(|_| format!("invalid fade: {v}"))?;
+                options.fade = std::time::Duration::from_millis(ms);
+            }
+            "--live" => options.live = true,
             "--help" | "-h" => {
                 return Err("help".to_string());
             }
@@ -79,12 +96,13 @@ fn parse_args() -> Result<Args, String> {
         kelvin,
         brightness,
         session_vt,
+        options,
     })
 }
 
 fn usage() {
     eprintln!(
-        "usage: cosmic-nightlight-helper --temp <kelvin> [--brightness <0.0-1.0>] [--session-vt <n>]\n       cosmic-nightlight-helper --off\n       cosmic-nightlight-helper --version"
+        "usage: cosmic-ext-nightlight-helper --temp <kelvin> [--brightness <0.0-1.0>] [--session-vt <n>] [--fade-ms <ms>] [--live]\n       cosmic-ext-nightlight-helper --off\n       cosmic-ext-nightlight-helper --version"
     );
 }
 
@@ -105,7 +123,7 @@ fn main() -> ExitCode {
         Ok(args) => args,
         Err(msg) => {
             if msg != "help" {
-                eprintln!("cosmic-nightlight-helper: {msg}");
+                eprintln!("cosmic-ext-nightlight-helper: {msg}");
             }
             usage();
             return ExitCode::FAILURE;
@@ -114,40 +132,45 @@ fn main() -> ExitCode {
 
     if !nightlight_core::is_root() {
         eprintln!(
-            "cosmic-nightlight-helper: must run as root (it switches VTs and grabs DRM master).\n\
+            "cosmic-ext-nightlight-helper: must run as root (it writes to the display directly).\n\
              Invoke it via pkexec, not directly."
         );
         return ExitCode::FAILURE;
     }
 
-    match nightlight_core::apply(args.kelvin, args.brightness, args.session_vt) {
+    match nightlight_core::apply_with(args.kelvin, args.brightness, args.session_vt, args.options) {
         Ok(applied) => {
             println!(
-                "cosmic-nightlight-helper: applied {}K @ {:.0}% to {} CRTC(s)",
+                "cosmic-ext-nightlight-helper: applied {}K @ {:.0}% to {} CRTC(s)",
                 args.kelvin,
                 args.brightness * 100.0,
                 applied.crtcs
             );
+            println!("{}", nightlight_core::route_line(applied.route));
             if applied.crtcs == 0 {
                 // Treat "nothing updated" as a failure so a caller that retries
                 // (the daemon) tries again — at login the displays may not be
                 // up yet. Exit non-zero rather than reporting a false success.
                 eprintln!(
-                    "cosmic-nightlight-helper: no CRTCs were updated (no active displays with gamma support yet?)"
+                    "cosmic-ext-nightlight-helper: no CRTCs were updated (no active displays with gamma support yet?)"
                 );
                 return ExitCode::FAILURE;
             }
             if applied.failed_cards > 0 {
                 eprintln!(
-                    "cosmic-nightlight-helper: {} card(s) could not be updated; their displays were left as they were",
+                    "cosmic-ext-nightlight-helper: {} card(s) could not be updated; their displays were left as they were",
                     applied.failed_cards
                 );
                 return ExitCode::from(nightlight_core::EXIT_PARTIAL);
             }
             ExitCode::SUCCESS
         }
+        Err(err) if err.kind() == std::io::ErrorKind::Unsupported => {
+            eprintln!("cosmic-ext-nightlight-helper: {err}");
+            ExitCode::from(nightlight_core::EXIT_NO_LIVE)
+        }
         Err(err) => {
-            eprintln!("cosmic-nightlight-helper: failed to apply gamma: {err}");
+            eprintln!("cosmic-ext-nightlight-helper: failed to apply gamma: {err}");
             ExitCode::FAILURE
         }
     }

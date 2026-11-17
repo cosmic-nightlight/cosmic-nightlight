@@ -2,7 +2,7 @@
 # Tests the flatpak uninstall cleanup (flatpak-host-cleanup.sh) unattended.
 #
 # Each case runs the real script inside a bubblewrap sandbox as your own user.
-# The paths it touches (/var/lib/flatpak, /var/lib/cosmic-nightlight, /home,
+# The paths it touches (/var/lib/flatpak, /var/lib/cosmic-ext-nightlight, /home,
 # /etc/systemd/system, the helper and the polkit rule) are fake directories in
 # a temporary folder, `getent passwd` reads a fake user list, and `systemctl`
 # and `sleep` are stubs. Nothing on the host is read from or written to apart
@@ -16,7 +16,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cleanup="$(realpath "${1:-$here/flatpak-host-cleanup.sh}")"
-app_id=io.github.cosmic_nightlight
+app_id=io.github.cosmic_ext_nightlight
 
 command -v bwrap >/dev/null || {
     echo "bwrap is not installed" >&2
@@ -33,15 +33,15 @@ state=
 # Sets up an empty fake host for one case.
 fresh() {
     case_dir="$work/$1"
-    mkdir -p "$case_dir"/{varlib/cosmic-nightlight,varlib/flatpak,home/alice,home/bob,systemd,polkit,bin,etc-flatpak/installations.d,mnt,stubs}
-    state="$case_dir/varlib/cosmic-nightlight"
+    mkdir -p "$case_dir"/{varlib/cosmic-ext-nightlight,varlib/flatpak,home/alice,home/bob,systemd,polkit,bin,etc-flatpak/installations.d,mnt,stubs}
+    state="$case_dir/varlib/cosmic-ext-nightlight"
     cp "$cleanup" "$state/cleanup.sh"
-    printf '#!/bin/sh\necho "helper $*"\n' >"$case_dir/bin/cosmic-nightlight-helper"
-    chmod +x "$case_dir/bin/cosmic-nightlight-helper"
-    echo "polkit rule" >"$case_dir/polkit/49-cosmic-nightlight.rules"
+    printf '#!/bin/sh\necho "helper $*"\n' >"$case_dir/bin/cosmic-ext-nightlight-helper"
+    chmod +x "$case_dir/bin/cosmic-ext-nightlight-helper"
+    echo "polkit rule" >"$case_dir/polkit/49-cosmic-ext-nightlight.rules"
     {
-        echo "$(sha256sum <"$case_dir/bin/cosmic-nightlight-helper" | cut -d' ' -f1)  /usr/local/bin/cosmic-nightlight-helper"
-        echo "$(sha256sum <"$case_dir/polkit/49-cosmic-nightlight.rules" | cut -d' ' -f1)  /etc/polkit-1/rules.d/49-cosmic-nightlight.rules"
+        echo "$(sha256sum <"$case_dir/bin/cosmic-ext-nightlight-helper" | cut -d' ' -f1)  /usr/local/bin/cosmic-ext-nightlight-helper"
+        echo "$(sha256sum <"$case_dir/polkit/49-cosmic-ext-nightlight.rules" | cut -d' ' -f1)  /etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules"
     } >"$state/sums"
     : >"$state/roots"
     {
@@ -105,12 +105,12 @@ run() {
         --ro-bind "$case_dir/nsswitch.conf" /etc/nsswitch.conf \
         --ro-bind "$case_dir/stubs" /tmp/stubs \
         --setenv PATH "/tmp/stubs:/usr/bin:/bin" \
-        bash /var/lib/cosmic-nightlight/cleanup.sh "$1" >>"$case_dir/log" 2>&1 ||
+        bash /var/lib/cosmic-ext-nightlight/cleanup.sh "$1" >>"$case_dir/log" 2>&1 ||
         echo "(cleanup.sh $1 exited with $?)" >>"$case_dir/log"
 }
 
-helper_kept() { [[ -e "$case_dir/bin/cosmic-nightlight-helper" && -e "$case_dir/polkit/49-cosmic-nightlight.rules" ]]; }
-helper_removed() { [[ ! -e "$case_dir/bin/cosmic-nightlight-helper" && ! -e "$case_dir/polkit/49-cosmic-nightlight.rules" ]]; }
+helper_kept() { [[ -e "$case_dir/bin/cosmic-ext-nightlight-helper" && -e "$case_dir/polkit/49-cosmic-ext-nightlight.rules" ]]; }
+helper_removed() { [[ ! -e "$case_dir/bin/cosmic-ext-nightlight-helper" && ! -e "$case_dir/polkit/49-cosmic-ext-nightlight.rules" ]]; }
 
 check() {
     local name="$1"
@@ -182,7 +182,7 @@ check "an installation that is gone is forgotten, so it does not block cleanup" 
 fresh install-sh-gui
 install_in "$(user_root alice)"
 record_roots "$(user_root alice)"
-echo gui >"$case_dir/bin/cosmic-nightlight"
+echo gui >"$case_dir/bin/cosmic-ext-nightlight"
 uninstall_from "$(user_root alice)"
 run boot
 check "an install.sh GUI keeps the helper and rule, and the cleanup removes itself" \

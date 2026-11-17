@@ -19,7 +19,7 @@
 # anyway. The one thing it does read is flatpak's own list of custom
 # installations, under /etc, which only root can write.
 #
-# Installed by the setup as /var/lib/cosmic-nightlight/cleanup.sh, run as root.
+# Installed by the setup as /var/lib/cosmic-ext-nightlight/cleanup.sh, run as root.
 #
 # Usage:
 #   cleanup.sh watch   # from the path unit: settle, check, clean up
@@ -29,17 +29,17 @@
 
 set -euo pipefail
 
-app_id=io.github.cosmic_nightlight
+app_id=io.github.cosmic_ext_nightlight
 
-helper=/usr/local/bin/cosmic-nightlight-helper
-rule=/etc/polkit-1/rules.d/49-cosmic-nightlight.rules
-state_dir=/var/lib/cosmic-nightlight
+helper=/usr/local/bin/cosmic-ext-nightlight-helper
+rule=/etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
+state_dir=/var/lib/cosmic-ext-nightlight
 sums="$state_dir/sums"
 roots_file="$state_dir/roots"
 unit_dir=/etc/systemd/system
-path_unit=cosmic-nightlight-cleanup.path
-service_template=cosmic-nightlight-cleanup@.service
-boot_unit=cosmic-nightlight-cleanup@boot.service
+path_unit=cosmic-ext-nightlight-cleanup.path
+service_template=cosmic-ext-nightlight-cleanup@.service
+boot_unit=cosmic-ext-nightlight-cleanup@boot.service
 
 # The custom installations configured in /etc/flatpak/installations.d, as
 # absolute paths. Each `.conf` there is an INI file whose `Path=` names one.
@@ -171,7 +171,7 @@ clean_up() {
     # Someone else now uses the helper and the rule, so leave both: a GUI from
     # install.sh, or a helper install.sh has replaced since. The rule matches
     # either way, since install.sh writes the same one.
-    if [[ -e /usr/local/bin/cosmic-nightlight ]] ||
+    if [[ -e /usr/local/bin/cosmic-ext-nightlight ]] ||
         { [[ -e "$helper" ]] && ! ours "$helper"; }; then
         remove_self
         return 0

@@ -7,10 +7,17 @@
 //! color temperature. This crate works around that by writing the gamma LUTs
 //! straight to the kernel's DRM/KMS layer.
 //!
-//! Because the running compositor owns the DRM master lock, the write only
-//! succeeds during the brief window after a VT switch, when logind has
-//! revoked the compositor's master. [`apply`] performs that VT bounce around
-//! the gamma write; the values then persist after switching back.
+//! The running compositor owns the DRM master lock, so a write through a
+//! handle of our own is refused. [`apply`] gets around that in one of two ways.
+//!
+//! First it borrows a copy of the compositor's own handle and writes through
+//! that, which the kernel accepts as coming from the master. Nothing on screen
+//! is disturbed. See [`drm::apply_borrowed`].
+//!
+//! If that is not possible, it falls back to a VT bounce: switching to a spare
+//! VT makes logind revoke the compositor's master for a moment, the write goes
+//! in during that window, and the values persist after switching back. The
+//! user sees this as a blink.
 //!
 //! All of this requires root, so the intended entry point is the
 //! `nightlight-helper` binary invoked via `pkexec`.
@@ -32,6 +39,60 @@ pub struct Applied {
     pub crtcs: usize,
     /// Cards with a display on them that could not be fully updated.
     pub failed_cards: usize,
+    /// How the change reached the screen.
+    pub route: Route,
+}
+
+/// How an [`apply`] reached the screen.
+///
+/// The GUI uses this to tell whether changes on this machine blink, so it can
+/// say so. Only [`Route::Borrowed`] and [`Route::Bounced`] answer that, since
+/// a change that was already showing tried neither route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Route {
+    /// Every display already showed the change, so nothing was written.
+    Unchanged,
+    /// Written through the compositor's own display handle, with no blink.
+    Borrowed,
+    /// Written inside a VT bounce, which the user sees as a blink.
+    Bounced,
+}
+
+impl Route {
+    /// The word [`route_line`] uses for this route.
+    fn as_key(self) -> &'static str {
+        match self {
+            Route::Unchanged => "unchanged",
+            Route::Borrowed => "borrowed",
+            Route::Bounced => "bounced",
+        }
+    }
+}
+
+/// The line the helper prints on stdout to say how a change reached the screen.
+///
+/// Written here and read back by [`parse_route`] so the format cannot drift
+/// between the helper and the GUI. It is not part of [`HELPER_CONTRACT`]: a
+/// helper too old to print it just leaves the GUI not knowing, which it treats
+/// as no news.
+pub fn route_line(route: Route) -> String {
+    format!("cosmic-ext-nightlight-helper: route {}", route.as_key())
+}
+
+/// Reads the route back out of the helper's stdout. `None` when no line says,
+/// which is what a helper predating [`route_line`] prints.
+pub fn parse_route(output: &str) -> Option<Route> {
+    output.lines().find_map(|line| {
+        match line
+            .strip_prefix("cosmic-ext-nightlight-helper: route ")?
+            .trim()
+        {
+            "unchanged" => Some(Route::Unchanged),
+            "borrowed" => Some(Route::Borrowed),
+            "bounced" => Some(Route::Bounced),
+            _ => None,
+        }
+    })
 }
 
 /// The helper's exit code when some displays changed and others could not.
@@ -41,10 +102,15 @@ pub struct Applied {
 /// treating the whole change as undone.
 pub const EXIT_PARTIAL: u8 = 2;
 
+/// The helper's exit code when it was asked for a live preview (`--live`) and
+/// the change could not be made without a VT bounce, so it made none.
+pub const EXIT_NO_LIVE: u8 = 3;
+
 /// Applies a color temperature (Kelvin) and brightness (`0.0..=1.0`) to all
 /// active displays.
 ///
-/// Performs the VT bounce internally, so the caller must be running as root.
+/// Borrows the compositor's display handle, or failing that performs the VT
+/// bounce, so the caller must be running as root.
 /// Passing [`NEUTRAL_KELVIN`] with full brightness resets displays to an
 /// identity ramp (i.e. turns the tint off).
 ///
@@ -56,6 +122,35 @@ pub const EXIT_PARTIAL: u8 = 2;
 /// `session_vt` is the caller's graphical-session VT (`XDG_VTNR`); see
 /// [`vt::with_master_window`] for how it guards and restores the VT bounce.
 pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Result<Applied> {
+    apply_with(kelvin, brightness, session_vt, Options::default())
+}
+
+/// How [`apply_with`] should make the change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// How long to take moving the screen to the new colors. Only honored when
+    /// the change can be made without a VT bounce; a bounce blinks the screen
+    /// anyway, so there is nothing to fade.
+    pub fade: Duration,
+    /// Make the change only if it needs no VT bounce, and otherwise fail with
+    /// [`io::ErrorKind::Unsupported`] and leave the screen alone. For previews
+    /// while a slider is being dragged, where a blink per step would be worse
+    /// than no preview.
+    pub live: bool,
+}
+
+/// The longest fade [`apply_with`] will run, whatever it is asked for. The
+/// machine-wide lock is held throughout, so this bounds how long one caller
+/// can keep the others waiting.
+pub const MAX_FADE: Duration = Duration::from_secs(10);
+
+/// [`apply`], with a say in how the change is made. See [`Options`].
+pub fn apply_with(
+    kelvin: u32,
+    brightness: f64,
+    session_vt: Option<i32>,
+    options: Options,
+) -> io::Result<Applied> {
     let kelvin = kelvin.clamp(MIN_KELVIN, MAX_KELVIN);
     // Before the read as well as the write: a read taken while another
     // helper's bounce is under way can see a half-written screen.
@@ -69,12 +164,45 @@ pub fn apply(kelvin: u32, brightness: f64, session_vt: Option<i32>) -> io::Resul
         return Ok(Applied {
             crtcs,
             failed_cards: 0,
+            route: Route::Unchanged,
         });
+    }
+    // First try writing through the compositor's own display handle, which
+    // needs no VT bounce and so no blink. Only when the caller's session is the
+    // foreground one: otherwise the handle that works belongs to whoever is on
+    // screen now, and this would tint another user's session.
+    let ours_on_screen = session_vt.is_none_or(|vt| vt::foreground() == Some(vt));
+    let fade = options.fade.min(MAX_FADE);
+    // Why the borrowed handle was not enough, for the log. A bounce on a
+    // machine where borrowing should work is the first thing to look into.
+    let reason = if !ours_on_screen {
+        "the session is not in the foreground"
+    } else if drm::apply_borrowed(kelvin, brightness, fade) == 0 {
+        "no display took the change through the compositor's handle"
+    } else {
+        // Trust the screen, not the count: a display the borrowed handle could
+        // not reach still needs the bounce below.
+        if let drm::Showing::All(crtcs) = drm::showing(kelvin, brightness) {
+            return Ok(Applied {
+                crtcs,
+                failed_cards: 0,
+                route: Route::Borrowed,
+            });
+        }
+        "some displays did not take the change through the compositor's handle"
+    };
+    eprintln!("nightlight-core: needs a VT bounce because {reason}");
+    if options.live {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this change needs a VT bounce, which a live preview must not cause",
+        ));
     }
     let written = vt::with_master_window(session_vt, || drm::apply_all(kelvin, brightness))??;
     Ok(Applied {
         crtcs: written.crtcs,
         failed_cards: written.failed_cards,
+        route: Route::Bounced,
     })
 }
 
@@ -111,6 +239,10 @@ fn settled(
 
 /// Where [`lock_host`] takes its lock. Under `/run` because only root can write
 /// there, and every caller of [`apply`] is root anyway.
+///
+/// Still named after the package's name before 0.7.0, on purpose. An upgrade
+/// can leave an old helper running beside a new one, and they only keep out of
+/// each other's way if they lock the same file.
 const HOST_LOCK_PATH: &str = "/run/cosmic-nightlight-helper.lock";
 
 /// Serializes applies across the whole machine, so only one VT bounce is ever
@@ -183,15 +315,25 @@ pub fn is_root() -> bool {
 ///
 /// Contract 2 leaves it as it was. It exists so that hosts set up by 0.5.x or
 /// earlier pick up the helper-side fixes in 0.6.0.
-pub const HELPER_CONTRACT: u32 = 2;
+///
+/// Contract 3 left it as it was too. It existed so that hosts set up by 0.6.x
+/// or earlier got the helper that changes the screen without a VT bounce. It
+/// only ever reached Nightly builds.
+///
+/// Contract 4 adds two arguments the GUI relies on:
+///
+/// ```text
+/// --fade-ms <milliseconds>   --live
+/// ```
+pub const HELPER_CONTRACT: u32 = 4;
 
-/// The line `cosmic-nightlight-helper --version` prints.
+/// The line `cosmic-ext-nightlight-helper --version` prints.
 ///
 /// Written here and read back by [`parse_contract`] so the format cannot drift
 /// between the helper and the GUI interrogating it.
 pub fn version_line() -> String {
     format!(
-        "cosmic-nightlight-helper {} (contract {HELPER_CONTRACT})",
+        "cosmic-ext-nightlight-helper {} (contract {HELPER_CONTRACT})",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -217,11 +359,26 @@ mod tests {
     }
 
     #[test]
+    fn route_survives_a_round_trip() {
+        for route in [Route::Unchanged, Route::Borrowed, Route::Bounced] {
+            let output = format!("some other line\n{}\n", route_line(route));
+            assert_eq!(parse_route(&output), Some(route));
+        }
+    }
+
+    #[test]
+    fn output_without_a_route_reads_as_none() {
+        // What a helper predating `route_line` prints after a change.
+        let output = "cosmic-ext-nightlight-helper: applied 4500K @ 100% to 2 CRTC(s)\n";
+        assert_eq!(parse_route(output), None);
+    }
+
+    #[test]
     fn output_without_a_contract_reads_as_none() {
         // What a helper predating `--version` leaves on stdout: nothing, having
         // written a usage error to stderr and exited non-zero.
         assert_eq!(parse_contract(""), None);
-        assert_eq!(parse_contract("cosmic-nightlight-helper 0.4.0"), None);
+        assert_eq!(parse_contract("cosmic-ext-nightlight-helper 0.4.0"), None);
         assert_eq!(parse_contract("(contract )"), None);
     }
 

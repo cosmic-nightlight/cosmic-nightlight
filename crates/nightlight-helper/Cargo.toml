@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "cosmic-nightlight-helper"
+name = "cosmic-ext-nightlight-helper"
 path = "src/main.rs"
 
 [dependencies]

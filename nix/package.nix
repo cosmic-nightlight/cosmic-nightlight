@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 #
-# The Nix package for cosmic-nightlight. flake.nix builds it; see PACKAGING.md.
+# The Nix package for cosmic-ext-nightlight. flake.nix builds it; see PACKAGING.md.
 #
 # It installs the same files as the .deb, with one difference: the helper goes in
 # libexec rather than bin. It runs as root through pkexec, so it stays off PATH
@@ -38,7 +38,7 @@ let
         ../Cargo.lock
         ../crates
         ../data
-        ../debian/cosmic-nightlight.user.service
+        ../debian/cosmic-ext-nightlight.user.service
       ];
     };
 
@@ -54,7 +54,7 @@ let
   helper = rustPlatform.buildRustPackage (
     common
     // {
-      pname = "cosmic-nightlight-helper";
+      pname = "cosmic-ext-nightlight-helper";
       cargoBuildFlags = [
         "-p"
         "nightlight-helper"
@@ -70,7 +70,7 @@ in
 rustPlatform.buildRustPackage (
   common
   // {
-    pname = "cosmic-nightlight";
+    pname = "cosmic-ext-nightlight";
 
     nativeBuildInputs = [
       libcosmicAppHook
@@ -87,38 +87,44 @@ rustPlatform.buildRustPackage (
 
     cargoBuildFlags = [
       "-p"
-      "cosmic-nightlight"
+      "cosmic-ext-nightlight"
     ];
     # The helper's build runs the tests.
     doCheck = false;
 
     postInstall = ''
-      install -Dm0755 ${helper}/bin/cosmic-nightlight-helper -t $out/libexec
+      install -Dm0755 ${helper}/bin/cosmic-ext-nightlight-helper -t $out/libexec
 
+      install -Dm0644 data/io.github.cosmic_ext_nightlight.desktop \
+        -t $out/share/applications
+      # The applet's entry under its pre-0.7.0 ID, which a panel set up before
+      # the upgrade still starts it by. See the comment in the file.
       install -Dm0644 data/io.github.cosmic_nightlight.desktop \
         -t $out/share/applications
-      install -Dm0644 data/io.github.cosmic_nightlight.settings.desktop \
+      install -Dm0644 data/io.github.cosmic_ext_nightlight.Settings.desktop \
         -t $out/share/applications
-      install -Dm0644 data/io.github.cosmic_nightlight.metainfo.xml \
+      install -Dm0644 data/io.github.cosmic_ext_nightlight.metainfo.xml \
         -t $out/share/metainfo
-      install -Dm0644 data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg \
+      install -Dm0644 data/icons/hicolor/scalable/apps/io.github.cosmic_ext_nightlight.svg \
         -t $out/share/icons/hicolor/scalable/apps
-      install -Dm0644 data/icons/hicolor/128x128/apps/io.github.cosmic_nightlight.png \
+      install -Dm0644 data/icons/hicolor/128x128/apps/io.github.cosmic_ext_nightlight.png \
         -t $out/share/icons/hicolor/128x128/apps
 
       # Shipped but not enabled, as in the other packages. The applet keeps to the
       # schedule on its own, so the daemon is only for when it is off the panel.
-      install -Dm0644 debian/cosmic-nightlight.user.service \
-        $out/lib/systemd/user/cosmic-nightlight.service
-      substituteInPlace $out/lib/systemd/user/cosmic-nightlight.service \
-        --replace-fail /usr/bin/cosmic-nightlight $out/bin/cosmic-nightlight
+      install -Dm0644 debian/cosmic-ext-nightlight.user.service \
+        $out/lib/systemd/user/cosmic-ext-nightlight.service
+      substituteInPlace $out/lib/systemd/user/cosmic-ext-nightlight.service \
+        --replace-fail /usr/bin/cosmic-ext-nightlight $out/bin/cosmic-ext-nightlight
+      # The unit's name before 0.7.0, so a service enabled under it still starts.
+      ln -s cosmic-ext-nightlight.service $out/lib/systemd/user/cosmic-nightlight.service
     '';
 
     # The hook would wrap everything in bin and libexec. Wrap only the app, so the
     # helper that runs as root is the plain binary the polkit rule names.
     dontWrapLibcosmicApp = true;
     postFixup = ''
-      wrapLibcosmicApp $out/bin/cosmic-nightlight
+      wrapLibcosmicApp $out/bin/cosmic-ext-nightlight
     '';
 
     meta = {
@@ -126,7 +132,7 @@ rustPlatform.buildRustPackage (
       homepage = "https://github.com/cosmic-nightlight/cosmic-nightlight";
       license = lib.licenses.mpl20;
       platforms = lib.platforms.linux;
-      mainProgram = "cosmic-nightlight";
+      mainProgram = "cosmic-ext-nightlight";
     };
   }
 )

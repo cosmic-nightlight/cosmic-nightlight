@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 <component type="desktop-application">
-  <id>io.github.cosmic_nightlight</id>
+  <id>io.github.cosmic_ext_nightlight</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MPL-2.0</project_license>
   <!-- Translations of the four blocks below — name, summary, description and the
@@ -35,12 +35,12 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">io.github.cosmic_nightlight.settings.desktop</launchable>
+  <launchable type="desktop-id">io.github.cosmic_ext_nightlight.Settings.desktop</launchable>
 
   <!-- Names the icon we ship into hicolor, not a theme icon. Metainfo files may
        only carry "stock" or "remote" icons; the "cached" form belongs to the
        catalog data a repository generates from this file. -->
-  <icon type="stock">io.github.cosmic_nightlight</icon>
+  <icon type="stock">io.github.cosmic_ext_nightlight</icon>
 
   <screenshots>
     <screenshot type="default">
@@ -54,6 +54,19 @@
   </screenshots>
 
   <releases>
+    <release version="0.7.0" date="2026-11-11">
+      <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.7.0</url>
+      <description>
+        <p>
+          Night Light now changes the screen smoothly, without the brief flicker.
+        </p>
+        <ul>
+          <li>Changes fade in over a second instead of jumping</li>
+          <li>The screen follows the warmth and brightness sliders as you drag them</li>
+          <li>The warmth and brightness sliders go further, for a warmer and dimmer screen</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-11-09">
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.6.1</url>
       <description>
@@ -147,7 +160,7 @@
       <url type="details">https://github.com/cosmic-nightlight/cosmic-nightlight/releases/tag/v0.3.0</url>
       <description>
         <p>
-          Renamed from "Night Shift" to "Night Light". Settings move to ~/.config/cosmic/io.github.cosmic_nightlight/ and are not carried over automatically.
+          Renamed from "Night Shift" to "Night Light". Settings move to ~/.config/cosmic/io.github.cosmic_ext_nightlight/ and are not carried over automatically.
         </p>
         <ul>
           <li>A manual on/off override that takes precedence over the schedule and clears at the next transition</li>
@@ -190,9 +203,16 @@
     <!-- The COSMIC Store's Applets page lists a component only if it provides
          this ID; without it the applet misses the section built for applets. -->
     <id>com.system76.CosmicApplet</id>
-    <binary>cosmic-nightlight</binary>
-    <binary>cosmic-nightlight-helper</binary>
+    <!-- The app's ID before 0.7.0, so a software center can tell that this is
+         the same app. -->
+    <id>io.github.cosmic_nightlight</id>
+    <binary>cosmic-ext-nightlight</binary>
+    <binary>cosmic-ext-nightlight-helper</binary>
   </provides>
+
+  <replaces>
+    <id>io.github.cosmic_nightlight</id>
+  </replaces>
 
   <content_rating type="oars-1.1" />
 

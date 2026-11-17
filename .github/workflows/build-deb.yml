@@ -51,13 +51,13 @@ jobs:
           # produced in the parent directory, so collect it into dist/.
           dpkg-buildpackage -b -us -uc -d
           mkdir -p dist
-          mv ../cosmic-nightlight_*.deb dist/
+          mv ../cosmic-ext-nightlight_*.deb dist/
           ls -l dist/
 
       - name: Upload .deb as build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cosmic-nightlight-deb
+          name: cosmic-ext-nightlight-deb
           path: dist/*.deb
           if-no-files-found: error
 

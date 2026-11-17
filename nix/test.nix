@@ -13,14 +13,14 @@
 let
   helper = "${
     self.packages.${pkgs.stdenv.hostPlatform.system}.default
-  }/libexec/cosmic-nightlight-helper";
+  }/libexec/cosmic-ext-nightlight-helper";
 in
 pkgs.testers.runNixOSTest {
-  name = "cosmic-nightlight-module";
+  name = "cosmic-ext-nightlight-module";
 
   nodes.machine = {
     imports = [ self.nixosModules.default ];
-    programs.cosmic-nightlight.enable = true;
+    programs.cosmic-ext-nightlight.enable = true;
 
     users.users.admin = {
       isNormalUser = true;
@@ -37,6 +37,6 @@ pkgs.testers.runNixOSTest {
     machine.fail("su - guest -c 'pkexec ${helper} --version'")
 
     # The user service points at the package, not /usr/bin.
-    machine.succeed("grep -q 'ExecStart=/nix/store/.*/bin/cosmic-nightlight --daemon' /etc/systemd/user/cosmic-nightlight.service")
+    machine.succeed("grep -q 'ExecStart=/nix/store/.*/bin/cosmic-ext-nightlight --daemon' /etc/systemd/user/cosmic-ext-nightlight.service")
   '';
 }

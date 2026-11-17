@@ -1,4 +1,4 @@
-Source: cosmic-nightlight
+Source: cosmic-ext-nightlight
 Section: x11
 Priority: optional
 Maintainer: Daniel Watts <danielcwtts@gmail.com>
@@ -16,22 +16,21 @@ Standards-Version: 4.7.0
 Rules-Requires-Root: no
 Homepage: https://github.com/cosmic-nightlight/cosmic-nightlight
 
-Package: cosmic-nightlight
+Package: cosmic-ext-nightlight
 Architecture: any
+Conflicts: cosmic-nightlight
+Replaces: cosmic-nightlight
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  polkitd | policykit-1,
  pkexec | policykit-1
-Description: Night light / red tint for the COSMIC desktop
- A night-light utility for the COSMIC desktop (Pop!_OS) that warms the screen
- color temperature on a schedule.
+Description: Night light and screen tint for the COSMIC desktop
+ Night Light warms your screen's colors at night to cut blue light. It's an
+ applet for the COSMIC desktop (Pop!_OS) that sits on your panel or dock.
  .
- COSMIC's compositor does not yet expose a gamma-control Wayland protocol, so
- this package writes the gamma ramp directly to the kernel's DRM/KMS layer. A
- small privileged helper (run via polkit/pkexec) briefly switches virtual
- terminals so the compositor releases the DRM master lock, applies the gamma
- LUTs to every active display, and switches back; the tint then persists.
+ It can follow sunset and sunrise where you are, or a schedule you set, and
+ can dim the screen too.
  .
- Ships a libcosmic GUI, a background scheduler (systemd user service), and the
- polkit rule that lets desktop users apply the tint without a password prompt.
+ This is an unofficial community project. It isn't made or endorsed by
+ System76.

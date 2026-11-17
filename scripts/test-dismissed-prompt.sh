@@ -17,9 +17,9 @@
 set -uo pipefail
 
 STASH="$(mktemp -d /tmp/nightlight-test-stash.XXXXXX)"
-HELPER=/usr/local/bin/cosmic-nightlight-helper
-RULE=/etc/polkit-1/rules.d/49-cosmic-nightlight.rules
-CFG="$HOME/.config/cosmic/io.github.cosmic_nightlight/v1/override"
+HELPER=/usr/local/bin/cosmic-ext-nightlight-helper
+RULE=/etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
+CFG="$HOME/.config/cosmic/io.github.cosmic_ext_nightlight/v1/override"
 LOG="$STASH/daemon.log"
 RUN_SECONDS=90
 
@@ -76,7 +76,7 @@ echo
 
 if flatpak ps --columns=application 2>/dev/null | grep -q cosmic_nightlight; then
     cat <<'EOF'
-!! A cosmic-nightlight flatpak instance is already running - almost certainly the
+!! A cosmic-ext-nightlight flatpak instance is already running - almost certainly the
    panel applet. Every run mode reconciles, so it will hit the same stashed
    helper and put up its own password dialogs alongside the daemon's.
 
@@ -130,7 +130,7 @@ cat <<EOF
 
 >> Running the daemon for ${RUN_SECONDS}s.
 
-   A password dialog will appear naming "cosmic-nightlight-setup".
+   A password dialog will appear naming "cosmic-ext-nightlight-setup".
    DISMISS IT (Escape / Cancel) — once. Then just wait.
 
    What to watch for: with the fix, that is the ONLY dialog you see.
@@ -139,7 +139,7 @@ cat <<EOF
 EOF
 read -rp "   Press Enter to start. " _
 
-timeout "$RUN_SECONDS" flatpak run io.github.cosmic_nightlight --daemon >"$LOG" 2>&1
+timeout "$RUN_SECONDS" flatpak run io.github.cosmic_ext_nightlight --daemon >"$LOG" 2>&1
 echo
 echo ">> Done. Daemon output:"
 echo "---------------------------------------------------------------"

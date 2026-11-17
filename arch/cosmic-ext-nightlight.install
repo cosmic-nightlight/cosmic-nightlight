@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MPL-2.0
+
+# Restart panel applets still running a binary this upgrade replaced, so the
+# new version shows up now instead of at the next login. The panel starts the
+# applet with no arguments and brings it back within milliseconds. The settings
+# window and the service have arguments and are left alone.
+restart_applets() {
+    for exe in /proc/[0-9]*/exe; do
+        case "$(readlink "$exe" 2>/dev/null)" in
+            "/usr/bin/cosmic-ext-nightlight (deleted)" | "/usr/bin/cosmic-nightlight (deleted)") ;;
+            *) continue ;;
+        esac
+        dir=${exe%/exe}
+        [ "$(tr -cd '\0' <"$dir/cmdline" 2>/dev/null | wc -c)" -eq 1 ] || continue
+        kill "${dir#/proc/}" 2>/dev/null || true
+    done
+}
+
+# A package that replaces cosmic-nightlight installs rather than upgrades.
+post_install() {
+    restart_applets
+}
+
+post_upgrade() {
+    restart_applets
+}
+
+# Put the screen's colors back while the helper is still here to do it. The
+# helper does nothing if the screen is already clear.
+pre_remove() {
+    /usr/bin/cosmic-ext-nightlight-helper --off >/dev/null 2>&1 || true
+}
+
+# Each session's note of what it last put on the screen is wrong now that the
+# tint is cleared. A reinstall in the same session would otherwise trust it.
+post_remove() {
+    rm -f /run/user/*/cosmic-nightlight-shown
+}

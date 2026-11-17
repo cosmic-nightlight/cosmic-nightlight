@@ -43,6 +43,9 @@ pub struct NightLightApplet {
     /// True between a slider drag starting and being released, so an incoming
     /// config change doesn't yank the handle out from under the pointer.
     dragging: bool,
+    /// Whether changes on this machine flicker the screen, which decides
+    /// whether the popup says so. See [`config::flickers`].
+    flickers: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +58,8 @@ pub enum Message {
     Surface(cosmic::surface::Action),
     RefreshInit,
     ConfigUpdated(config::Settings),
+    /// Whether changes flicker the screen, as learned by the last one.
+    FlickersChanged(bool),
     Tick,
     /// A toggle's apply came back. `previous` is the override to fall back to
     /// if it didn't land.
@@ -118,6 +123,7 @@ impl cosmic::Application for NightLightApplet {
             settings,
             temperature: settings.temperature as f32,
             dragging: false,
+            flickers: config::flickers(),
         };
 
         let init_task = cosmic::task::future(async { Message::RefreshInit });
@@ -165,6 +171,9 @@ impl cosmic::Application for NightLightApplet {
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
                 self.dragging = true;
+                if self.settings.tint_on() {
+                    backend::preview_in_background(value as u32, self.settings.brightness as f32);
+                }
             }
             Message::TemperatureCommitted => {
                 self.dragging = false;
@@ -197,6 +206,9 @@ impl cosmic::Application for NightLightApplet {
                 }
                 self.show_current();
             }
+            Message::FlickersChanged(flickers) => {
+                self.flickers = flickers;
+            }
             Message::Tick => {
                 // Before anything decides: the steps below reconcile the screen
                 // against this snapshot, so a stale one doesn't just draw wrong,
@@ -216,6 +228,7 @@ impl cosmic::Application for NightLightApplet {
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
         cosmic::iced::Subscription::batch([
             config::subscription().map(Message::ConfigUpdated),
+            config::flickers_subscription().map(Message::FlickersChanged),
             cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
         ])
     }
@@ -377,13 +390,15 @@ impl NightLightApplet {
         );
 
         // The note is a footnote to the controls above it, not to the slider it
-        // happens to follow — the toggle flickers just as much. Temperature is
+        // happens to follow. The toggle flickers just as much. Temperature is
         // the last control, so riding along at the bottom of its column puts the
         // caption under the group without the padding a row of its own would add.
-        let temperature = cosmic::widget::Column::new()
+        let mut temperature = cosmic::widget::Column::new()
             .spacing(2)
-            .push(temperature_row)
-            .push(widget::text::caption(config::flicker_note()));
+            .push(temperature_row);
+        if self.flickers {
+            temperature = temperature.push(widget::text::caption(config::flicker_note()));
+        }
 
         // Match the native COSMIC applets (e.g. the keyboard applet's "Keyboard
         // Settings...") — a flat, full-width `AppletMenu` row that highlights on
@@ -419,12 +434,12 @@ fn surface_task(action: cosmic::surface::Action) -> Task<Message> {
     cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(action)))
 }
 
-/// Launches `cosmic-nightlight --settings` as a detached child process.
+/// Launches `cosmic-ext-nightlight --settings` as a detached child process.
 ///
 /// The settings UI is a normal top-level window, which an applet's layer-shell
 /// surface can't host in-process, so we run it as a separate process.
 fn spawn_settings_window() {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cosmic-nightlight"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cosmic-ext-nightlight"));
     match std::process::Command::new(exe).arg("--settings").spawn() {
         Ok(mut child) => {
             // Wait on it from a thread of its own. Nothing here wants the exit
@@ -441,6 +456,6 @@ fn spawn_settings_window() {
                 let _ = child.wait();
             });
         }
-        Err(err) => eprintln!("cosmic-nightlight: failed to open settings window: {err}"),
+        Err(err) => eprintln!("cosmic-ext-nightlight: failed to open settings window: {err}"),
     }
 }
