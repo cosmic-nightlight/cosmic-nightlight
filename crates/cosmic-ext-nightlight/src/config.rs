@@ -454,6 +454,88 @@ pub fn handler() -> Option<Config> {
     Config::new(APP_ID, CONFIG_VERSION).ok()
 }
 
+/// What this machine has taught us, kept apart from the settings in
+/// `~/.local/state` rather than `~/.config`. It describes the hardware, not a
+/// choice the user made, so it should not follow a synced config to another
+/// machine.
+fn state_handler() -> Option<Config> {
+    Config::new_state(APP_ID, CONFIG_VERSION).ok()
+}
+
+/// Whether the last change that touched the screen needed the VT bounce.
+const KEY_FLICKERS: &str = "flickers";
+
+/// Whether changes on this machine flicker the screen, as far as we know.
+///
+/// Most machines change the screen through the compositor's own handle and
+/// never blink. Where that does not work the helper falls back to the VT
+/// bounce, and the GUIs show the old "may briefly flicker" note so the blink
+/// does not read as a fault. False until a change has said otherwise.
+pub fn flickers() -> bool {
+    state_handler()
+        .and_then(|config| config.get::<bool>(KEY_FLICKERS).ok())
+        .unwrap_or(false)
+}
+
+/// Records what the last change that touched the screen said about
+/// [`flickers`]. Written only when it changes, so the GUIs' watch on it stays
+/// quiet.
+pub fn store_flickers(value: bool) {
+    let Some(config) = state_handler() else {
+        return;
+    };
+    if config
+        .get::<bool>(KEY_FLICKERS)
+        .is_ok_and(|stored| stored == value)
+    {
+        return;
+    }
+    report(KEY_FLICKERS, config.set(KEY_FLICKERS, value));
+}
+
+/// Emits [`flickers`] on start and whenever another process changes it, so a
+/// note shown by the applet or the settings window comes and goes with the
+/// first change that settles it.
+pub fn flickers_subscription() -> cosmic::iced::Subscription<bool> {
+    cosmic::iced::Subscription::run(|| {
+        cosmic::iced::stream::channel(
+            4,
+            |mut output: cosmic::iced::futures::channel::mpsc::Sender<bool>| async move {
+                use cosmic::iced::futures::{SinkExt, StreamExt};
+
+                let _ = output.send(flickers()).await;
+
+                let Some(config) = state_handler() else {
+                    std::future::pending::<()>().await;
+                    unreachable!();
+                };
+                let (tx, mut rx) = cosmic::iced::futures::channel::mpsc::channel(4);
+                let Ok(_watcher) = config.watch(move |_, _keys| {
+                    let _ = tx.clone().try_send(());
+                }) else {
+                    std::future::pending::<()>().await;
+                    unreachable!();
+                };
+
+                while rx.next().await.is_some() {
+                    let _ = output.send(flickers()).await;
+                }
+            },
+        )
+    })
+}
+
+/// The note the GUIs show while [`flickers`] is true.
+///
+/// It speaks for a whole group of controls rather than any one of them: the
+/// toggle and the sliders all go through the same apply, so all of them cost a
+/// flicker. It sits under the section heading in the settings window and under
+/// the control group in the applet popup, never as one row's description,
+/// which would claim it applies to that row alone.
+pub fn flicker_note() -> String {
+    fl!("flicker-note")
+}
+
 /// Best-effort write helpers. Each silently no-ops without a config handle.
 /// `value` types are concrete so the `Serialize` bound on [`ConfigSet::set`] is
 /// satisfied by inference (avoids a direct `serde` dependency).

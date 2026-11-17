@@ -162,6 +162,9 @@ pub struct SettingsWindow {
     shortcut: shortcut::State,
     /// Why the last attempt to add the shortcut didn't take, if it didn't.
     shortcut_error: Option<String>,
+    /// Whether changes on this machine flicker the screen, which decides
+    /// whether the window says so. See [`config::flickers`].
+    flickers: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -180,6 +183,8 @@ pub enum Message {
     /// The keyboard shortcut was added, changed or removed, here or in COSMIC
     /// Settings.
     ShortcutChanged(shortcut::State),
+    /// Whether changes flicker the screen, as learned by the last one.
+    FlickersChanged(bool),
     Tick,
     /// A toggle's apply came back. `previous` is the override to fall back to
     /// if it didn't land.
@@ -280,6 +285,7 @@ impl cosmic::Application for SettingsWindow {
             autostart_error: None,
             shortcut: shortcut::state(),
             shortcut_error: None,
+            flickers: config::flickers(),
         };
 
         // Before the first render, so a setting the applet has made redundant is
@@ -413,6 +419,9 @@ impl cosmic::Application for SettingsWindow {
             Message::ShortcutChanged(state) => {
                 self.shortcut = state;
             }
+            Message::FlickersChanged(flickers) => {
+                self.flickers = flickers;
+            }
             Message::Tick => {
                 // Before anything decides: the steps below reconcile the screen
                 // against this snapshot, so a stale one doesn't just draw wrong,
@@ -520,6 +529,7 @@ impl cosmic::Application for SettingsWindow {
             config::subscription().map(Message::ConfigUpdated),
             config::panel_subscription().map(Message::PanelChanged),
             shortcut::subscription().map(Message::ShortcutChanged),
+            config::flickers_subscription().map(Message::FlickersChanged),
             cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
         ])
     }
@@ -527,8 +537,18 @@ impl cosmic::Application for SettingsWindow {
     fn view(&self) -> Element<'_, Self::Message> {
         let tint_on = self.settings.tint_on();
 
+        // `title` is just `header` with a heading in it, so building the header
+        // by hand hangs the flicker note off the section instead of off a row.
+        // Every control below it flickers, and the toggle already spends its
+        // description on the schedule status.
+        let mut header = widget::Column::new()
+            .spacing(2)
+            .push(widget::text::heading(fl!("app-name")));
+        if self.flickers {
+            header = header.push(widget::text::caption(config::flicker_note()));
+        }
         let night_light = widget::settings::section()
-            .title(fl!("app-name"))
+            .header(header)
             .add(
                 widget::settings::item::builder(fl!("app-name"))
                     .description(config::status_text(&self.settings, tint_on))

@@ -27,6 +27,9 @@
 //! only if it needs no VT bounce, and otherwise nothing is touched and the exit
 //! code is `nightlight_core::EXIT_NO_LIVE` (3).
 //!
+//! After a change it prints `nightlight_core::route_line` on stdout, which
+//! tells the GUI whether the change needed the VT bounce.
+//!
 //! `--session-vt` is the caller's graphical-session VT (from `XDG_VTNR`, which
 //! `pkexec` strips from the environment). When given, the VT bounce only runs
 //! if that VT is foreground and always switches back to it; without it the
@@ -143,6 +146,7 @@ fn main() -> ExitCode {
                 args.brightness * 100.0,
                 applied.crtcs
             );
+            println!("{}", nightlight_core::route_line(applied.route));
             if applied.crtcs == 0 {
                 // Treat "nothing updated" as a failure so a caller that retries
                 // (the daemon) tries again — at login the displays may not be

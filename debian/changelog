@@ -1,7 +1,8 @@
 cosmic-ext-nightlight (0.7.0-1) UNRELEASED; urgency=medium
 
   * Night Light now changes the screen without the brief flicker. If your
-    system can't do it the new way, it changes the old way, as before.
+    system can't do it the new way, it changes the old way, as before, and
+    shows the note about the brief flicker.
   * Changes now fade in over a second instead of jumping.
   * The screen now follows the warmth and brightness sliders as you drag
     them.

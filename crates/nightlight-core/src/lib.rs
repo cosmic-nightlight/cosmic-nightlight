@@ -39,6 +39,60 @@ pub struct Applied {
     pub crtcs: usize,
     /// Cards with a display on them that could not be fully updated.
     pub failed_cards: usize,
+    /// How the change reached the screen.
+    pub route: Route,
+}
+
+/// How an [`apply`] reached the screen.
+///
+/// The GUI uses this to tell whether changes on this machine blink, so it can
+/// say so. Only [`Route::Borrowed`] and [`Route::Bounced`] answer that, since
+/// a change that was already showing tried neither route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Route {
+    /// Every display already showed the change, so nothing was written.
+    Unchanged,
+    /// Written through the compositor's own display handle, with no blink.
+    Borrowed,
+    /// Written inside a VT bounce, which the user sees as a blink.
+    Bounced,
+}
+
+impl Route {
+    /// The word [`route_line`] uses for this route.
+    fn as_key(self) -> &'static str {
+        match self {
+            Route::Unchanged => "unchanged",
+            Route::Borrowed => "borrowed",
+            Route::Bounced => "bounced",
+        }
+    }
+}
+
+/// The line the helper prints on stdout to say how a change reached the screen.
+///
+/// Written here and read back by [`parse_route`] so the format cannot drift
+/// between the helper and the GUI. It is not part of [`HELPER_CONTRACT`]: a
+/// helper too old to print it just leaves the GUI not knowing, which it treats
+/// as no news.
+pub fn route_line(route: Route) -> String {
+    format!("cosmic-ext-nightlight-helper: route {}", route.as_key())
+}
+
+/// Reads the route back out of the helper's stdout. `None` when no line says,
+/// which is what a helper predating [`route_line`] prints.
+pub fn parse_route(output: &str) -> Option<Route> {
+    output.lines().find_map(|line| {
+        match line
+            .strip_prefix("cosmic-ext-nightlight-helper: route ")?
+            .trim()
+        {
+            "unchanged" => Some(Route::Unchanged),
+            "borrowed" => Some(Route::Borrowed),
+            "bounced" => Some(Route::Bounced),
+            _ => None,
+        }
+    })
 }
 
 /// The helper's exit code when some displays changed and others could not.
@@ -110,6 +164,7 @@ pub fn apply_with(
         return Ok(Applied {
             crtcs,
             failed_cards: 0,
+            route: Route::Unchanged,
         });
     }
     // First try writing through the compositor's own display handle, which
@@ -118,16 +173,25 @@ pub fn apply_with(
     // screen now, and this would tint another user's session.
     let ours_on_screen = session_vt.is_none_or(|vt| vt::foreground() == Some(vt));
     let fade = options.fade.min(MAX_FADE);
-    if ours_on_screen && drm::apply_borrowed(kelvin, brightness, fade) > 0 {
+    // Why the borrowed handle was not enough, for the log. A bounce on a
+    // machine where borrowing should work is the first thing to look into.
+    let reason = if !ours_on_screen {
+        "the session is not in the foreground"
+    } else if drm::apply_borrowed(kelvin, brightness, fade) == 0 {
+        "no display took the change through the compositor's handle"
+    } else {
         // Trust the screen, not the count: a display the borrowed handle could
         // not reach still needs the bounce below.
         if let drm::Showing::All(crtcs) = drm::showing(kelvin, brightness) {
             return Ok(Applied {
                 crtcs,
                 failed_cards: 0,
+                route: Route::Borrowed,
             });
         }
-    }
+        "some displays did not take the change through the compositor's handle"
+    };
+    eprintln!("nightlight-core: needs a VT bounce because {reason}");
     if options.live {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -138,6 +202,7 @@ pub fn apply_with(
     Ok(Applied {
         crtcs: written.crtcs,
         failed_cards: written.failed_cards,
+        route: Route::Bounced,
     })
 }
 
@@ -291,6 +356,21 @@ mod tests {
     #[test]
     fn contract_survives_a_round_trip() {
         assert_eq!(parse_contract(&version_line()), Some(HELPER_CONTRACT));
+    }
+
+    #[test]
+    fn route_survives_a_round_trip() {
+        for route in [Route::Unchanged, Route::Borrowed, Route::Bounced] {
+            let output = format!("some other line\n{}\n", route_line(route));
+            assert_eq!(parse_route(&output), Some(route));
+        }
+    }
+
+    #[test]
+    fn output_without_a_route_reads_as_none() {
+        // What a helper predating `route_line` prints after a change.
+        let output = "cosmic-ext-nightlight-helper: applied 4500K @ 100% to 2 CRTC(s)\n";
+        assert_eq!(parse_route(output), None);
     }
 
     #[test]

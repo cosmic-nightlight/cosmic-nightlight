@@ -1136,9 +1136,21 @@ fn program_exists(program: &str) -> bool {
 fn run_helper(args: &[String]) -> Result<(), Failure> {
     let (program, installs) = privileged_program();
     let mut command = pkexec_command();
-    command.arg(&program).args(args).args(session_vt_args());
+    command
+        .arg(&program)
+        .args(args)
+        .args(session_vt_args())
+        .stdout(Stdio::piped());
 
-    match command.status() {
+    let result = command.spawn().and_then(|child| child.wait_with_output());
+    if let Ok(output) = &result {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Passed on, so the log reads as it did when the helper wrote to it.
+        print!("{stdout}");
+        note_route(nightlight_core::parse_route(&stdout));
+    }
+
+    match result.map(|output| output.status) {
         Ok(status) if status.success() => {
             println!("backend: helper applied {args:?}");
             if installs {
@@ -1191,6 +1203,21 @@ fn run_helper(args: &[String]) -> Result<(), Failure> {
             forget_host_helper();
             Err(Failure::Other)
         }
+    }
+}
+
+/// Remembers whether changes on this machine need the VT bounce, so the GUIs
+/// can say the screen may flicker.
+///
+/// A change that was already showing tried neither route, and a helper too old
+/// to say leaves the route unknown. Neither tells us anything, so both keep
+/// whatever was learned before.
+fn note_route(route: Option<nightlight_core::Route>) {
+    use nightlight_core::Route;
+    match route {
+        Some(Route::Bounced) => config::store_flickers(true),
+        Some(Route::Borrowed) => config::store_flickers(false),
+        Some(Route::Unchanged) | None => {}
     }
 }
 
