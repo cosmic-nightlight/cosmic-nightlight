@@ -15,3 +15,13 @@ short and plain, and follow [docs/release-notes/README.md](docs/release-notes/RE
 
 Code comments and docs aimed at developers (like `docs/flatpak-design.md`) can
 go into as much detail as they need.
+
+## Pull requests
+
+PR descriptions follow [.github/pull_request_template.md](.github/pull_request_template.md):
+
+- A plain list, one short line for each change. No headings and no paragraphs.
+- Say what changed, not how or why. The commits and code comments hold the
+  details.
+- The same writing rules as above apply: no em dashes, and no sentences joined
+  with a colon or semicolon.
