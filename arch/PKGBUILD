@@ -73,6 +73,9 @@ package() {
 
     install -Dm0755 target/release/cosmic-ext-nightlight-helper \
         "$pkgdir/usr/bin/cosmic-ext-nightlight-helper"
+    # The helper's name before 0.7.0. An applet started before the upgrade
+    # keeps calling it until the next login, and would fail without it.
+    ln -s cosmic-ext-nightlight-helper "$pkgdir/usr/bin/cosmic-nightlight-helper"
     install -Dm0755 target/release/cosmic-ext-nightlight \
         "$pkgdir/usr/bin/cosmic-ext-nightlight"
 

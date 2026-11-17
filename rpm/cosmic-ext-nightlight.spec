@@ -50,15 +50,13 @@ Obsoletes:      cosmic-nightlight < 0.7.0
 Provides:       cosmic-nightlight = %{version}-%{release}
 
 %description
-A night-light utility for the COSMIC desktop that warms the screen color
-temperature on a schedule, either following sunset and sunrise or a schedule you
-set.
+Night Light warms your screen's colors at night to cut blue light. It's an
+applet for the COSMIC desktop that sits on your panel or dock.
 
-COSMIC's compositor does not yet expose a gamma-control Wayland protocol, so
-this writes the gamma ramp directly to the kernel's DRM/KMS layer. A small
-privileged helper, run through polkit, briefly switches virtual terminals so the
-compositor releases the DRM master lock, applies the gamma LUTs to every active
-display, and switches back. The tint then persists.
+It can follow sunset and sunrise where you are, or a schedule you set, and can
+dim the screen too.
+
+This is an unofficial community project. It isn't made or endorsed by System76.
 
 %prep
 %autosetup
@@ -72,6 +70,9 @@ cargo test --release --locked -p nightlight-core
 %install
 install -D -m0755 target/release/cosmic-ext-nightlight-helper \
     %{buildroot}%{_bindir}/cosmic-ext-nightlight-helper
+# The helper's name before 0.7.0. An applet started before the upgrade keeps
+# calling it until the next login, and would fail without it.
+ln -s cosmic-ext-nightlight-helper %{buildroot}%{_bindir}/cosmic-nightlight-helper
 install -D -m0755 target/release/cosmic-ext-nightlight \
     %{buildroot}%{_bindir}/cosmic-ext-nightlight
 
@@ -122,6 +123,7 @@ fi
 %doc README.md
 %{_bindir}/cosmic-ext-nightlight
 %{_bindir}/cosmic-ext-nightlight-helper
+%{_bindir}/cosmic-nightlight-helper
 %{_datadir}/applications/io.github.cosmic_nightlight.desktop
 %{_datadir}/applications/io.github.cosmic_nightlight.settings.desktop
 %{_datadir}/metainfo/io.github.cosmic_nightlight.metainfo.xml
