@@ -1,29 +1,26 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
-# Night Light for COSMIC™
+<div align="center">
+  <img src="data/icons/hicolor/scalable/apps/io.github.cosmic_nightlight.svg" width="96" alt="">
+  <h1>Night Light for COSMIC™</h1>
+  <p>Warmer screen colors at night, for the COSMIC desktop.</p>
+  <p>
+    <a href="#install">Install</a> ·
+    <a href="#using-it">Using it</a> ·
+    <a href="#known-limitations">Known limitations</a> ·
+    <a href="#how-it-works">How it works</a>
+  </p>
+</div>
 
-**Night Light** is an applet for the **COSMIC™** desktop (Pop!_OS) that warms
-your screen's colors to cut blue light at night. It sits on your **panel or
-dock**: click it to turn it on or off and set the warmth. In **Settings** you can
-have it follow the real sunset and sunrise, or set your own schedule, and adjust
-the brightness. It's built with COSMIC's own widgets, so it looks like part of
-the desktop.
+Night Light is an applet for the COSMIC desktop (Pop!_OS) that warms your
+screen's colors to cut blue light at night. It sits on your panel or dock:
+click it to turn it on or off and set the warmth. In Settings you can have it
+follow the real sunset and sunrise, or set your own schedule, and adjust the
+brightness.
 
 It exists because COSMIC doesn't support the usual night light tools
 (`redshift`, `gammastep`, `wlsunset`) yet. See [How it works](#how-it-works).
 
 This is an unofficial community project. It isn't made or endorsed by System76.
-
-## Contents
-
-- [Screenshots](#screenshots)
-- [Install](#install)
-  - [Build from source (for development)](#build-from-source-for-development)
-- [Using it](#using-it)
-- [Translating](#translating)
-- [Known limitations](#known-limitations)
-- [How it works](#how-it-works)
-- [Architecture](#architecture)
-- [The real fix](#the-real-fix)
 
 ## Screenshots
 
@@ -48,8 +45,8 @@ This is an unofficial community project. It isn't made or endorsed by System76.
 
 **1. Get the package.** On Pop!_OS or Ubuntu:
 
-- Download the latest **`cosmic-ext-nightlight_*.deb`** from the
-  [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+- Download the latest `cosmic-ext-nightlight_*.deb` from the
+  [Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
   page.
 - Open it with the **COSMIC Store** and click **Install**
   (or run `sudo apt install ./cosmic-ext-nightlight_*.deb`).
@@ -59,8 +56,8 @@ On another system, open yours below:
 <details>
 <summary><b>Fedora</b></summary>
 
-You'll need Fedora 44 or newer. Download the latest **`cosmic-ext-nightlight-*.rpm`**
-from the [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+You'll need Fedora 44 or newer. Download the latest `cosmic-ext-nightlight-*.rpm`
+from the [Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
 page and run:
 
 ```sh
@@ -72,8 +69,8 @@ sudo dnf install ./cosmic-ext-nightlight-*.rpm
 <details>
 <summary><b>Arch Linux</b></summary>
 
-Download the latest **`cosmic-ext-nightlight-*.pkg.tar.zst`** from the
-[**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+Download the latest `cosmic-ext-nightlight-*.pkg.tar.zst` from the
+[Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
 page and run:
 
 ```sh
@@ -85,8 +82,7 @@ sudo pacman -U ./cosmic-ext-nightlight-*.pkg.tar.zst
 <details>
 <summary><b>NixOS</b></summary>
 
-NixOS support is new in 0.6.0. If something doesn't work, please
-[open an issue](https://github.com/cosmic-nightlight/cosmic-nightlight/issues).
+If something doesn't work, please [open an issue](https://github.com/cosmic-nightlight/cosmic-nightlight/issues).
 The flatpak doesn't work on NixOS.
 
 **1. Turn on flakes.** If you already use flakes, skip to step 2.
@@ -132,7 +128,7 @@ Paste all of this in, and change `25.11` to your version:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    cosmic-ext-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.1";
+    cosmic-ext-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.7.0";
   };
 
   outputs = { nixpkgs, cosmic-ext-nightlight, ... }: {
@@ -157,12 +153,12 @@ sudo nixos-rebuild switch --flake /etc/nixos#nixos
 
 Use this command from now on whenever you rebuild your system.
 
-**Updating to a new release:** in `/etc/nixos/flake.nix`, change `v0.6.1` in
+**Updating to a new release:** in `/etc/nixos/flake.nix`, change `v0.7.0` in
 the `cosmic-ext-nightlight.url` line to the new version, then run
 `sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and the rebuild
 command above.
 
-**Trying the Nightly build:** use `nightly` in place of `v0.6.1` in that line.
+**Trying the Nightly build:** use `nightly` in place of `v0.7.0` in that line.
 It gets fixes first but can have bugs. Running
 `sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and rebuilding
 then brings you the newest one.
@@ -170,7 +166,7 @@ then brings you the newest one.
 **Already have a flake?** Add this line inside `inputs`:
 
 ```nix
-cosmic-ext-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.6.1";
+cosmic-ext-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.7.0";
 ```
 
 Add `cosmic-ext-nightlight` to the list after `outputs = {`, and add these two
@@ -192,8 +188,8 @@ The app isn't in the COSMIC Store yet. A flatpak version is being submitted,
 and until it's accepted, the packages above are the recommended install. To
 try it anyway:
 
-1. Download **`cosmic-ext-nightlight-*.flatpak`** from the
-   [**Releases**](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+1. Download `cosmic-ext-nightlight-*.flatpak` from the
+   [Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
    page.
 2. `flatpak install --user ./cosmic-ext-nightlight-*.flatpak`
 3. Add the applet as in step 2 below, or open the settings with
@@ -245,7 +241,7 @@ This builds the latest release. To build your local changes instead, run
 **2. Add the applet:** **COSMIC Settings → Desktop → Panel** (or **Dock**)
 **→ Configure applets → Add applet → Night Light**.
 
-That's it. Click the Night Light icon to turn it on or open its settings.
+Click the Night Light icon to turn it on or open its settings.
 
 ### Build from source (for development)
 
@@ -336,14 +332,14 @@ welcome. See [docs/translating.md](docs/translating.md).
 
 COSMIC's compositor doesn't yet support the Wayland protocol that night light
 tools use to change screen colors ([cosmic-comp#764]). A built-in night light is
-planned for COSMIC **Epoch 3** ([cosmic-comp#2059], [cosmic-epoch#2498]).
+planned for COSMIC Epoch 3 ([cosmic-comp#2059], [cosmic-epoch#2498]).
 
 So this app skips Wayland and writes the color curve straight to the kernel's
-graphics layer (DRM), the same way `redshift` does outside a desktop. The
-catch is that COSMIC holds an exclusive lock on the display (**DRM master**), so
-other programs can't change it.
+graphics layer (DRM), the same way `redshift` does outside a desktop. COSMIC
+holds an exclusive lock on the display (DRM master), so other programs can't
+normally change it.
 
-The workaround: a root helper borrows a copy of COSMIC's own handle to the
+To get around that, a root helper borrows a copy of COSMIC's own handle to the
 display and writes the colors through it. The kernel accepts that as coming
 from COSMIC, and nothing on screen is interrupted.
 
@@ -360,12 +356,12 @@ GUI:
 | Crate | Runs as | Does |
 | --- | --- | --- |
 | [`nightlight-core`](crates/nightlight-core) | library | Color math ([`gamma.rs`](crates/nightlight-core/src/gamma.rs)), DRM writes ([`drm.rs`](crates/nightlight-core/src/drm.rs)), the VT switching fallback ([`vt.rs`](crates/nightlight-core/src/vt.rs)) |
-| [`nightlight-helper`](crates/nightlight-helper) | **root** (via `pkexec`) | Small CLI: reads `--temp`/`--brightness` and calls core |
+| [`nightlight-helper`](crates/nightlight-helper) | root (via `pkexec`) | Small CLI: reads `--temp`/`--brightness` and calls core |
 | [`cosmic-ext-nightlight`](crates/cosmic-ext-nightlight) | your user | The panel applet, `--settings` window and optional `--daemon`; calls the helper |
 
-Any of the three modes can run the schedule. They share a lock and a record of
-what's on screen in `$XDG_RUNTIME_DIR`, so running several at once still causes
-only one change.
+The applet, the settings window and the daemon can each run the schedule. They
+share a lock and a record of what's on screen in `$XDG_RUNTIME_DIR`, so running
+several at once still causes only one change.
 
 What happens on a tint change:
 
@@ -385,14 +381,13 @@ If a display didn't take the change, the fallback runs:
 ```
 
 The color curve uses Tanner Helland's color temperature formula. 6500 K means no
-tint, and lower values are warmer. This allows much finer control than monitor
-(DDC/CI) presets, and it works on laptop screens.
+tint, and lower values are warmer.
 
-## The real fix
+## Long term
 
-This is a stopgap. The proper fix is for COSMIC to support a color control
-protocol; follow [cosmic-comp#764] and [cosmic-comp#2059]. When that happens,
-this app can drop the workaround and become a normal Wayland app.
+This is a stopgap until COSMIC supports a color control protocol. Follow
+[cosmic-comp#764] and [cosmic-comp#2059]. Once it does, this app can drop the
+workaround and become a normal Wayland app.
 
 [cosmic-comp#764]: https://github.com/pop-os/cosmic-comp/issues/764
 [cosmic-comp#2059]: https://github.com/pop-os/cosmic-comp/issues/2059
