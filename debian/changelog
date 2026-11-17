@@ -11,6 +11,8 @@ cosmic-ext-nightlight (0.7.0-1) UNRELEASED; urgency=medium
     leaving the tint on.
   * Logging out and quickly back in no longer leaves Night Light showing
     as on with no tint.
+  * Flipping the switch or pressing the shortcut many times in a row no
+    longer keeps the screen switching on and off afterwards.
   * The package is now called cosmic-ext-nightlight and replaces
     cosmic-nightlight. Settings, the panel icon and the keyboard shortcut
     carry over.

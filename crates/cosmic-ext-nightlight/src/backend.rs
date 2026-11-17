@@ -1155,6 +1155,12 @@ fn preview_now(kelvin: u32, brightness: f32) {
 /// Blocks for as long as the helper runs (~1s: a VT bounce plus polkit).
 fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> bool {
     with_apply_lock(|| {
+        if outdated(state, brightness) {
+            // Not a failure: the change that replaced this one is what the
+            // screen should show, and its own apply will say whether it landed.
+            println!("backend: skipping an apply the settings have moved on from");
+            return true;
+        }
         if refused_since(requested_at) {
             println!("backend: skipping an apply the user already declined");
             return false;
@@ -1179,6 +1185,31 @@ fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> boo
             Err(failure) => settle_failure(&wanted, failure),
         }
     })
+}
+
+/// Whether the stored settings no longer ask for `state` at `brightness`, so a
+/// request for it has been overtaken by a newer change. Callers must hold the
+/// apply lock, and must only ask about requests that came from the settings.
+///
+/// Every request is decided from the settings and queued after they are stored,
+/// but it can then wait a long time for the lock: each apply is about a second
+/// of fade, and every one of our processes queues its own. Spamming the toggle
+/// or the shortcut used to line up one apply per press, across the applet, the
+/// settings window, the daemon and each `--toggle` process, and the screen kept
+/// flipping on and off for a minute or two after the last press. Checked once
+/// the lock is held, all but the latest state fall away, so a burst of presses
+/// costs at most the apply in flight plus one more.
+///
+/// Without a config store there is nothing newer to defer to, so nothing is
+/// outdated.
+fn outdated(state: TintState, brightness: f32) -> bool {
+    let handler = config::handler();
+    if handler.is_none() {
+        return false;
+    }
+    let settings = config::Settings::load_from(&handler);
+    let current = settings.tint_on().then_some(settings.temperature);
+    current != state || settings.brightness as f32 != brightness
 }
 
 /// Whether another of our processes has already put `wanted` on the screen
@@ -1283,6 +1314,11 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
         let settled = displays_settled(&wanted.displays);
         let record = applied();
         if record.as_ref() == Some(&wanted) {
+            return Reconcile::UpToDate;
+        }
+        // A stale request is not ours to apply: whoever changed the settings
+        // queued the newer state, and the next tick re-reads them anyway.
+        if outdated(state, brightness) {
             return Reconcile::UpToDate;
         }
         // Do not bounce the VT to apply a schedule change while every display is
