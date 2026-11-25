@@ -176,27 +176,42 @@ everywhere but Fedora Atomic. To try it anyway:
 1. Download `cosmic-ext-nightlight-*.flatpak` from the
    [Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
    page.
-2. `flatpak install --user ./cosmic-ext-nightlight-*.flatpak`
-3. Add the applet as in step 2 below, or open the settings with
-   `flatpak run io.github.cosmic_ext_nightlight --settings`.
+2. Install it and open its settings:
+   ```sh
+   flatpak install --user ./cosmic-ext-nightlight-*.flatpak && flatpak run io.github.cosmic_ext_nightlight --settings
+   ```
+3. Turn it on and type your password once to install a small helper
+   ([why](docs/flatpak-design.md)).
 
-If you have the flatpak from 0.6, this one installs beside it. Run the command
-in step 3 once. That moves your settings and panel icon over and removes the old
-version for you.
+To remove it, run `flatpak uninstall io.github.cosmic_ext_nightlight`. This also
+removes the helper.
 
-The first time you turn it on, it asks for your password once to install a small
-helper on your system. A sandboxed app can't change screen colors on its own
-([why](docs/flatpak-design.md)).
+### Upgrading
 
-To remove it, uninstall it from the COSMIC Store or run
-`flatpak uninstall io.github.cosmic_ext_nightlight`. The helper removes itself a few
-seconds later.
-
-If you set up the helper with version 0.5.1 or earlier, it stays behind. Remove it with:
+If you used the flatpak from 0.5.1 or earlier, remove its old helper:
 
 ```sh
 sudo rm /usr/local/bin/cosmic-nightlight-helper /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
 ```
+
+If you have the flatpak from 0.6, step 2 moves your settings and panel icon to
+the new version and removes the old one.
+
+</details>
+
+<details>
+<summary><b>Build from source</b> (for development)</summary>
+
+You'll need a Rust toolchain and `libdrm-dev`:
+
+```sh
+./scripts/install.sh --gui     # build and install everything
+./scripts/uninstall.sh         # remove it all again
+```
+
+To build the `.deb`, `.rpm`, Arch or Nix package, see [PACKAGING.md](PACKAGING.md). For packagers:
+[docs/flatpak-design.md](docs/flatpak-design.md) explains the flatpak setup, and
+[docs/cosmic-store.md](docs/cosmic-store.md) covers the COSMIC Store listing.
 
 <details>
 <summary>Build the flatpak yourself</summary>
@@ -224,22 +239,6 @@ This builds the latest release. To build your local changes instead, run
 [flatpak/README.md](flatpak/README.md).
 
 </details>
-
-</details>
-
-<details>
-<summary><b>Build from source</b> (for development)</summary>
-
-You'll need a Rust toolchain and `libdrm-dev`:
-
-```sh
-./scripts/install.sh --gui     # build and install everything
-./scripts/uninstall.sh         # remove it all again
-```
-
-To build the `.deb`, `.rpm`, Arch or Nix package, see [PACKAGING.md](PACKAGING.md). For packagers:
-[docs/flatpak-design.md](docs/flatpak-design.md) explains the flatpak setup, and
-[docs/cosmic-store.md](docs/cosmic-store.md) covers the COSMIC Store listing.
 
 </details>
 
