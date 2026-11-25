@@ -31,6 +31,8 @@ depends=(
     'wayland'
     'fontconfig'
     'expat'
+    # Owns the icon directories the package installs into.
+    'hicolor-icon-theme'
     # The privileged helper is reached through pkexec, which polkit provides.
     'polkit'
 )
