@@ -169,9 +169,7 @@ Use this command from now on whenever you rebuild your system.
 <details>
 <summary><b>Flatpak</b> (optional, any system except NixOS)</summary>
 
-The app isn't in the COSMIC Store yet. A flatpak version is being submitted,
-and until it's accepted, the packages above are the recommended install
-everywhere but Fedora Atomic. To try it anyway:
+The app isn't in the COSMIC Store yet. To install it:
 
 1. Download `cosmic-ext-nightlight-*.flatpak` from the
    [Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
@@ -180,8 +178,7 @@ everywhere but Fedora Atomic. To try it anyway:
    ```sh
    flatpak install --user ./cosmic-ext-nightlight-*.flatpak && flatpak run io.github.cosmic_ext_nightlight --settings
    ```
-3. Turn it on and type your password once to install a small helper
-   ([why](docs/flatpak-design.md)).
+3. Turn it on and type your password once to install a small helper.
 
 To remove it, run `flatpak uninstall io.github.cosmic_ext_nightlight`. This also
 removes the helper.
