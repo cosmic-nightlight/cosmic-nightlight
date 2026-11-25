@@ -254,12 +254,8 @@ This builds the latest release. To build your local changes instead, run
 
 </details>
 
-**2. Add the applet:** **COSMIC Settings → Desktop → Panel** (or **Dock**)
-**→ Configure applets → Add applet → Night Light**.
-
-Click the Night Light icon to turn it on or open its settings.
-
-### Build from source (for development)
+<details>
+<summary><b>Build from source</b> (for development)</summary>
 
 You'll need a Rust toolchain and `libdrm-dev`:
 
@@ -271,6 +267,13 @@ You'll need a Rust toolchain and `libdrm-dev`:
 To build the `.deb`, `.rpm`, Arch or Nix package, see [PACKAGING.md](PACKAGING.md). For packagers:
 [docs/flatpak-design.md](docs/flatpak-design.md) explains the flatpak setup, and
 [docs/cosmic-store.md](docs/cosmic-store.md) covers the COSMIC Store listing.
+
+</details>
+
+**2. Add the applet:** **COSMIC Settings → Desktop → Panel** (or **Dock**)
+**→ Configure applets → Add applet → Night Light**.
+
+Click the Night Light icon to turn it on or open its settings.
 
 ## Using it
 
