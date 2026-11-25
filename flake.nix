@@ -18,8 +18,11 @@
         default = pkgs.callPackage ./nix/package.nix { };
       });
 
+      # Built against this flake's nixpkgs, as the module's package is. libcosmic
+      # needs a newer Rust than a stable NixOS release can have, so building
+      # against the user's own nixpkgs failed there.
       overlays.default = final: prev: {
-        cosmic-ext-nightlight = final.callPackage ./nix/package.nix { };
+        cosmic-ext-nightlight = self.packages.${final.stdenv.hostPlatform.system}.default;
         # The name before 0.7.0, so overlays that use it keep working.
         cosmic-nightlight = final.cosmic-ext-nightlight;
       };
