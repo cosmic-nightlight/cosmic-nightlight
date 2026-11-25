@@ -2222,8 +2222,7 @@ fn record_written_since(instant: SystemTime) -> bool {
 /// does a record we have stopped writing, since its mtime would then never
 /// catch up and every reconcile would apply again.
 fn record_predates_compositor() -> bool {
-    !RECORD_UNUSABLE.load(Ordering::Relaxed)
-        && predates(record_modified(), compositor_started())
+    !RECORD_UNUSABLE.load(Ordering::Relaxed) && predates(record_modified(), compositor_started())
 }
 
 /// The decision behind [`record_predates_compositor`], split out for tests.
