@@ -5,7 +5,7 @@
 use std::fs;
 use std::io;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::autostart;
 use crate::config::{APP_ID, CONFIG_VERSION, OLD_APP_ID};
@@ -150,12 +150,187 @@ const UNIT: &str = "cosmic-ext-nightlight.service";
 /// packaged unit. A unit file copied in by hand from a source install has no
 /// twin, and is left for its owner, since its `ExecStart` names a path that only
 /// they know about.
+///
+/// NixOS needs more than that, which [`store_link_fixes`] explains.
 pub fn move_service_enablement() {
     if crate::backend::in_flatpak() {
         return;
     }
-    if let Some(config_home) = autostart::config_home() {
-        move_service_enablement_in(&config_home);
+    let Some(config_home) = autostart::config_home() else {
+        return;
+    };
+    move_service_enablement_in(&config_home);
+
+    let fixes = store_link_fixes(
+        &config_home.join("systemd").join("user"),
+        Path::new(NIX_STORE),
+        Path::new(NIXOS_USER_UNITS),
+    );
+    if fixes.is_empty() {
+        return;
+    }
+    // A daemon the old links started is the old build, and fights this one
+    // over the screen until the next login. It is stopped first, while the
+    // user's systemd still knows the unit it was started from, and started
+    // again once the links lead to this build.
+    let restart = stop_outdated_daemons();
+    apply(&fixes);
+    systemctl(&["daemon-reload"]);
+    if restart {
+        systemctl(&["start", UNIT]);
+    }
+}
+
+/// Where the Nix store is.
+const NIX_STORE: &str = "/nix/store";
+/// Where NixOS links the user units of the system's packages. Each link there
+/// follows its package from one generation to the next.
+const NIXOS_USER_UNITS: &str = "/etc/systemd/user";
+
+/// A change to one of the user's unit links.
+#[derive(Debug)]
+enum Fix {
+    Remove(PathBuf),
+    /// Replaces whatever is at `link` with a link to `target`.
+    Link {
+        link: PathBuf,
+        target: PathBuf,
+    },
+}
+
+/// The changes that point a NixOS user's links to the unit at the current
+/// package.
+///
+/// On NixOS `systemctl --user enable` links straight into the Nix store, to the
+/// package as it was on that day. It leaves two links. One is named after the
+/// unit and overrides the system's copy of it, and the other is the enablement
+/// in a `.wants` directory. An upgrade puts the new package somewhere else in
+/// the store, so the two keep starting the old daemon at every login. Its helper
+/// is not the one the polkit rule names, so every change asks for a password,
+/// and once garbage collection deletes the old package it does not start at
+/// all.
+///
+/// So a link of ours that leads into the store, to anything but the current
+/// package's unit in `system_units`, is fixed. The override is removed, which
+/// lets systemd find the system's copy by itself. The enablement is pointed at
+/// the system's copy, under the unit's new name. Nothing is done unless the
+/// system has the unit, which it does once the NixOS module is enabled.
+fn store_link_fixes(user_units: &Path, store: &Path, system_units: &Path) -> Vec<Fix> {
+    let current = system_units.join(UNIT);
+    let Ok(current_file) = fs::canonicalize(&current) else {
+        return Vec::new();
+    };
+    // Under the old name a link is always moved, as it is on other systems.
+    let outdated = |link: &Path, name: &str| {
+        fs::read_link(link).is_ok_and(|target| target.starts_with(store))
+            && (name == OLD_UNIT || fs::canonicalize(link).ok().as_ref() != Some(&current_file))
+    };
+
+    let mut fixes = Vec::new();
+    for name in [OLD_UNIT, UNIT] {
+        let link = user_units.join(name);
+        if outdated(&link, name) {
+            fixes.push(Fix::Remove(link));
+        }
+    }
+
+    let Ok(entries) = fs::read_dir(user_units) else {
+        return fixes;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if dir.extension() != Some(std::ffi::OsStr::new("wants")) {
+            continue;
+        }
+        let old = dir.join(OLD_UNIT);
+        let new = dir.join(UNIT);
+        let old_outdated = outdated(&old, OLD_UNIT);
+        if outdated(&new, UNIT) || (old_outdated && fs::symlink_metadata(&new).is_err()) {
+            fixes.push(Fix::Link {
+                link: new,
+                target: current.clone(),
+            });
+        }
+        if old_outdated {
+            fixes.push(Fix::Remove(old));
+        }
+    }
+    fixes
+}
+
+/// Makes the changes [`store_link_fixes`] chose.
+fn apply(fixes: &[Fix]) {
+    for fix in fixes {
+        let done = match fix {
+            Fix::Remove(link) => fs::remove_file(link),
+            Fix::Link { link, target } => {
+                let _ = fs::remove_file(link);
+                std::os::unix::fs::symlink(target, link)
+            }
+        };
+        match (fix, done) {
+            (Fix::Remove(link), Ok(())) => {
+                println!("cosmic-ext-nightlight: removed the outdated link {link:?}")
+            }
+            (Fix::Link { link, target }, Ok(())) => {
+                println!("cosmic-ext-nightlight: pointed {link:?} at {target:?}")
+            }
+            (Fix::Remove(link) | Fix::Link { link, .. }, Err(err)) => {
+                eprintln!("cosmic-ext-nightlight: could not fix {link:?}: {err}")
+            }
+        }
+    }
+}
+
+/// Stops the unit's daemon if it runs a different build from this process, and
+/// returns whether it did.
+///
+/// Every run mode is the same binary, so a daemon of this build runs the same
+/// file as we do. One that is this process is left alone too, as it is already
+/// the new version.
+fn stop_outdated_daemons() -> bool {
+    let Ok(ours) = fs::read_link("/proc/self/exe") else {
+        return false;
+    };
+    let mut stopped = false;
+    for name in [OLD_UNIT, UNIT] {
+        let Ok(output) = std::process::Command::new("systemctl")
+            .args(["--user", "show", "--property=MainPID", "--value", name])
+            .output()
+        else {
+            continue;
+        };
+        let pid = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if pid.is_empty() || pid == "0" || pid == std::process::id().to_string() {
+            continue;
+        }
+        if fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| exe == ours) {
+            continue;
+        }
+        if systemctl(&["stop", name]) {
+            println!("cosmic-ext-nightlight: stopped {name}, which ran an older build");
+            stopped = true;
+        }
+    }
+    stopped
+}
+
+/// Runs `systemctl --user` with `args`, and returns whether it succeeded.
+fn systemctl(args: &[&str]) -> bool {
+    match std::process::Command::new("systemctl")
+        .arg("--user")
+        .args(args)
+        .status()
+    {
+        Ok(status) if status.success() => true,
+        Ok(status) => {
+            eprintln!("cosmic-ext-nightlight: systemctl --user {args:?} failed: {status}");
+            false
+        }
+        Err(err) => {
+            eprintln!("cosmic-ext-nightlight: could not run systemctl: {err}");
+            false
+        }
     }
 }
 
@@ -249,6 +424,108 @@ mod tests {
 
         assert!(fs::symlink_metadata(wants.join(OLD_UNIT)).is_ok());
         assert!(fs::symlink_metadata(wants.join(UNIT)).is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A NixOS system under `root`, laid out as the 0.6.1 to 0.7.0 upgrade test
+    /// found it: the 0.6.1 package and the current one in the store, and the
+    /// current one's units linked into `etc`. Returns the store, `etc`, the
+    /// user's unit directory, and the 0.6.1 unit and the current one.
+    fn nixos(root: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf, PathBuf) {
+        let store = root.join("nix/store");
+        let old_units = store.join("aaa-cosmic-nightlight-0.6.1/share/systemd/user");
+        fs::create_dir_all(&old_units).unwrap();
+        fs::write(old_units.join(OLD_UNIT), "[Service]\n").unwrap();
+        let new_units = packaged_units(&store.join("bbb-cosmic-ext-nightlight-0.7.0"));
+
+        let etc = root.join("etc/systemd/user");
+        fs::create_dir_all(&etc).unwrap();
+        symlink(new_units.join(UNIT), etc.join(UNIT)).unwrap();
+        symlink(new_units.join(OLD_UNIT), etc.join(OLD_UNIT)).unwrap();
+
+        let user = root.join("home/.config/systemd/user");
+        fs::create_dir_all(user.join("graphical-session.target.wants")).unwrap();
+        (
+            store,
+            etc,
+            user,
+            old_units.join(OLD_UNIT),
+            new_units.join(UNIT),
+        )
+    }
+
+    #[test]
+    fn links_into_the_0_6_package_are_pointed_at_the_system() {
+        let root = scratch("nix-061");
+        let (store, etc, user, old_unit, _) = nixos(&root);
+        let wants = user.join("graphical-session.target.wants");
+        // What `systemctl --user enable` leaves on NixOS.
+        symlink(&old_unit, user.join(OLD_UNIT)).unwrap();
+        symlink(&old_unit, wants.join(OLD_UNIT)).unwrap();
+
+        let fixes = store_link_fixes(&user, &store, &etc);
+        apply(&fixes);
+
+        assert!(fs::symlink_metadata(user.join(OLD_UNIT)).is_err());
+        assert!(fs::symlink_metadata(wants.join(OLD_UNIT)).is_err());
+        assert_eq!(fs::read_link(wants.join(UNIT)).unwrap(), etc.join(UNIT));
+        // Done once, and not again on the next start.
+        assert!(store_link_fixes(&user, &store, &etc).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn links_left_by_garbage_collection_are_fixed() {
+        let root = scratch("nix-gc");
+        let (store, etc, user, old_unit, _) = nixos(&root);
+        let wants = user.join("graphical-session.target.wants");
+        let collected = store.join("ccc-cosmic-ext-nightlight-0.7.0/lib/systemd/user");
+        symlink(collected.join(UNIT), user.join(UNIT)).unwrap();
+        symlink(collected.join(UNIT), wants.join(UNIT)).unwrap();
+        fs::remove_file(&old_unit).unwrap();
+
+        apply(&store_link_fixes(&user, &store, &etc));
+
+        assert!(fs::symlink_metadata(user.join(UNIT)).is_err());
+        assert_eq!(fs::read_link(wants.join(UNIT)).unwrap(), etc.join(UNIT));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn links_to_the_current_package_are_kept() {
+        let root = scratch("nix-current");
+        let (store, etc, user, _, new_unit) = nixos(&root);
+        symlink(&new_unit, user.join(UNIT)).unwrap();
+        symlink(
+            &new_unit,
+            user.join("graphical-session.target.wants").join(UNIT),
+        )
+        .unwrap();
+
+        assert!(store_link_fixes(&user, &store, &etc).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn store_links_are_kept_without_the_nixos_module() {
+        let root = scratch("nix-no-module");
+        let (store, etc, user, old_unit, _) = nixos(&root);
+        symlink(&old_unit, user.join(OLD_UNIT)).unwrap();
+        fs::remove_dir_all(&etc).unwrap();
+
+        assert!(store_link_fixes(&user, &store, &etc).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn links_outside_the_store_are_not_store_fixes() {
+        let root = scratch("nix-outside");
+        let (store, etc, user, _, _) = nixos(&root);
+        let wants = user.join("graphical-session.target.wants");
+        fs::write(user.join("copied.service"), "[Service]\n").unwrap();
+        symlink(user.join("copied.service"), wants.join(OLD_UNIT)).unwrap();
+
+        assert!(store_link_fixes(&user, &store, &etc).is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 
