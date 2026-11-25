@@ -169,8 +169,7 @@ Use this command from now on whenever you rebuild your system.
 <details>
 <summary><b>Flatpak</b> (optional, any system except NixOS)</summary>
 
-The app isn't in the COSMIC Store yet. Download the latest
-`cosmic-ext-nightlight-*.flatpak` from the
+Download the latest `cosmic-ext-nightlight-*.flatpak` from the
 [Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
 page and run:
 
