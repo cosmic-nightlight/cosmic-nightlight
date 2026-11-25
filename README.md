@@ -385,12 +385,6 @@ If a display didn't take the change, the fallback runs:
 The color curve uses Tanner Helland's color temperature formula. 6500 K means no
 tint, and lower values are warmer.
 
-## Long term
-
-This is a stopgap until COSMIC supports a color control protocol. Follow
-[cosmic-comp#764] and [cosmic-comp#2059]. Once it does, this app can drop the
-workaround and become a normal Wayland app.
-
 [cosmic-comp#764]: https://github.com/pop-os/cosmic-comp/issues/764
 [cosmic-comp#2059]: https://github.com/pop-os/cosmic-comp/issues/2059
 [cosmic-epoch#2498]: https://github.com/pop-os/cosmic-epoch/issues/2498
