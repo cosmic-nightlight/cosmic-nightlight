@@ -169,16 +169,16 @@ Use this command from now on whenever you rebuild your system.
 <details>
 <summary><b>Flatpak</b> (optional, any system except NixOS)</summary>
 
-The app isn't in the COSMIC Store yet. To install it:
+The app isn't in the COSMIC Store yet. Download the latest
+`cosmic-ext-nightlight-*.flatpak` from the
+[Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
+page and run:
 
-1. Download `cosmic-ext-nightlight-*.flatpak` from the
-   [Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
-   page.
-2. Install it and open its settings:
-   ```sh
-   flatpak install --user ./cosmic-ext-nightlight-*.flatpak && flatpak run io.github.cosmic_ext_nightlight --settings
-   ```
-3. Turn it on and type your password once to install a small helper.
+```sh
+flatpak install --user ./cosmic-ext-nightlight-*.flatpak && flatpak run io.github.cosmic_ext_nightlight --settings
+```
+
+Turn it on and type your password once to install a small helper.
 
 To remove it, run `flatpak uninstall io.github.cosmic_ext_nightlight`. This also
 removes the helper.
@@ -191,8 +191,8 @@ If you used the flatpak from 0.5.1 or earlier, remove its old helper:
 sudo rm /usr/local/bin/cosmic-nightlight-helper /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
 ```
 
-If you have the flatpak from 0.6, step 2 moves your settings and panel icon to
-the new version and removes the old one.
+If you have the flatpak from 0.6, the command above moves your settings and panel
+icon to the new version and removes the old one.
 
 </details>
 
