@@ -53,7 +53,7 @@ Provides:       cosmic-nightlight = %{version}-%{release}
 
 %description
 Night Light warms your screen's colors at night to cut blue light. It's an
-applet for the COSMIC desktop that sits on your panel or dock.
+applet for the COSMIC desktop.
 
 It can follow sunset and sunrise where you are, or a schedule you set, and can
 dim the screen too.
