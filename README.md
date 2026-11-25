@@ -63,6 +63,19 @@ page and run:
 sudo dnf install ./cosmic-ext-nightlight-*.rpm
 ```
 
+On Fedora Atomic or COSMIC Atomic, run this instead, then restart your computer:
+
+```sh
+rpm-ostree install ./cosmic-ext-nightlight-*.rpm
+```
+
+If you have version 0.6 or earlier installed, it has a different name. Replace
+it with:
+
+```sh
+rpm-ostree uninstall cosmic-nightlight --install ./cosmic-ext-nightlight-*.rpm
+```
+
 </details>
 
 <details>
