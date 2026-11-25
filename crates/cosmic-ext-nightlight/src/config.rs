@@ -841,20 +841,21 @@ fn with_applet(wings: Option<(Vec<String>, Vec<String>)>) -> (Vec<String>, Vec<S
 /// entry behind it would take the applet off the panel.
 pub fn adopt_panel_entry() {
     if desktop_entry_installed() {
-        adopt_panel_entry_in(&|name| Config::new(name, 1).ok());
+        let cosmic = crate::autostart::config_home().map(|home| home.join("cosmic"));
+        adopt_panel_entry_in(&|name| Config::new(name, 1).ok(), cosmic.as_deref());
     }
 }
 
-/// [`adopt_panel_entry`] on configs opened by `open`, so it can be tested on a
-/// directory of its own.
-fn adopt_panel_entry_in(open: &dyn Fn(&str) -> Option<Config>) {
-    let Some(entries) = open("com.system76.CosmicPanel")
-        .and_then(|config| config.get::<Vec<String>>("entries").ok())
-    else {
-        return;
-    };
+/// The config name of each panel is this followed by the panel's entry name.
+const PANEL_CONFIG_PREFIX: &str = "com.system76.CosmicPanel.";
 
-    let panels: Vec<(String, Config)> = entries
+/// [`adopt_panel_entry`] on configs opened by `open`, so it can be tested on a
+/// directory of its own. `cosmic` is the user's `cosmic` config directory.
+fn adopt_panel_entry_in(open: &dyn Fn(&str) -> Option<Config>, cosmic: Option<&std::path::Path>) {
+    let listed = open("com.system76.CosmicPanel")
+        .and_then(|config| config.get::<Vec<String>>("entries").ok());
+
+    let panels: Vec<(String, Config)> = panel_names(listed, cosmic)
         .into_iter()
         .filter_map(|entry| {
             let config = open(&format!("com.system76.CosmicPanel.{entry}"))?;
@@ -896,6 +897,38 @@ fn adopt_panel_entry_in(open: &dyn Fn(&str) -> Option<Config>) {
             }
         }
     }
+}
+
+/// The panels to look in: the ones cosmic-panel lists, then any other that has
+/// a config directory of the user's own.
+///
+/// The list stays in cosmic-panel's system defaults until the user adds or
+/// removes a panel, and the flatpak cannot see system defaults. Going by the
+/// list alone, the flatpak found no panels for most people, so the applet kept
+/// the old name while the old flatpak was uninstalled, and it vanished from the
+/// panel. A panel that holds the old name always has a directory of the user's
+/// own, since no default puts our applet on a panel, so looking at those too
+/// finds it.
+fn panel_names(listed: Option<Vec<String>>, cosmic: Option<&std::path::Path>) -> Vec<String> {
+    let mut names = listed.unwrap_or_default();
+    let mut found: Vec<String> = cosmic
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let panel = name.strip_prefix(PANEL_CONFIG_PREFIX)?;
+            (!panel.is_empty() && entry.path().is_dir()).then(|| panel.to_string())
+        })
+        .collect();
+    found.sort();
+    for panel in found {
+        if !names.contains(&panel) {
+            names.push(panel);
+        }
+    }
+    names
 }
 
 fn report_adoption(entry: &str, result: Result<(), cosmic::cosmic_config::Error>) {
@@ -1606,7 +1639,7 @@ mod tests {
         dock.set("plugins_center", Some(ids(&["app-list", OLD_APP_ID])))
             .unwrap();
 
-        adopt_panel_entry_in(&open);
+        adopt_panel_entry_in(&open, Some(&root.join("cosmic")));
 
         // Renamed where it first appears, and the second copy dropped.
         assert_eq!(
@@ -1626,6 +1659,57 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// What the flatpak sees for most people: no list of panels, because it is
+    /// only in cosmic-panel's system defaults, and a panel config of the user's
+    /// own holding the old name.
+    #[test]
+    fn a_panel_is_found_without_the_list_of_panels() {
+        let root = std::env::temp_dir().join(format!(
+            "cosmic-nightlight-test-{}-adopt-unlisted",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let open = |name: &str| Config::with_custom_path(name, 1, root.clone()).ok();
+        let panel = open("com.system76.CosmicPanel.Panel").unwrap();
+        let wings = (ids(&["workspaces"]), ids(&[OLD_APP_ID, "audio"]));
+        panel.set("plugins_wings", Some(wings)).unwrap();
+        // Not panels, though their names start the same way.
+        std::fs::create_dir_all(root.join("cosmic/com.system76.CosmicPanelButton")).unwrap();
+        std::fs::write(root.join("cosmic/com.system76.CosmicPanel.Stray"), "").unwrap();
+
+        assert_eq!(
+            panel_names(None, Some(&root.join("cosmic"))),
+            ids(&["Panel"])
+        );
+        adopt_panel_entry_in(&open, Some(&root.join("cosmic")));
+
+        assert_eq!(
+            panel
+                .get::<Option<(Vec<String>, Vec<String>)>>("plugins_wings")
+                .unwrap(),
+            Some((ids(&["workspaces"]), ids(&[APP_ID, "audio"])))
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn listed_panels_come_first_and_are_not_repeated() {
+        let root = std::env::temp_dir().join(format!(
+            "cosmic-nightlight-test-{}-panel-names",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        for panel in ["Dock", "Panel", "Extra"] {
+            std::fs::create_dir_all(root.join(format!("{PANEL_CONFIG_PREFIX}{panel}"))).unwrap();
+        }
+        assert_eq!(
+            panel_names(Some(ids(&["Panel", "Dock"])), Some(&root)),
+            ids(&["Panel", "Dock", "Extra"])
+        );
+        assert_eq!(panel_names(Some(ids(&["Panel"])), None), ids(&["Panel"]));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn a_panel_without_the_applet_is_not_written_to() {
         let (root, open) = panels("adopt-untouched");
@@ -1634,7 +1718,7 @@ mod tests {
         let file = root.join("cosmic/com.system76.CosmicPanel.Panel/v1/plugins_center");
         let before = std::fs::metadata(&file).unwrap().modified().unwrap();
 
-        adopt_panel_entry_in(&open);
+        adopt_panel_entry_in(&open, Some(&root.join("cosmic")));
 
         assert_eq!(
             std::fs::metadata(&file).unwrap().modified().unwrap(),
