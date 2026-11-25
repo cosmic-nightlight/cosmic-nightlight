@@ -77,7 +77,7 @@ page and run:
 sudo pacman -U ./cosmic-ext-nightlight-*.pkg.tar.zst
 ```
 
-If you have 0.6.1 installed, type `y` when pacman asks to remove
+If you have an older version installed, type `y` when pacman asks to remove
 `cosmic-nightlight`.
 
 </details>
