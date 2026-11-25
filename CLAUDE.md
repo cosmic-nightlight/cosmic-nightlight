@@ -7,7 +7,8 @@ AppStream release descriptions are read by users, not developers. Keep them
 short and plain, and follow [docs/release-notes/README.md](docs/release-notes/README.md):
 
 - Say what the user notices, not how the code works.
-- One or two sentences per item. Link to a doc for the details.
+- One short sentence per item. Link to a doc for the details. First drafts
+  are almost always too wordy, so cut each item down before showing it.
 - No em dashes, no jargon, and don't explain design decisions.
 - Don't join two sentences with a colon or semicolon. Use a period. A colon
   before a list, a command or a code block is fine.
