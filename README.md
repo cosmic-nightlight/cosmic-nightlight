@@ -11,9 +11,8 @@
 </div>
 
 Night Light is an applet for the COSMIC desktop that warms your screen's colors
-to cut blue light at night. Click it to turn it on or off and set the warmth.
-In Settings you can have it follow the real sunset and sunrise, or set your own
-schedule, and adjust the brightness.
+at night to cut blue light. It can follow sunset and sunrise where you are, or a
+schedule you set, and can dim the screen too.
 
 It exists because COSMIC doesn't support the usual night light tools
 (`redshift`, `gammastep`, `wlsunset`) yet. See [How it works](#how-it-works).
