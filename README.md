@@ -272,23 +272,22 @@ launcher, or with `cosmic-ext-nightlight --settings`.
 **Keyboard shortcut.** Click **Add** next to **Keyboard Shortcut** in Settings,
 and Super+Shift+N turns Night Light on and off. (If that key is taken, it picks
 another and shows you which.) Change or remove it in COSMIC Settings, under
-Keyboard, like any other shortcut.
+Keyboard.
 
 **Schedules:**
 - **Off**: you turn it on and off yourself.
 - **Sunset to Sunrise**: it follows the real sun where you are, adjusting with
-  the seasons. Your location comes from your time zone, so there's nothing to
-  set up and no location permission. If sun times aren't available, it uses your
+  the seasons. Your location comes from your time zone, so it never asks for
+  location access. If sun times aren't available, it uses your
   **From**/**To** times instead and tells you why.
 - **Custom Schedule**: pick exact **From** and **To** times. A schedule can run
   overnight (`9:00PM`→`6:00AM`) or during the day (`9:00AM`→`5:00PM`).
 
 If you turn it on or off by hand, that lasts until the next scheduled change.
 
-**Keeping the schedule running.** The applet runs your schedule as long as it's
-on your panel or dock, so there's nothing else to set up. If you'd rather not
-keep the applet on your panel, turn on **Run in Background** in Settings (it
-only shows up when needed). Or use the systemd service:
+**Keeping the schedule running.** The applet runs your schedule while it's on
+your panel or dock. If you remove it, turn on **Run in Background** in Settings
+(it appears once the applet is gone), or use the systemd service:
 
 ```sh
 systemctl --user enable --now cosmic-ext-nightlight.service
