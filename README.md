@@ -62,18 +62,7 @@ page and run:
 sudo dnf install ./cosmic-ext-nightlight-*.rpm
 ```
 
-On Fedora Atomic or COSMIC Atomic, run this instead, then restart your computer:
-
-```sh
-rpm-ostree install ./cosmic-ext-nightlight-*.rpm
-```
-
-If you have version 0.6 or earlier installed, it has a different name. Replace
-it with:
-
-```sh
-rpm-ostree uninstall cosmic-nightlight --install ./cosmic-ext-nightlight-*.rpm
-```
+On Fedora Atomic, use the Flatpak below instead.
 
 </details>
 
@@ -181,8 +170,8 @@ Use this command from now on whenever you rebuild your system.
 <summary><b>Flatpak</b> (optional, any system except NixOS)</summary>
 
 The app isn't in the COSMIC Store yet. A flatpak version is being submitted,
-and until it's accepted, the packages above are the recommended install. To
-try it anyway:
+and until it's accepted, the packages above are the recommended install
+everywhere but Fedora Atomic. To try it anyway:
 
 1. Download `cosmic-ext-nightlight-*.flatpak` from the
    [Releases](https://github.com/cosmic-nightlight/cosmic-nightlight/releases)
