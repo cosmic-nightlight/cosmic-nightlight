@@ -128,18 +128,41 @@ if [ "$1" -eq 0 ]; then
 fi
 
 %posttrans
-# Restart panel applets still running a binary this upgrade replaced, so the
-# new version shows up now instead of at the next login. The panel starts the
-# applet with no arguments and brings it back within milliseconds. The settings
-# window and the service have arguments and are left alone.
+# Stop what is still running a binary this upgrade replaced, so the new version
+# takes over now instead of at the next login.
+#
+# Panel applets are restarted. The panel starts the applet with no arguments
+# and brings it back within milliseconds, as the new version.
+#
+# A settings window or daemon from before 0.7.0 reads the settings saved under
+# the old app ID, so it would keep putting back the tint the user had before the
+# upgrade, against what the new version shows. The window is closed. A daemon
+# that the systemd unit runs is killed rather than stopped, which makes systemd
+# start it again (Restart=on-failure), and the command it runs now leads to the
+# new binary. Stopping it cleanly would leave it down until the next login.
+#
+# Left alone: a daemon of the "Run in Background" switch, which hands over by
+# itself once the new version runs, and windows and daemons of 0.7.0 or later,
+# which share their settings with the new version.
+#
+# Kept the same as debian/postinst and the Arch .install file.
 for exe in /proc/[0-9]*/exe; do
     case "$(readlink "$exe" 2>/dev/null)" in
-        "%{_bindir}/cosmic-ext-nightlight (deleted)" | "%{_bindir}/cosmic-nightlight (deleted)") ;;
+        "%{_bindir}/cosmic-ext-nightlight (deleted)") old=false ;;
+        "%{_bindir}/cosmic-nightlight (deleted)") old=true ;;
         *) continue ;;
     esac
     dir=${exe%%/exe}
-    [ "$(tr -cd '\0' <"$dir/cmdline" 2>/dev/null | wc -c)" -eq 1 ] || continue
-    kill "${dir#/proc/}" 2>/dev/null || :
+    pid=${dir#/proc/}
+    if [ "$(tr -cd '\0' <"$dir/cmdline" 2>/dev/null | wc -c)" -eq 1 ]; then
+        kill "$pid" 2>/dev/null || :
+    elif [ "$old" = true ] && ! grep -qxz -e --managed "$dir/cmdline" 2>/dev/null; then
+        if grep -qs '/cosmic-nightlight\.service$' "$dir/cgroup"; then
+            kill -KILL "$pid" 2>/dev/null || :
+        else
+            kill "$pid" 2>/dev/null || :
+        fi
+    fi
 done
 
 %files
