@@ -582,20 +582,25 @@ fn old_flatpak_marker() -> Option<PathBuf> {
     Some(PathBuf::from(data_home).join("old-flatpak-retired"))
 }
 
-fn retire_old_flatpak_now() {
+/// The installations that have the old flatpak, or `None` if flatpak could not
+/// be asked. A list we could not get says nothing about what is installed.
+fn list_old_flatpak() -> Option<Vec<String>> {
     let listed = Command::new("flatpak-spawn")
         .args(["--host", "flatpak", "list", "--app"])
         .arg("--columns=application,installation")
         .stderr(Stdio::null())
-        .output();
-    // A list we could not get says nothing about what is installed.
-    let Ok(listed) = listed else {
+        .output()
+        .ok()?;
+    listed
+        .status
+        .success()
+        .then(|| old_flatpak_installations(&String::from_utf8_lossy(&listed.stdout)))
+}
+
+fn retire_old_flatpak_now() {
+    let Some(installations) = list_old_flatpak() else {
         return;
     };
-    if !listed.status.success() {
-        return;
-    }
-    let installations = old_flatpak_installations(&String::from_utf8_lossy(&listed.stdout));
 
     if installations.is_empty() {
         if let Some(marker) = old_flatpak_marker() {
@@ -624,10 +629,16 @@ fn retire_old_flatpak_now() {
             .arg(config::OLD_APP_ID)
             .stdout(Stdio::null())
             .status();
+        // The applet, the settings window and the service each do this when the
+        // setup lands, so another of them can get there first. Its uninstall
+        // makes ours fail, and that is not worth reporting.
+        let removed_elsewhere =
+            || list_old_flatpak().is_some_and(|left| !left.contains(&installation));
         match removed {
             Ok(status) if status.success() => println!(
                 "cosmic-ext-nightlight: removed the flatpak from before 0.7.0 ({installation})"
             ),
+            Ok(_) | Err(_) if removed_elsewhere() => {}
             Ok(status) => eprintln!(
                 "cosmic-ext-nightlight: could not remove the flatpak from before 0.7.0 \
                  ({installation}): {status}"
