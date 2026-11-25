@@ -138,11 +138,21 @@ fn compositor_pids() -> Vec<libc::pid_t> {
             continue;
         };
         let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
-        if comm.trim() == "cosmic-comp" {
+        if is_compositor_name(&comm) {
             pids.push(pid);
         }
     }
     pids
+}
+
+/// Whether a process name read from `/proc/<pid>/comm` is cosmic-comp's.
+///
+/// nixpkgs starts the real binary as `.cosmic-comp-wrapped` from a wrapper
+/// script, and the kernel cuts process names to 15 bytes, which leaves
+/// `.cosmic-comp-wr`. Missing that name sent every change on NixOS through the
+/// VT bounce.
+fn is_compositor_name(comm: &str) -> bool {
+    matches!(comm.trim(), "cosmic-comp" | ".cosmic-comp-wr")
 }
 
 fn owned_fd(rc: libc::c_long) -> io::Result<OwnedFd> {
@@ -476,6 +486,14 @@ mod tests {
         assert_eq!(blend(&from, &to, ease(1.0)), to);
         let middle = blend(&from, &to, ease(0.5));
         assert!(middle[2][255] < from[2][255] && middle[2][255] > to[2][255]);
+    }
+
+    #[test]
+    fn the_nixos_wrapper_name_is_the_compositor() {
+        assert!(is_compositor_name("cosmic-comp\n"));
+        assert!(is_compositor_name(".cosmic-comp-wr\n"));
+        assert!(!is_compositor_name("cosmic-comp-helper"));
+        assert!(!is_compositor_name("cosmic-panel"));
     }
 
     #[test]
