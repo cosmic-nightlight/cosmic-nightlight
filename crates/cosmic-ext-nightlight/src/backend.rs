@@ -850,9 +850,51 @@ fn drop_undeliverable_override(
     if applied().is_some_and(|shown| shown.state.is_some()) {
         return;
     }
+    // The same goes for a tint the flatpak from before 0.7.0 put up. Its record
+    // is out of sight of `applied`, so without this everyone who upgraded with
+    // the tint forced on had it turned off before they had finished the setup.
+    if old_flatpak_shows_tint() {
+        return;
+    }
 
     settings.tint_override = config::Override::Auto;
     config::store_override(handler, config::Override::Auto);
+}
+
+/// Whether the flatpak from before 0.7.0 recorded a tint on screen.
+///
+/// Flatpak gives each app a private runtime directory, kept on the host under
+/// `$XDG_RUNTIME_DIR/.flatpak/<app ID>/xdg-run`, so the old app's record of what
+/// it put up can only be read through the host. Its format has not changed.
+///
+/// Asked once per process, and only by someone who had the old app. The runtime
+/// directory goes a few seconds after the last logout, so a record found here
+/// is from this session, or at worst from a quick logout and back in, where the
+/// tint is put back once the setup is done anyway.
+fn old_flatpak_shows_tint() -> bool {
+    static ANSWER: OnceLock<bool> = OnceLock::new();
+    *ANSWER.get_or_init(|| {
+        if !in_flatpak() || !had_old_app_id() {
+            return false;
+        }
+        let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") else {
+            return false;
+        };
+        let record = PathBuf::from(runtime_dir)
+            .join(".flatpak")
+            .join(config::OLD_APP_ID)
+            .join("xdg-run")
+            .join("cosmic-nightlight-shown");
+        let mut command = host_command("cat", None);
+        command.arg("--").arg(record);
+        match command.stderr(Stdio::null()).output() {
+            Ok(output) if output.status.success() => {
+                parse_shown(&String::from_utf8_lossy(&output.stdout))
+                    .is_some_and(|shown| shown.state.is_some())
+            }
+            _ => false,
+        }
+    })
 }
 
 /// Whether a stored override asks for something this host has no way to deliver.
