@@ -191,8 +191,8 @@ If you used the flatpak from 0.5.1 or earlier, remove its old helper:
 sudo rm /usr/local/bin/cosmic-nightlight-helper /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
 ```
 
-If you have the flatpak from 0.6, the command above moves your settings and panel
-icon to the new version and removes the old one.
+If you have the flatpak from 0.6, installing the new version moves your settings
+and panel icon over and removes the old one.
 
 </details>
 
