@@ -14,8 +14,9 @@ Night Light is an applet for the COSMIC desktop that warms your screen's colors
 at night to cut blue light. It can follow sunset and sunrise where you are, or a
 schedule you set, and can dim the screen too.
 
-It exists because COSMIC doesn't support the usual night light tools
-(`redshift`, `gammastep`, `wlsunset`) yet. See [How it works](#how-it-works).
+COSMIC won't have a built-in night light until Epoch 3. The usual tools
+(`redshift`, `gammastep`, `wlsunset`) don't work on it either. See
+[How it works](#how-it-works).
 
 This is an unofficial community project. It isn't made or endorsed by System76.
 
