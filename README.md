@@ -246,11 +246,14 @@ Click the Night Light icon to turn it on or open its settings.
 
 ## Using it
 
-Click the moon (or sun) applet to turn Night Light on or off and set the
-warmth. **Night Light Settings…** has everything else, and you can also find it
-in your app launcher.
+Click the applet to turn Night Light on or off and set the warmth.
 
-In Settings you choose a schedule:
+**Night Light Settings…** opens from the applet or your app launcher.
+
+There you can lower the brightness while the tint is on, and add a keyboard
+shortcut (defaults to Super+Shift+N).
+
+You can also pick a schedule:
 
 - **Sunset to Sunrise** follows the sun. It works out where you are from your
   time zone, so it never asks for your location.
@@ -259,9 +262,6 @@ In Settings you choose a schedule:
 
 If you switch it on or off by hand, the schedule takes over again at its next
 change.
-
-Settings can also dim the screen while the tint is on, and add a keyboard
-shortcut (defaults to Super+Shift+N).
 
 ### Keeping the schedule running
 
