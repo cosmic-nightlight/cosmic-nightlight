@@ -311,11 +311,12 @@ pub fn apply_borrowed(kelvin: u32, brightness: f64, fade: Duration) -> usize {
         }
     }
 
-    let steps = (fade.as_millis() / FADE_STEP.as_millis()).max(1) as u32;
-    for step in 1..=steps {
-        let started = Instant::now();
-        let last = step == steps;
-        let t = ease(f64::from(step) / f64::from(steps));
+    let started = Instant::now();
+    loop {
+        let step_started = Instant::now();
+        let progress = fade_progress(started.elapsed(), fade);
+        let last = progress >= 1.0;
+        let t = ease(progress);
         // The first write doubles as the test of whether a handle is the
         // master. One that is not drops out here and takes no further part.
         fading.retain(|f| {
@@ -331,11 +332,29 @@ pub fn apply_borrowed(kelvin: u32, brightness: f64, fade: Duration) -> usize {
         if fading.is_empty() {
             return 0;
         }
-        if !last {
-            std::thread::sleep(FADE_STEP.saturating_sub(started.elapsed()));
+        if last {
+            return fading.len();
         }
+        std::thread::sleep(FADE_STEP.saturating_sub(step_started.elapsed()));
     }
-    fading.len()
+}
+
+/// How far through a fade of length `fade` to be, `elapsed` after it started,
+/// from `0.0` to `1.0`.
+///
+/// Taken from the clock rather than a count of steps. Each write waits for the
+/// display to take it, and on some drivers that is slower than [`FADE_STEP`],
+/// so counting steps made a fade run about three times as long as asked, with
+/// the machine-wide lock held throughout. Going by the clock, a slow write only
+/// means fewer steps.
+///
+/// One step ahead of the clock, so the first write already moves the screen
+/// and the last lands at about `fade`.
+fn fade_progress(elapsed: Duration, fade: Duration) -> f64 {
+    if fade.is_zero() {
+        return 1.0;
+    }
+    ((elapsed + FADE_STEP).as_secs_f64() / fade.as_secs_f64()).min(1.0)
 }
 
 /// How far, in 16-bit LUT units, a read-back entry may sit from an identity
@@ -486,6 +505,21 @@ mod tests {
         assert_eq!(blend(&from, &to, ease(1.0)), to);
         let middle = blend(&from, &to, ease(0.5));
         assert!(middle[2][255] < from[2][255] && middle[2][255] > to[2][255]);
+    }
+
+    #[test]
+    fn a_fade_goes_by_the_clock() {
+        let second = Duration::from_secs(1);
+        assert_eq!(fade_progress(Duration::ZERO, Duration::ZERO), 1.0);
+        assert_eq!(
+            fade_progress(Duration::ZERO, Duration::from_millis(10)),
+            1.0
+        );
+        let first = fade_progress(Duration::ZERO, second);
+        assert!(first > 0.0 && first < 0.1);
+        assert!((fade_progress(Duration::from_millis(484), second) - 0.5).abs() < 1e-9);
+        // A write slow enough to overshoot the end still finishes the fade.
+        assert_eq!(fade_progress(Duration::from_secs(3), second), 1.0);
     }
 
     #[test]
