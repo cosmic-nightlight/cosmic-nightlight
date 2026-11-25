@@ -261,31 +261,26 @@ Click the Night Light icon to turn it on or open its settings.
 
 ## Using it
 
-**The applet.** Click the icon for the on/off toggle, the warmth slider, and a
-**Night Light Settings…** button.
+Click the moon (or sun) applet to turn Night Light on or off and set the
+warmth. **Night Light Settings…** has everything else, and you can also find it
+in your app launcher.
 
-**Settings.** Choose a schedule, the night warmth, and the brightness (which dims
-the screen while the night light is on). Open it from the applet, from your app
-launcher, or with `cosmic-ext-nightlight --settings`.
+In Settings you choose a schedule:
 
-**Keyboard shortcut.** Click **Add** next to **Keyboard Shortcut** in Settings,
-and Super+Shift+N turns Night Light on and off. (If that key is taken, it picks
-another and shows you which.) Change or remove it in COSMIC Settings, under
-Keyboard.
+- **Sunset to Sunrise** follows the sun. It works out where you are from your
+  time zone, so it never asks for your location.
+- **Custom Schedule** turns it on and off at times you pick.
+- **Off** stays manual.
 
-**Schedules:**
-- **Off**: you turn it on and off yourself.
-- **Sunset to Sunrise**: it follows the real sun where you are, adjusting with
-  the seasons. Your location comes from your time zone, so it never asks for
-  location access. If sun times aren't available, it uses your
-  **From**/**To** times instead and tells you why.
-- **Custom Schedule**: pick exact **From** and **To** times. A schedule can run
-  overnight (`9:00PM`→`6:00AM`) or during the day (`9:00AM`→`5:00PM`).
+If you switch it on or off by hand, the schedule takes over again at its next
+change.
 
-If you turn it on or off by hand, that lasts until the next scheduled change.
+Settings can also dim the screen while the tint is on, and add a keyboard
+shortcut (defaults to Super+Shift+N).
 
-**Keeping the schedule running.** The applet runs your schedule while it's on
-your panel or dock. If you remove it, turn on **Run in Background** in Settings
+### Keeping the schedule running
+
+The applet runs your schedule while it's on your panel or dock. If you remove it, turn on **Run in Background** in Settings
 (it appears once the applet is gone), or use the systemd service:
 
 ```sh
