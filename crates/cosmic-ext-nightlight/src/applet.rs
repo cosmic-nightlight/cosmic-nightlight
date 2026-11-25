@@ -10,6 +10,7 @@
 //! to `app_popup`.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use cosmic::app::{Core, Task};
 use cosmic::iced::core::window;
@@ -22,6 +23,7 @@ use cosmic::Element;
 use crate::backend;
 use crate::config::{self, APP_ID};
 use crate::fl;
+use crate::settle::{self, Settle, Woke};
 use crate::TICK_INTERVAL;
 
 /// Runs the application as a COSMIC panel applet.
@@ -43,6 +45,9 @@ pub struct NightLightApplet {
     /// True between a slider drag starting and being released, so an incoming
     /// config change doesn't yank the handle out from under the pointer.
     dragging: bool,
+    /// Saves the slider when it is moved by Ctrl+scroll or the arrow keys,
+    /// which never release it.
+    settle: Settle,
     /// Whether changes on this machine flicker the screen, which decides
     /// whether the popup says so. See [`config::flickers`].
     flickers: bool,
@@ -54,6 +59,8 @@ pub enum Message {
     Toggle(bool),
     TemperatureChanged(f32),
     TemperatureCommitted,
+    /// The slider's [`Settle`] timer went off.
+    TemperatureSettle,
     OpenSettings,
     Surface(cosmic::surface::Action),
     RefreshInit,
@@ -123,6 +130,7 @@ impl cosmic::Application for NightLightApplet {
             settings,
             temperature: settings.temperature as f32,
             dragging: false,
+            settle: Settle::default(),
             flickers: config::flickers(),
         };
 
@@ -174,18 +182,19 @@ impl cosmic::Application for NightLightApplet {
                 if self.settings.tint_on() {
                     backend::preview_in_background(value as u32, self.settings.brightness as f32);
                 }
-            }
-            Message::TemperatureCommitted => {
-                self.dragging = false;
-                self.settings.temperature = self.temperature as u32;
-                config::store_temperature(&self.config, self.settings.temperature);
-                if self.settings.tint_on() {
-                    backend::apply_in_background(
-                        Some(self.settings.temperature),
-                        self.settings.brightness as f32,
-                    );
+                if let Some(delay) = self.settle.stepped(Instant::now()) {
+                    return settle::after(delay, Message::TemperatureSettle);
                 }
             }
+            Message::TemperatureCommitted => {
+                self.settle.released();
+                self.commit_temperature();
+            }
+            Message::TemperatureSettle => match self.settle.woke(Instant::now()) {
+                Woke::Idle => {}
+                Woke::Settled => self.commit_temperature(),
+                Woke::Wait(delay) => return settle::after(delay, Message::TemperatureSettle),
+            },
             Message::OpenSettings => {
                 spawn_settings_window();
                 if let Some(id) = self.popup.take() {
@@ -322,6 +331,20 @@ impl NightLightApplet {
         backend::defer_without_setup(&self.config, &mut self.settings);
         config::expire_override(&self.config, &mut self.settings);
         self.show_current();
+    }
+
+    /// Stores the slider's position and puts it on the screen, at the end of a
+    /// drag or once a scroll or key step has settled.
+    fn commit_temperature(&mut self) {
+        self.dragging = false;
+        self.settings.temperature = self.temperature as u32;
+        config::store_temperature(&self.config, self.settings.temperature);
+        if self.settings.tint_on() {
+            backend::apply_in_background(
+                Some(self.settings.temperature),
+                self.settings.brightness as f32,
+            );
+        }
     }
 
     /// Re-reads the stored settings, so a snapshot that has drifted from the

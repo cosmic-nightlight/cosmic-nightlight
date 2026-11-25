@@ -7,6 +7,8 @@
 //! turns on and off. Every change is written through to the shared `cosmic_config`
 //! store, so the applet and the daemon pick it up.
 
+use std::time::Instant;
+
 use cosmic::app::{Core, Task};
 use cosmic::iced::{Alignment, Length, Limits, Size};
 use cosmic::{widget, Element};
@@ -15,6 +17,7 @@ use crate::autostart;
 use crate::backend;
 use crate::config::{self, Schedule, SETTINGS_APP_ID};
 use crate::fl;
+use crate::settle::{self, Settle, Woke};
 use crate::shortcut;
 use crate::solar;
 use crate::TICK_INTERVAL;
@@ -123,6 +126,10 @@ pub struct SettingsWindow {
     /// slider: a drag on either must not disturb the other.
     temperature_dragging: bool,
     brightness_dragging: bool,
+    /// Saves a slider moved by Ctrl+scroll or the arrow keys, which never
+    /// release it. One per slider, like the flags above.
+    temperature_settle: Settle,
+    brightness_settle: Settle,
     /// Whether to present times on a 24-hour clock, which also decides whether
     /// the pickers show an AM/PM dropdown.
     military: bool,
@@ -174,8 +181,12 @@ pub enum Message {
     Toggle(bool),
     TemperatureChanged(f32),
     TemperatureCommitted,
+    /// The temperature slider's [`Settle`] timer went off.
+    TemperatureSettle,
     BrightnessChanged(f32),
     BrightnessCommitted,
+    /// The brightness slider's [`Settle`] timer went off.
+    BrightnessSettle,
     ConfigUpdated(config::Settings),
     /// The applet was added to or removed from a panel, or the answer to that
     /// became unknown.
@@ -271,6 +282,8 @@ impl cosmic::Application for SettingsWindow {
             brightness: settings.brightness as f32,
             temperature_dragging: false,
             brightness_dragging: false,
+            temperature_settle: Settle::default(),
+            brightness_settle: Settle::default(),
             military,
             hour_labels: hour_labels(military),
             minute_labels: (0..60).map(|minute| format!("{minute:02}")).collect(),
@@ -369,24 +382,36 @@ impl cosmic::Application for SettingsWindow {
                 self.temperature = value;
                 self.temperature_dragging = true;
                 self.preview_if_tinted();
+                if let Some(delay) = self.temperature_settle.stepped(Instant::now()) {
+                    return settle::after(delay, Message::TemperatureSettle);
+                }
             }
             Message::TemperatureCommitted => {
-                self.temperature_dragging = false;
-                self.settings.temperature = self.temperature as u32;
-                config::store_temperature(&self.config, self.settings.temperature);
-                self.apply_if_tinted();
+                self.temperature_settle.released();
+                self.commit_temperature();
             }
+            Message::TemperatureSettle => match self.temperature_settle.woke(Instant::now()) {
+                Woke::Idle => {}
+                Woke::Settled => self.commit_temperature(),
+                Woke::Wait(delay) => return settle::after(delay, Message::TemperatureSettle),
+            },
             Message::BrightnessChanged(value) => {
                 self.brightness = value;
                 self.brightness_dragging = true;
                 self.preview_if_tinted();
+                if let Some(delay) = self.brightness_settle.stepped(Instant::now()) {
+                    return settle::after(delay, Message::BrightnessSettle);
+                }
             }
             Message::BrightnessCommitted => {
-                self.brightness_dragging = false;
-                self.settings.brightness = self.brightness as f64;
-                config::store_brightness(&self.config, self.settings.brightness);
-                self.apply_if_tinted();
+                self.brightness_settle.released();
+                self.commit_brightness();
             }
+            Message::BrightnessSettle => match self.brightness_settle.woke(Instant::now()) {
+                Woke::Idle => {}
+                Woke::Settled => self.commit_brightness(),
+                Woke::Wait(delay) => return settle::after(delay, Message::BrightnessSettle),
+            },
             Message::ConfigUpdated(settings) => {
                 // A schedule waiting on the setup is shown but not stored yet, so
                 // no config update carries it. Taking the update whole would put
@@ -950,6 +975,23 @@ impl SettingsWindow {
                 .on_press(Message::OpenKeyboardSettings),
             ),
         }
+    }
+
+    /// Stores the temperature slider's position and puts it on the screen, at
+    /// the end of a drag or once a scroll or key step has settled.
+    fn commit_temperature(&mut self) {
+        self.temperature_dragging = false;
+        self.settings.temperature = self.temperature as u32;
+        config::store_temperature(&self.config, self.settings.temperature);
+        self.apply_if_tinted();
+    }
+
+    /// The brightness slider's twin of [`Self::commit_temperature`].
+    fn commit_brightness(&mut self) {
+        self.brightness_dragging = false;
+        self.settings.brightness = self.brightness as f64;
+        config::store_brightness(&self.config, self.settings.brightness);
+        self.apply_if_tinted();
     }
 
     /// Pushes the current temperature and brightness to the screen, but only if a
