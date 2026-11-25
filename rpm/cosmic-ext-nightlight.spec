@@ -18,6 +18,8 @@
 
 # We ship binaries cargo built, so rpmbuild has no compilation of its own to mine
 # symbols out of and would abort on the empty debuginfo package it finds.
+# Without that package nothing strips the binaries either, so %%install does it
+# with `install -s`.
 %global debug_package %{nil}
 
 Name:           cosmic-ext-nightlight
@@ -38,7 +40,7 @@ BuildRequires:  libxkbcommon-devel
 BuildRequires:  wayland-devel
 BuildRequires:  fontconfig-devel
 BuildRequires:  expat-devel
-# %{_userunitdir} is not an rpm macro of its own; macros.systemd defines it, and
+# %%{_userunitdir} is not an rpm macro of its own; macros.systemd defines it, and
 # without this the expansion is left literal and %files rejects the line.
 BuildRequires:  systemd-rpm-macros
 
@@ -68,12 +70,12 @@ cargo build --release --locked -p nightlight-helper -p cosmic-ext-nightlight
 cargo test --release --locked -p nightlight-core
 
 %install
-install -D -m0755 target/release/cosmic-ext-nightlight-helper \
+install -D -s -m0755 target/release/cosmic-ext-nightlight-helper \
     %{buildroot}%{_bindir}/cosmic-ext-nightlight-helper
 # The helper's name before 0.7.0. An applet started before the upgrade keeps
 # calling it until the next login, and would fail without it.
 ln -s cosmic-ext-nightlight-helper %{buildroot}%{_bindir}/cosmic-nightlight-helper
-install -D -m0755 target/release/cosmic-ext-nightlight \
+install -D -s -m0755 target/release/cosmic-ext-nightlight \
     %{buildroot}%{_bindir}/cosmic-ext-nightlight
 # The app's name before 0.7.0. The panel restarts an applet with the command it
 # first ran, so the applet %%posttrans restarts comes back through this link as
@@ -106,7 +108,6 @@ install -D -m0644 polkit/49-cosmic-ext-nightlight.rules \
 # /usr/local/bin and so names the wrong path for a packaged build.
 install -D -m0644 debian/cosmic-ext-nightlight.user.service \
     %{buildroot}%{_userunitdir}/cosmic-ext-nightlight.service
-%{_userunitdir}/cosmic-nightlight.service
 # The unit's name before 0.7.0, so a service enabled under it still starts.
 # The app moves the enablement over to the new name the first time it runs.
 ln -s cosmic-ext-nightlight.service %{buildroot}%{_userunitdir}/cosmic-nightlight.service
@@ -156,6 +157,7 @@ done
 %{_datadir}/icons/hicolor/128x128/apps/io.github.cosmic_ext_nightlight.png
 %{_datadir}/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
 %{_userunitdir}/cosmic-ext-nightlight.service
+%{_userunitdir}/cosmic-nightlight.service
 
 %changelog
 * Wed Nov 11 2026 Daniel Watts <danielcwtts@gmail.com> - 0.7.0-1
