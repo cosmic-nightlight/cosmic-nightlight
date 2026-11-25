@@ -354,14 +354,13 @@ daemon/GUI ──pkexec──▶ cosmic-ext-nightlight-helper (root)
 If a display didn't take the change, the fallback runs:
 
 ```
-                          │ 1. Switch to a spare VT      (COSMIC releases DRM master)
-                          │ 2. Take DRM master and write the color curve to each display
-                          │ 3. Release DRM master
-                          └ 4. Switch back to your session  (tint stays)
+│ 1. Switch to a spare VT      (COSMIC releases DRM master)
+│ 2. Take DRM master and write the color curve to each display
+│ 3. Release DRM master
+└ 4. Switch back to your session  (tint stays)
 ```
 
-The color curve uses Tanner Helland's color temperature formula. 6500 K means no
-tint, and lower values are warmer.
+The color curve uses Tanner Helland's color temperature formula.
 
 [cosmic-comp#764]: https://github.com/pop-os/cosmic-comp/issues/764
 [cosmic-comp#2059]: https://github.com/pop-os/cosmic-comp/issues/2059
