@@ -323,10 +323,10 @@ To get around that, a root helper borrows a copy of COSMIC's own handle to the
 display and writes the colors through it. The kernel accepts that as coming
 from COSMIC, and nothing on screen is interrupted.
 
-If that doesn't work on your system, the helper falls back to the older way,
-from [jjo/drm-colortemp]: briefly switch to another virtual terminal, which
-makes COSMIC release the lock, write the colors, and switch back. That switch
-shows as a brief flicker.
+If that doesn't work on your system, the helper falls back to the method used
+by [jjo/drm-colortemp]. It switches to another virtual terminal so COSMIC
+releases the lock, writes the colors, then switches back. You may see a brief
+flicker when this happens.
 
 ## Architecture
 
