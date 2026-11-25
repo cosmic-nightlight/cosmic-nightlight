@@ -97,44 +97,55 @@ sudo pacman -U ./cosmic-ext-nightlight-*.pkg.tar.zst
 If something doesn't work, please [open an issue](https://github.com/cosmic-nightlight/cosmic-nightlight/issues).
 The flatpak doesn't work on NixOS.
 
-**1. Turn on flakes.** If you already use flakes, skip to step 2.
+If your system uses a flake, add this line inside `inputs` in `/etc/nixos/flake.nix`:
 
-Open your system configuration:
-
-```sh
-sudo nano /etc/nixos/configuration.nix
+```nix
+cosmic-ext-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.7.0";
 ```
 
-Near the top you'll see a line like `{ config, pkgs, ... }:` and, below it,
-a line with only `{` on it. Paste this on a new line right after that `{`:
+Add `cosmic-ext-nightlight` to the list after `outputs = {`, and add these two
+lines inside your system's `modules = [ ... ]` list:
+
+```nix
+cosmic-ext-nightlight.nixosModules.default
+{ programs.cosmic-ext-nightlight.enable = true; }
+```
+
+Then rebuild as you normally do.
+
+**Updating to a new release:** change `v0.7.0` in the `cosmic-ext-nightlight.url`
+line to the new version, then run
+`sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and rebuild.
+
+**Trying the Nightly build:** use `nightly` in place of `v0.7.0` in that line.
+It gets fixes first but can have bugs. Running the same `nix flake update`
+command and rebuilding then brings you the newest one.
+
+<details>
+<summary>New to flakes? Step by step</summary>
+
+**1. Turn on flakes.** Add this line to `/etc/nixos/configuration.nix`, inside
+the main `{ ... }` block:
 
 ```nix
 nix.settings.experimental-features = [ "nix-command" "flakes" ];
 ```
 
-Save with **Ctrl+O**, then **Enter**, and close with **Ctrl+X**. Then run:
+Then run:
 
 ```sh
 sudo nixos-rebuild switch
 ```
 
-**2. Create the flake file.** If you already have `/etc/nixos/flake.nix`,
-skip to **Already have a flake?** below.
-
-Check which NixOS version you're on:
+**2. Create the flake file.** Check which NixOS version you're on:
 
 ```sh
 nixos-version
 ```
 
-It prints something like `25.11.1234.abcdef`. Remember the first part
-(`25.11` here). Then create the file:
-
-```sh
-sudo nano /etc/nixos/flake.nix
-```
-
-Paste all of this in, and change `25.11` to your version:
+It prints something like `25.11.1234.abcdef`, and you need the first part
+(`25.11` here). Create `/etc/nixos/flake.nix` with this in it, changing `25.11`
+to your version:
 
 ```nix
 {
@@ -155,8 +166,6 @@ Paste all of this in, and change `25.11` to your version:
 }
 ```
 
-Save and close as before.
-
 **3. Install it.**
 
 ```sh
@@ -165,31 +174,7 @@ sudo nixos-rebuild switch --flake /etc/nixos#nixos
 
 Use this command from now on whenever you rebuild your system.
 
-**Updating to a new release:** in `/etc/nixos/flake.nix`, change `v0.7.0` in
-the `cosmic-ext-nightlight.url` line to the new version, then run
-`sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and the rebuild
-command above.
-
-**Trying the Nightly build:** use `nightly` in place of `v0.7.0` in that line.
-It gets fixes first but can have bugs. Running
-`sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and rebuilding
-then brings you the newest one.
-
-**Already have a flake?** Add this line inside `inputs`:
-
-```nix
-cosmic-ext-nightlight.url = "github:cosmic-nightlight/cosmic-nightlight/v0.7.0";
-```
-
-Add `cosmic-ext-nightlight` to the list after `outputs = {`, and add these two
-lines inside your system's `modules = [ ... ]` list:
-
-```nix
-cosmic-ext-nightlight.nixosModules.default
-{ programs.cosmic-ext-nightlight.enable = true; }
-```
-
-Then rebuild as you normally do.
+</details>
 
 </details>
 
