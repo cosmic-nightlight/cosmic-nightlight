@@ -8,8 +8,8 @@ Partial translations are welcome. Anything you leave out shows in English.
 
 You can do everything on GitHub's website. Open
 [the English file](../crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl)
-and copy its text. Then go to the `i18n` folder, choose **Add file > Create new file**
-and name it after your language, like `de/cosmic_nightlight.ftl`. GitHub makes a
+and copy its text. Then go to the [`i18n` folder](../crates/cosmic-ext-nightlight/i18n/),
+choose **Add file > Create new file** and name it after your language, like `de/cosmic_nightlight.ftl`. GitHub makes a
 fork for you.
 
 ```
@@ -17,8 +17,10 @@ crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl
 crates/cosmic-ext-nightlight/i18n/de/cosmic_nightlight.ftl   ← your copy
 ```
 
-Name the folder with your language code, like `de`, `fr` or `pt-BR`. Use the
-short code unless the regional versions really differ. Keep the file name the same.
+Name the folder with your language code, like `de`, `fr` or `pt-BR`. You can look
+yours up in [this list](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes).
+Use the short code unless the regional versions really differ. Keep the file name
+the same.
 
 ## 2. Translate the text
 
