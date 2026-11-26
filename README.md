@@ -104,11 +104,12 @@ cosmic-ext-nightlight.nixosModules.default
 
 Then rebuild as you normally do.
 
-**Updating to a new release:** change `v0.7.0` in the `cosmic-ext-nightlight.url`
+**Updating to a new release:** change `v0.x.x` in the `cosmic-ext-nightlight.url`
 line to the new version, then run
 `sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and rebuild.
-If you set it up before 0.7.0, the line is called `cosmic-nightlight.url`, so
-use `cosmic-nightlight` in the command instead.
+
+**Set up before 0.7.0?** Do the same with the `cosmic-nightlight.url` line, then
+run `sudo nix flake update cosmic-nightlight --flake /etc/nixos` and rebuild.
 
 **Trying the Nightly build:** use `nightly` in place of `v0.7.0` in that line.
 It gets fixes first but can have bugs. Running the same `nix flake update`
