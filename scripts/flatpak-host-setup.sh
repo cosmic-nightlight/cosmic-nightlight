@@ -66,7 +66,7 @@ done
 # still happen. The user is no worse off than before — they keep being prompted —
 # whereas failing here would take the screen change down with the install.
 installed=0
-if install -o root -g root -m 0755 "$helper" /usr/local/bin/cosmic-ext-nightlight-helper &&
+if install -D -o root -g root -m 0755 "$helper" /usr/local/bin/cosmic-ext-nightlight-helper &&
     install -D -o root -g root -m 0644 "$rule" \
         /etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules; then
     installed=1

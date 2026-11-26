@@ -124,7 +124,7 @@ fi
 if [ "$1" -eq 0 ]; then
     # Each session's note of what it last put on the screen is wrong now that
     # the tint is cleared. A reinstall in the same session would trust it.
-    rm -f /run/user/*/cosmic-nightlight-shown
+    rm -f /run/user/*/cosmic-nightlight-shown 2>/dev/null || :
 fi
 
 %posttrans
