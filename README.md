@@ -342,39 +342,8 @@ by [jjo/drm-colortemp]. It switches to another virtual terminal so COSMIC
 releases the lock, writes the colors, then switches back. You may see a brief
 flicker when this happens.
 
-## Architecture
-
-Three crates, so the part that runs as root stays small and separate from the
-GUI:
-
-| Crate | Runs as | Does |
-| --- | --- | --- |
-| [`nightlight-core`](crates/nightlight-core) | library | Color math ([`gamma.rs`](crates/nightlight-core/src/gamma.rs)), DRM writes ([`drm.rs`](crates/nightlight-core/src/drm.rs)), the VT switching fallback ([`vt.rs`](crates/nightlight-core/src/vt.rs)) |
-| [`nightlight-helper`](crates/nightlight-helper) | root (via `pkexec`) | Small CLI: reads `--temp`/`--brightness` and calls core |
-| [`cosmic-ext-nightlight`](crates/cosmic-ext-nightlight) | your user | The panel applet, `--settings` window and optional `--daemon`; calls the helper |
-
-The applet, the settings window and the daemon can each run the schedule. They
-share a lock and a record of what's on screen in `$XDG_RUNTIME_DIR`, so running
-several at once still causes only one change.
-
-What happens on a tint change:
-
-```
-daemon/GUI ──pkexec──▶ cosmic-ext-nightlight-helper (root)
-                          │ 1. Borrow a copy of COSMIC's display handle
-                          └ 2. Write the color curve to each display through it
-```
-
-If a display didn't take the change, the fallback runs:
-
-```
-│ 1. Switch to a spare VT      (COSMIC releases DRM master)
-│ 2. Take DRM master and write the color curve to each display
-│ 3. Release DRM master
-└ 4. Switch back to your session  (tint stays)
-```
-
-The color curve uses Tanner Helland's color temperature formula.
+The color curve uses Tanner Helland's color temperature formula. For how the
+code is laid out, see [docs/architecture.md](docs/architecture.md).
 
 [cosmic-comp#764]: https://github.com/pop-os/cosmic-comp/issues/764
 [cosmic-comp#2059]: https://github.com/pop-os/cosmic-comp/issues/2059
