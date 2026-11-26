@@ -142,10 +142,19 @@ pub struct Options {
 /// The user who asked for this apply. `pkexec` records it in `PKEXEC_UID`;
 /// `SUDO_UID` covers running the helper by hand under sudo. `None` for a
 /// caller with no user behind it, like the flatpak's uninstall cleanup.
+///
+/// Root going through pkexec or sudo counts as no user too. It runs no
+/// compositor and no WirePlumber, and `sudo ./uninstall.sh` reaches the
+/// helper that way.
 pub(crate) fn invoking_uid() -> Option<u32> {
     ["PKEXEC_UID", "SUDO_UID"]
         .iter()
-        .find_map(|var| std::env::var(var).ok()?.parse().ok())
+        .find_map(|var| caller_uid(std::env::var(var).ok()?.as_str()))
+}
+
+/// One of [`invoking_uid`]'s variables, read as a user other than root.
+fn caller_uid(value: &str) -> Option<u32> {
+    value.parse().ok().filter(|&uid| uid != 0)
 }
 
 /// The longest fade [`apply_with`] will run, whatever it is asked for. The
@@ -389,6 +398,13 @@ mod tests {
         assert_eq!(parse_contract(""), None);
         assert_eq!(parse_contract("cosmic-ext-nightlight-helper 0.4.0"), None);
         assert_eq!(parse_contract("(contract )"), None);
+    }
+
+    #[test]
+    fn root_as_the_caller_counts_as_no_user() {
+        assert_eq!(caller_uid("1000"), Some(1000));
+        assert_eq!(caller_uid("0"), None);
+        assert_eq!(caller_uid(""), None);
     }
 
     #[test]
