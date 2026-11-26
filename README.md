@@ -312,10 +312,7 @@ is one file, and no coding is needed. Partial translations are welcome. See
 
 - **On some systems the screen flickers briefly** (1–2 seconds) when the tint
   changes. Most systems change without it.
-- **Some events can clear the tint**, like changing resolution, plugging in a
-  monitor, or the screen waking up. Resume from suspend is handled
-  automatically. For the others, turn it off and on again, or wait for the next
-  scheduled change.
+- **A monitor you plug in can take up to a minute to get the tint.**
 - **Sunset to Sunrise can be off by a few minutes**, since it goes by your time
   zone rather than your exact location. Use a **Custom Schedule** if you want
   exact times.
