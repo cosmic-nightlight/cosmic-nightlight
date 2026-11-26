@@ -139,6 +139,15 @@ pub struct Options {
     pub live: bool,
 }
 
+/// The user who asked for this apply. `pkexec` records it in `PKEXEC_UID`;
+/// `SUDO_UID` covers running the helper by hand under sudo. `None` for a
+/// caller with no user behind it, like the flatpak's uninstall cleanup.
+pub(crate) fn invoking_uid() -> Option<u32> {
+    ["PKEXEC_UID", "SUDO_UID"]
+        .iter()
+        .find_map(|var| std::env::var(var).ok()?.parse().ok())
+}
+
 /// The longest fade [`apply_with`] will run, whatever it is asked for. The
 /// machine-wide lock is held throughout, so this bounds how long one caller
 /// can keep the others waiting.
