@@ -292,7 +292,9 @@ the bump is what replaces it. Adding an argument the GUI does not require is not
 a bump. Contracts 2 and 3 are bumps of the second kind: the command line is
 unchanged from contract 1. Contract 3 delivers the helper that changes the
 screen without a VT bounce. Contract 4 adds `--fade-ms` and `--live`, which the
-GUI relies on for fades and for previews while a slider is dragged.
+GUI relies on for fades and for previews while a slider is dragged. Contract 5
+is another bump of the second kind, for the helper-side fixes from the 0.7.0
+audit, so hosts set up by a 0.7.0 Nightly pick them up.
 
 ## The setup UI
 

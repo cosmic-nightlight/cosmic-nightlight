@@ -355,7 +355,12 @@ pub fn is_root() -> bool {
 /// ```text
 /// --fade-ms <milliseconds>   --live
 /// ```
-pub const HELPER_CONTRACT: u32 = 4;
+///
+/// Contract 5 leaves it as it was. It exists so that hosts set up by a 0.7.0
+/// Nightly get the helper-side fixes from the 0.7.0 audit: the screen left
+/// alone while every display is asleep, handles borrowed from the caller's own
+/// compositor only, and `--off` resetting brightness too.
+pub const HELPER_CONTRACT: u32 = 5;
 
 /// The line `cosmic-ext-nightlight-helper --version` prints.
 ///
