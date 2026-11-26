@@ -29,6 +29,9 @@ polkit.addRule(function (action, subject) {
         program == "/usr/bin/cosmic-nightlight-helper";
     if (
         action.id == "org.freedesktop.policykit.exec" &&
+        // Only as root, which the helper needs anyway. pkexec --user would
+        // otherwise run it as anyone without a password.
+        action.lookup("user") == "root" &&
         is_helper &&
         (subject.isInGroup("wheel") || subject.isInGroup("sudo"))
     ) {

@@ -55,6 +55,7 @@ in
           polkit.addRule(function (action, subject) {
               if (
                   action.id == "org.freedesktop.policykit.exec" &&
+                  action.lookup("user") == "root" &&
                   action.lookup("program") == "${cfg.package}/libexec/cosmic-ext-nightlight-helper" &&
                   subject.isInGroup("wheel")
               ) {
