@@ -107,6 +107,8 @@ Then rebuild as you normally do.
 **Updating to a new release:** change `v0.7.0` in the `cosmic-ext-nightlight.url`
 line to the new version, then run
 `sudo nix flake update cosmic-ext-nightlight --flake /etc/nixos` and rebuild.
+If you set it up before 0.7.0, the line is called `cosmic-nightlight.url`, so
+use `cosmic-nightlight` in the command instead.
 
 **Trying the Nightly build:** use `nightly` in place of `v0.7.0` in that line.
 It gets fixes first but can have bugs. Running the same `nix flake update`
@@ -193,15 +195,23 @@ If you used the flatpak from 0.5.1 or earlier, remove its old helper:
 sudo rm /usr/local/bin/cosmic-nightlight-helper /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
 ```
 
-If you have the flatpak from 0.6, installing the new version moves your settings
-and panel icon over and removes the old one.
+If you have the flatpak from 0.6, open Night Light Settings once after installing
+the new version. It moves your settings and panel icon over. The first time you
+turn Night Light on or off, it asks for your password and removes the old version.
 
 </details>
 
 <details>
 <summary><b>Build from source</b> (for development)</summary>
 
-You'll need a Rust toolchain and `libdrm-dev`:
+You'll need a Rust toolchain and these packages (Debian and Ubuntu names):
+
+```sh
+sudo apt install build-essential pkg-config libdrm-dev libxkbcommon-dev \
+    libwayland-dev libfontconfig-dev libexpat1-dev
+```
+
+Then run:
 
 ```sh
 ./scripts/install.sh --gui     # build and install everything
@@ -225,8 +235,8 @@ flatpak install flathub com.system76.Cosmic.BaseApp org.freedesktop.Sdk//25.08 \
 
 cd flatpak
 python3 -m venv venv
-./venv/bin/pip install aiohttp toml tomlkit
-curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+./venv/bin/pip install aiohttp==3.14.5 tomlkit==0.15.2
+curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/41c20aa10819cdb2a4f3ca171758a96d1955c018/cargo/flatpak-cargo-generator.py
 ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json
 
 flatpak-builder --force-clean --user --install build io.github.cosmic_ext_nightlight.json
