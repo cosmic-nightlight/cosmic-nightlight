@@ -305,9 +305,8 @@ pkexec /usr/bin/cosmic-ext-nightlight-helper --off                 # reset
 ## Translating
 
 The app is English-only for now, but it's ready for translations. A translation
-is one file, a translated copy of
-[`crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl`](crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl). No coding needed, and partial translations are
-welcome. See [docs/translating.md](docs/translating.md).
+is one file, and no coding is needed. Partial translations are welcome. See
+[docs/translating.md](docs/translating.md).
 
 ## Known limitations
 
