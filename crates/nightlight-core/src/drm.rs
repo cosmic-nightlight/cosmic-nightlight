@@ -126,23 +126,50 @@ fn apply_card(path: &Path, kelvin: u32, brightness: f64, updated: &mut usize) ->
 /// The DRM subsystem's character device major number.
 const DRM_MAJOR: u32 = 226;
 
-/// The pids of the running compositors, by process name.
+/// The pids of the running compositors, by process name, and only the
+/// caller's own when we know who the caller is.
 ///
-/// A name proves nothing, and nothing here relies on it: a handle from the
+/// A name proves nothing, and the writes do not rely on it: a handle from the
 /// wrong process is simply not the DRM master, so the kernel refuses the write.
 /// That also covers the greeter's own cosmic-comp, which sits on another VT.
+///
+/// The owner check is about resources instead. Any user can name a process
+/// `cosmic-comp` and fill it with open DRM handles, and borrowing all of those
+/// ran this root process out of descriptors before it reached the real
+/// compositor, which forced every change through the VT bounce. A caller only
+/// borrows when its session is on screen (see [`crate::apply_with`]), and then
+/// its own compositor is the one holding DRM master.
 fn compositor_pids() -> Vec<libc::pid_t> {
+    let owner = crate::invoking_uid();
     let mut pids = Vec::new();
     for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
         let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) else {
             continue;
         };
         let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
-        if is_compositor_name(&comm) {
+        if is_compositor_name(&comm) && owner.is_none_or(|uid| process_uid(pid) == Some(uid)) {
             pids.push(pid);
         }
     }
     pids
+}
+
+/// The real uid of `pid`, from `/proc/<pid>/status`. Not the owner of
+/// `/proc/<pid>`, which is root for a process that is not dumpable.
+fn process_uid(pid: libc::pid_t) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    uid_from_status(&status)
+}
+
+/// The real uid on the `Uid:` line of a `/proc/<pid>/status`.
+fn uid_from_status(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// Whether a process name read from `/proc/<pid>/comm` is cosmic-comp's.
@@ -195,9 +222,16 @@ fn borrow_cards(pid: libc::pid_t) -> Vec<Card> {
     let mut cards = Vec::new();
     for fd in fds {
         // Only a filter to avoid duplicating every descriptor the compositor
-        // has. What the copy really is gets checked below.
-        let is_card = std::fs::read_link(format!("/proc/{pid}/fd/{fd}"))
-            .is_ok_and(|target| target.starts_with("/dev/dri"));
+        // has. What the copy really is gets checked below. Render nodes
+        // (`renderD*`) are DRM devices too but cannot set gamma, so they are
+        // left out here.
+        let is_card = std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).is_ok_and(|target| {
+            target
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("card"))
+                && target.starts_with("/dev/dri")
+        });
         if !is_card {
             continue;
         }
@@ -496,6 +530,13 @@ pub fn apply_all(kelvin: u32, brightness: f64) -> io::Result<Written> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_real_uid_is_read_from_status() {
+        let status = "Name:\tcosmic-comp\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\n";
+        assert_eq!(uid_from_status(status), Some(1000));
+        assert_eq!(uid_from_status("Name:\tx\n"), None);
+    }
 
     #[test]
     fn a_fade_starts_and_ends_on_the_given_ramps() {

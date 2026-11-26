@@ -43,14 +43,6 @@ const ACTIVE_POLL: Duration = Duration::from_millis(25);
 /// means the helper has stalled.
 const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// The user who asked for this apply. `pkexec` records it in `PKEXEC_UID`;
-/// `SUDO_UID` covers running the helper by hand under sudo.
-fn invoking_uid() -> Option<u32> {
-    ["PKEXEC_UID", "SUDO_UID"]
-        .iter()
-        .find_map(|var| std::env::var(var).ok()?.parse().ok())
-}
-
 /// The owner of the session in the foreground on seat0, which is whose
 /// WirePlumber the bounce disturbs. For a caller with no user behind it, like
 /// the flatpak's uninstall cleanup, which systemd runs as root.
@@ -64,8 +56,14 @@ fn foreground_uid() -> Option<u32> {
         .ok()
 }
 
+/// Where to find `loginctl`. pkexec resets `PATH` to the usual FHS
+/// directories, and NixOS keeps it in none of them.
+const LOGINCTL: [&str; 2] = ["loginctl", "/run/current-system/sw/bin/loginctl"];
+
 fn loginctl(args: &[&str]) -> Option<String> {
-    let output = Command::new("loginctl").args(args).output().ok()?;
+    let output = LOGINCTL
+        .iter()
+        .find_map(|program| Command::new(program).args(args).output().ok())?;
     if !output.status.success() {
         return None;
     }
@@ -194,7 +192,7 @@ impl Drop for Watchdog {
 /// Only does so when the user is active right now: otherwise WirePlumber has
 /// already released the devices and there is nothing for the bounce to break.
 pub fn hold() -> Option<Hold> {
-    let uid = invoking_uid().or_else(foreground_uid)?;
+    let uid = crate::invoking_uid().or_else(foreground_uid)?;
     if user_state(uid)? != "active" {
         return None;
     }
