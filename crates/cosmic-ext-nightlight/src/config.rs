@@ -303,6 +303,27 @@ impl Settings {
             Override::Auto => false,
         }
     }
+
+    /// The override to carry over when switching to `schedule`, keeping the
+    /// screen as it is when turning the schedule off.
+    ///
+    /// Under a schedule, being on at night is stored as [`Override::Auto`] rather
+    /// than [`Override::On`] (even if the user just flipped the toggle on).
+    /// Switching straight to [`Schedule::Manual`] with that `Auto` still stored
+    /// would immediately clear the screen because manual mode has no window of its
+    /// own. Converting the current on/off state into manual mode's representation
+    /// (`On` if tinted, `Auto` if clear) keeps turning the schedule off from
+    /// acting as an unexpected toggle.
+    ///
+    /// Switching *to* a scheduled mode leaves the override alone, so `Auto` hands
+    /// control to the new schedule and an explicit `On`/`Off` keeps holding until
+    /// the schedule catches up to it.
+    fn override_for_schedule_at(&self, schedule: Schedule, minute_of_day: u32) -> Override {
+        match schedule {
+            Schedule::Manual => override_for_at(self.tint_on_at(minute_of_day), false),
+            Schedule::Solar | Schedule::Custom => self.tint_override,
+        }
+    }
 }
 
 /// [`Settings::override_for`] given what the schedule wants, so it can be
@@ -357,6 +378,30 @@ pub fn expire_override(handler: &Option<Config>, settings: &mut Settings) {
     if settings.override_caught_up_at(now_minute_of_day()) {
         settings.tint_override = Override::Auto;
         store_override(handler, Override::Auto);
+    }
+}
+
+/// Switches `settings` to `schedule` and persists both keys in an order that
+/// never exposes a transient opposite tint state to other processes watching
+/// the store.
+///
+/// When turning the schedule off while the tint is on, `override` must land
+/// as `On` before `schedule` becomes `Manual` — otherwise a watcher reading
+/// between the two writes sees `(Manual, Auto)` and starts clearing the
+/// screen. When turning it off while forced off (`Off` -> `Auto`), `schedule`
+/// must become `Manual` before `override` becomes `Auto` — otherwise a
+/// watcher sees `(Solar/Custom, Auto)` at night and starts tinting it.
+pub fn set_schedule(handler: &Option<Config>, settings: &mut Settings, schedule: Schedule) {
+    let next_override = settings.override_for_schedule_at(schedule, now_minute_of_day());
+    settings.schedule = schedule;
+    settings.tint_override = next_override;
+
+    if next_override == Override::On {
+        store_override(handler, next_override);
+        store_schedule(handler, schedule);
+    } else {
+        store_schedule(handler, schedule);
+        store_override(handler, next_override);
     }
 }
 
@@ -1766,5 +1811,110 @@ mod tests {
         let mut pins = ids(&[SETTINGS_APP_ID, "firefox", OLD_SETTINGS_APP_ID]);
         assert!(rename_pin(&mut pins));
         assert_eq!(pins, ids(&[SETTINGS_APP_ID, "firefox"]));
+    }
+
+    #[test]
+    fn turning_off_schedule_keeps_the_current_tint_state() {
+        let night = 23 * 60;
+        let day = 12 * 60;
+        let base = scheduled(21 * 60, 5 * 60);
+
+        assert_eq!(
+            base.override_for_schedule_at(Schedule::Manual, night),
+            Override::On,
+            "Auto at night should become On so turning the schedule off keeps the tint"
+        );
+        assert_eq!(
+            base.override_for_schedule_at(Schedule::Manual, day),
+            Override::Auto,
+            "Auto during the day should stay Auto so the screen remains clear"
+        );
+        assert_eq!(
+            Settings {
+                tint_override: Override::On,
+                ..base
+            }
+            .override_for_schedule_at(Schedule::Manual, day),
+            Override::On,
+            "forced On during the day should stay On"
+        );
+        assert_eq!(
+            Settings {
+                tint_override: Override::Off,
+                ..base
+            }
+            .override_for_schedule_at(Schedule::Manual, night),
+            Override::Auto,
+            "forced Off at night should become Auto so the screen stays clear without a stale Off"
+        );
+    }
+
+    #[test]
+    fn switching_to_a_scheduled_mode_leaves_the_override_alone() {
+        let day = 12 * 60;
+        for tint_override in [Override::Auto, Override::On, Override::Off] {
+            let manual = Settings {
+                schedule: Schedule::Manual,
+                tint_override,
+                ..Settings::default()
+            };
+            assert_eq!(
+                manual.override_for_schedule_at(Schedule::Custom, day),
+                tint_override
+            );
+            assert_eq!(
+                manual.override_for_schedule_at(Schedule::Solar, day),
+                tint_override
+            );
+
+            let custom = Settings {
+                tint_override,
+                ..scheduled(21 * 60, 5 * 60)
+            };
+            assert_eq!(
+                custom.override_for_schedule_at(Schedule::Solar, day),
+                tint_override
+            );
+        }
+    }
+
+    #[test]
+    fn set_schedule_persists_override_and_schedule() {
+        let (keys, handler) = scratch_store("set-schedule");
+
+        // All-day Custom window so the test is independent of the wall clock.
+        let mut settings = scheduled(0, 0);
+        store_schedule(&handler, settings.schedule);
+        store_override(&handler, settings.tint_override);
+        assert!(settings.tint_on());
+
+        set_schedule(&handler, &mut settings, Schedule::Manual);
+        assert_eq!(settings.schedule, Schedule::Manual);
+        assert_eq!(settings.tint_override, Override::On);
+        assert!(settings.tint_on());
+        let loaded = Settings::load_from(&handler);
+        assert_eq!(loaded.schedule, Schedule::Manual);
+        assert_eq!(loaded.tint_override, Override::On);
+        assert!(loaded.tint_on());
+
+        // Forced off in an active window -> Manual + Auto (stays clear).
+        let mut settings = Settings {
+            tint_override: Override::Off,
+            ..scheduled(0, 0)
+        };
+        store_schedule(&handler, settings.schedule);
+        store_override(&handler, settings.tint_override);
+        assert!(!settings.tint_on());
+
+        set_schedule(&handler, &mut settings, Schedule::Manual);
+        assert_eq!(settings.schedule, Schedule::Manual);
+        assert_eq!(settings.tint_override, Override::Auto);
+        assert!(!settings.tint_on());
+        let loaded = Settings::load_from(&handler);
+        assert_eq!(loaded.schedule, Schedule::Manual);
+        assert_eq!(loaded.tint_override, Override::Auto);
+        assert!(!loaded.tint_on());
+
+        let _ = std::fs::remove_dir_all(keys);
     }
 }
