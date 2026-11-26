@@ -80,10 +80,15 @@ fn parse_args() -> Result<Args, String> {
         }
     }
 
-    let kelvin = if off {
-        nightlight_core::NEUTRAL_KELVIN
+    // `--off` means the neutral ramp, so a `--brightness` beside it must not
+    // leave the screen dimmed.
+    let (kelvin, brightness) = if off {
+        (nightlight_core::NEUTRAL_KELVIN, 1.0)
     } else {
-        kelvin.ok_or("missing required --temp <kelvin> (or use --off)")?
+        (
+            kelvin.ok_or("missing required --temp <kelvin> (or use --off)")?,
+            brightness,
+        )
     };
 
     if !(0.0..=1.0).contains(&brightness) {
