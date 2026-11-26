@@ -276,7 +276,8 @@ You can also pick a schedule:
 If you switch it on or off by hand, the schedule takes over again at its next
 change.
 
-### Keeping the schedule running
+<details>
+<summary>Running the schedule without the applet</summary>
 
 The applet runs your schedule while it's on your panel or dock. If you remove it, turn on **Run in Background** in Settings
 (it appears once the applet is gone), or use the systemd service:
@@ -287,6 +288,7 @@ systemctl --user enable --now cosmic-ext-nightlight.service
 
 (From a source install, copy `systemd/cosmic-ext-nightlight.service` into
 `~/.config/systemd/user/` first.)
+</details>
 
 <details>
 <summary>Advanced: run the helper directly</summary>
