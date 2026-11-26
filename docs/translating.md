@@ -6,7 +6,11 @@ Partial translations are welcome. Anything you leave out shows in English.
 
 ## 1. Copy the English file
 
-Make a folder for your language next to the English one, and copy the file in:
+You can do everything on GitHub's website. Open
+[the English file](../crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl)
+and copy its text. Then go to the `i18n` folder, choose **Add file > Create new file**
+and name it after your language, like `de/cosmic_nightlight.ftl`. GitHub makes a
+fork for you.
 
 ```
 crates/cosmic-ext-nightlight/i18n/en/cosmic_nightlight.ftl
@@ -33,7 +37,7 @@ status-on-until = An bis { $time }
 
 ## 3. Open a pull request
 
-That's all that's needed. If you can't run the app, say so and someone will check
+When you save the file, GitHub offers to open one. That's all that's needed. If you can't run the app, say so and someone will check
 how it looks for you.
 
 ## Optional extras
