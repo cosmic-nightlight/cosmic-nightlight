@@ -327,8 +327,7 @@ impl cosmic::Application for SettingsWindow {
                     self.settings.schedule = chosen;
                     return self.start_host_setup(Some(previous));
                 }
-                self.settings.schedule = chosen;
-                config::store_schedule(&self.config, chosen);
+                config::set_schedule(&self.config, &mut self.settings, chosen);
             }
             Message::TimeSelected(bound, part) => {
                 let current = match bound {
