@@ -310,10 +310,10 @@ is one file, and no coding is needed. Partial translations are welcome. See
 
 ## Known limitations
 
-- **On some systems the screen flickers briefly** (1–2 seconds) when the tint
+- On some systems the screen flickers briefly (1–2 seconds) when the tint
   changes. Most systems change without it.
-- **A monitor you plug in can take up to a minute to get the tint.**
-- **Sunset to Sunrise can be off by a few minutes**, since it goes by your time
+- A monitor you plug in can take up to a minute to get the tint.
+- Sunset to Sunrise can be off by a few minutes, since it goes by your time
   zone rather than your exact location. Use a **Custom Schedule** if you want
   exact times.
 - Requires admin rights (membership in `wheel` or `sudo`).
