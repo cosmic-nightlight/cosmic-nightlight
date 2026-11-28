@@ -74,7 +74,7 @@ trap restore EXIT INT TERM
 echo "=== Dismissed-prompt backoff test ==="
 echo
 
-if flatpak ps --columns=application 2>/dev/null | grep -q cosmic_nightlight; then
+if flatpak ps --columns=application 2>/dev/null | grep -q cosmic_ext_nightlight; then
     cat <<'EOF'
 !! A cosmic-ext-nightlight flatpak instance is already running - almost certainly the
    panel applet. Every run mode reconciles, so it will hit the same stashed
