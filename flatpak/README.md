@@ -11,9 +11,10 @@ with the code; submitting means copying it plus `cargo-sources.json` to
 
 Writing gamma LUTs needs DRM master, which needs `CAP_SYS_ADMIN`. No flatpak
 permission grants that, so the sandbox cannot tint the screen however it is
-configured — note that the manifest asks for no device access at all. Instead the
-applet reaches the host through `flatpak-spawn --host pkexec`, and the privileged
-helper runs there.
+configured. The manifest's `--device=dri` is only for libcosmic's GPU
+rendering, and the sandbox never touches DRM itself. Instead the applet reaches
+the host through `flatpak-spawn --host pkexec`, and the privileged helper runs
+there.
 
 That means the helper has to run **on the host**. It ships at
 `/app/libexec/cosmic-ext-nightlight-helper` and is used two ways: as the payload for
