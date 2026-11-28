@@ -24,6 +24,7 @@ use crate::backend;
 use crate::config::{self, APP_ID};
 use crate::fl;
 use crate::settle::{self, Settle, Woke};
+use crate::toggle_revert::Toggles;
 use crate::TICK_INTERVAL;
 
 /// Runs the application as a COSMIC panel applet.
@@ -48,6 +49,8 @@ pub struct NightLightApplet {
     /// Saves the slider when it is moved by Ctrl+scroll or the arrow keys,
     /// which never release it.
     settle: Settle,
+    /// What to put back when a toggle's apply doesn't land.
+    toggles: Toggles,
     /// Whether changes on this machine flicker the screen, which decides
     /// whether the popup says so. See [`config::flickers`].
     flickers: bool,
@@ -68,25 +71,26 @@ pub enum Message {
     /// Whether changes flicker the screen, as learned by the last one.
     FlickersChanged(bool),
     Tick,
-    /// A toggle's apply came back. `previous` is the override to fall back to
-    /// if it didn't land.
+    /// A toggle's apply came back. `wrote` is the override that toggle stored,
+    /// and `landed` whether the apply worked, or `None` if a newer request took
+    /// its place before it ran.
     ToggleFinished {
-        previous: config::Override,
-        applied: bool,
+        wrote: config::Override,
+        landed: Option<bool>,
     },
 }
 
 /// Applies a toggle the user flipped, and reports back so the toggle can be put
 /// where the screen actually ended up. See the settings window's twin.
 ///
-/// A superseded apply answers with nothing at all — the channel is dropped — and
-/// that must not read as a failure, because the request that superseded it is
-/// the one describing the screen. So "no answer" reports success, leaving the
-/// toggle as the user set it and deferring to the newer apply's own report.
+/// A superseded apply answers with nothing at all, as the channel is dropped,
+/// and that must not read as a failure, because the request that superseded it
+/// is the one describing the screen. So "no answer" comes back as `None`, which
+/// puts nothing back and leaves it to the newer apply's own report.
 fn apply_toggle(
     state: backend::TintState,
     brightness: f32,
-    previous: config::Override,
+    wrote: config::Override,
 ) -> Task<Message> {
     let (sender, receiver) = cosmic::iced::futures::channel::oneshot::channel();
     backend::apply_in_background_reporting(
@@ -98,8 +102,8 @@ fn apply_toggle(
     );
     cosmic::task::future(async move {
         Message::ToggleFinished {
-            previous,
-            applied: receiver.await.unwrap_or(true),
+            wrote,
+            landed: receiver.await.ok(),
         }
     })
 }
@@ -131,6 +135,7 @@ impl cosmic::Application for NightLightApplet {
             temperature: settings.temperature as f32,
             dragging: false,
             settle: Settle::default(),
+            toggles: Toggles::default(),
             flickers: config::flickers(),
         };
 
@@ -156,22 +161,26 @@ impl cosmic::Application for NightLightApplet {
                 // Apply the new override locally as well as persisting it, so
                 // the toggle and icon respond now rather than after the config
                 // watch round-trips back to us.
-                let previous = self.settings.tint_override;
+                self.toggles.started(self.settings.tint_override);
                 self.settings.tint_override = new_override;
                 config::store_override(&self.config, new_override);
                 return apply_toggle(
                     on.then_some(self.temperature as u32),
                     self.settings.brightness as f32,
-                    previous,
+                    new_override,
                 );
             }
-            Message::ToggleFinished { previous, applied } => {
+            Message::ToggleFinished { wrote, landed } => {
                 // The apply is what makes a toggle true. When it doesn't land —
                 // the password prompt dismissed, most often — leaving the toggle
                 // and the icon where the user clicked would have them describing
                 // a screen that never changed, and would leave a stored override
                 // to re-prompt from at the next launch. So put both back.
-                if !applied {
+                //
+                // A click made while an earlier apply was still out is part of
+                // the same burst, and only the burst's last apply puts anything
+                // back. See `toggle_revert`.
+                if let Some(previous) = self.toggles.finished(wrote, landed) {
                     self.settings.tint_override = previous;
                     config::store_override(&self.config, previous);
                 }

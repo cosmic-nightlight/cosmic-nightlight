@@ -29,6 +29,7 @@ mod settle;
 mod shortcut;
 mod solar;
 mod toggle;
+mod toggle_revert;
 
 use std::time::Duration;
 
