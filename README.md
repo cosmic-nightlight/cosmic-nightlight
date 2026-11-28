@@ -180,10 +180,11 @@ Download the latest `cosmic-ext-nightlight-*.flatpak` from the
 page and run:
 
 ```sh
-flatpak install --user ./cosmic-ext-nightlight-*.flatpak && flatpak run io.github.cosmic_ext_nightlight
+flatpak install --user ./cosmic-ext-nightlight-*.flatpak
 ```
 
-Turn it on and type your password once to install a small helper.
+Open **Night Light Settings** from your app launcher, turn it on, and type your
+password once to install a small helper.
 
 To remove it, run `flatpak uninstall io.github.cosmic_ext_nightlight`. This also
 removes the helper.
