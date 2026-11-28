@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Backend bridge from the (unprivileged) GUI/daemon to the privileged
-//! `cosmic-nightlight-helper`.
+//! `cosmic-ext-nightlight-helper`.
 //!
 //! Setting the DRM gamma under COSMIC requires root (to switch VTs and grab
 //! the DRM master lock), so the GUI never touches DRM directly. Instead it
@@ -63,16 +63,16 @@ use crate::config;
 /// Sandboxed, a path only wins if its helper speaks our contract. See
 /// [`pick_installed_helper`] for why order alone is not enough.
 const HELPER_CANDIDATES: &[&str] = &[
-    "/usr/bin/cosmic-nightlight-helper",
-    "/usr/local/bin/cosmic-nightlight-helper",
+    "/usr/bin/cosmic-ext-nightlight-helper",
+    "/usr/local/bin/cosmic-ext-nightlight-helper",
 ];
 
 /// Where the polkit rule may live on the host. `install.sh` and the flatpak's
 /// host setup both write the first; the second is where a distro package would
 /// put it. Either one authorizes every path in [`HELPER_CANDIDATES`].
 const RULE_CANDIDATES: &[&str] = &[
-    "/etc/polkit-1/rules.d/49-cosmic-nightlight.rules",
-    "/usr/share/polkit-1/rules.d/49-cosmic-nightlight.rules",
+    "/etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules",
+    "/usr/share/polkit-1/rules.d/49-cosmic-ext-nightlight.rules",
 ];
 
 /// The path the flatpak's host setup installs to, and so the one to name in an
@@ -204,7 +204,7 @@ pub fn spawn_on_host_falling_back(
             .is_ok_and(|status| status.code() == Some(USAGE_ERROR));
         if refused {
             if let Err(err) = spawn_on_host_falling_back(program, rest, activation_token) {
-                eprintln!("cosmic-nightlight: {err}");
+                eprintln!("cosmic-ext-nightlight: {err}");
             }
         }
     });
@@ -346,7 +346,7 @@ fn bundled_host_path(program: &str) -> Option<String> {
 
 /// The helper we ship inside the flatpak, as the host sees it.
 fn bundled_helper_path() -> Option<String> {
-    bundled_host_path("cosmic-nightlight-helper")
+    bundled_host_path("cosmic-ext-nightlight-helper")
 }
 
 /// What probing the host turned up — which decides whether the answer is worth
@@ -514,8 +514,168 @@ pub fn host_setup() -> HostSetup {
     let state = probe_host_setup();
     if state == HostSetup::Ready {
         HOST_SETUP_READY.store(true, Ordering::Relaxed);
+        // The setup that just finished is what takes the old flatpak's uninstall
+        // cleanup off the host, and that is what this was waiting for.
+        retire_old_flatpak();
     }
     state
+}
+
+/// The path unit of the uninstall cleanup that the host setup of a 0.6 flatpak
+/// installed. See [`retire_old_flatpak`].
+const OLD_CLEANUP_UNIT: &str = "/etc/systemd/system/cosmic-nightlight-cleanup.path";
+
+/// Guards [`retire_old_flatpak`] against running twice at once in one process.
+static RETIRING_OLD_FLATPAK: AtomicBool = AtomicBool::new(false);
+
+/// Uninstalls the flatpak from before 0.7.0, which had another app ID.
+///
+/// Flatpak treats a new ID as a new app, so installing this version leaves the
+/// old one installed beside it: a second Night Light in the launcher and in the
+/// applet picker, reading settings this one no longer writes. Nothing in flatpak
+/// connects the two, so the new one removes the old.
+///
+/// By the time this runs, [`crate::migrate`] has carried over everything the old
+/// one had, and the panel entry has been renamed, so cosmic-panel is no longer
+/// starting the old applet.
+///
+/// It waits while the old flatpak's own uninstall cleanup is still on the host.
+/// That cleanup reacts to the uninstall by resetting the screen's colors through
+/// the old helper, which would blink the screen and take the tint away with the
+/// night light on. Our host setup removes that cleanup (`remove_old_install` in
+/// flatpak-host-setup.sh), and [`host_setup`] calls this again once it has. A
+/// flatpak that never ran the old setup has no cleanup to wait for.
+///
+/// Costs nothing for anyone who never had the old one: without its settings
+/// directory this returns before running a single command. Once the old flatpak
+/// is found gone, a marker in our data directory stops the question being asked
+/// again. The work happens on a thread, since it is several commands on the host
+/// and no run mode should wait for them.
+///
+/// `--noninteractive` keeps this silent. A system-wide install is removed for
+/// an administrator, as flatpak's own rule allows, and anyone else is left with
+/// the old one rather than shown a password prompt they did not ask for.
+pub fn retire_old_flatpak() {
+    if !in_flatpak() || !had_old_app_id() || old_flatpak_marker().is_some_and(|m| m.exists()) {
+        return;
+    }
+    if RETIRING_OLD_FLATPAK.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    thread::spawn(|| {
+        retire_old_flatpak_now();
+        RETIRING_OLD_FLATPAK.store(false, Ordering::Relaxed);
+    });
+}
+
+/// Whether this user has settings under the old app ID, which anyone who ran
+/// the old flatpak does.
+fn had_old_app_id() -> bool {
+    crate::autostart::config_home()
+        .is_some_and(|home| home.join("cosmic").join(config::OLD_APP_ID).is_dir())
+}
+
+/// The file that records the old flatpak as gone. In the sandbox this is under
+/// `~/.var/app/<our ID>/data`, so it lasts as long as our own install does.
+fn old_flatpak_marker() -> Option<PathBuf> {
+    let data_home = std::env::var_os("XDG_DATA_HOME").filter(|dir| !dir.is_empty())?;
+    Some(PathBuf::from(data_home).join("old-flatpak-retired"))
+}
+
+/// The installations that have the old flatpak, or `None` if flatpak could not
+/// be asked. A list we could not get says nothing about what is installed.
+fn list_old_flatpak() -> Option<Vec<String>> {
+    let listed = Command::new("flatpak-spawn")
+        .args(["--host", "flatpak", "list", "--app"])
+        .arg("--columns=application,installation")
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    listed
+        .status
+        .success()
+        .then(|| old_flatpak_installations(&String::from_utf8_lossy(&listed.stdout)))
+}
+
+fn retire_old_flatpak_now() {
+    let Some(installations) = list_old_flatpak() else {
+        return;
+    };
+
+    if installations.is_empty() {
+        if let Some(marker) = old_flatpak_marker() {
+            if let Some(dir) = marker.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(marker, "");
+        }
+        return;
+    }
+    if host_has_file(OLD_CLEANUP_UNIT) {
+        return;
+    }
+
+    // Whatever of the old one is still running would be left without its files.
+    let _ = Command::new("flatpak-spawn")
+        .args(["--host", "flatpak", "kill", config::OLD_APP_ID])
+        .stderr(Stdio::null())
+        .status();
+
+    for installation in installations {
+        let removed = Command::new("flatpak-spawn")
+            .args(["--host", "flatpak", "uninstall", "--noninteractive", "-y"])
+            .arg("--delete-data")
+            .arg(installation_flag(&installation))
+            .arg(config::OLD_APP_ID)
+            .stdout(Stdio::null())
+            .status();
+        // The applet, the settings window and the service each do this when the
+        // setup lands, so another of them can get there first. Its uninstall
+        // makes ours fail, and that is not worth reporting.
+        let removed_elsewhere =
+            || list_old_flatpak().is_some_and(|left| !left.contains(&installation));
+        match removed {
+            Ok(status) if status.success() => println!(
+                "cosmic-ext-nightlight: removed the flatpak from before 0.7.0 ({installation})"
+            ),
+            Ok(_) | Err(_) if removed_elsewhere() => {}
+            Ok(status) => eprintln!(
+                "cosmic-ext-nightlight: could not remove the flatpak from before 0.7.0 \
+                 ({installation}): {status}"
+            ),
+            Err(err) => eprintln!(
+                "cosmic-ext-nightlight: could not remove the flatpak from before 0.7.0 \
+                 ({installation}): {err}"
+            ),
+        }
+    }
+}
+
+/// The installations that have the old flatpak, from the output of
+/// `flatpak list --app --columns=application,installation`.
+///
+/// The ID has to match whole, so that only the old app is ever uninstalled:
+/// not this one, and not an app whose ID merely starts the same way.
+fn old_flatpak_installations(listing: &str) -> Vec<String> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let mut columns = line.split('\t').map(str::trim);
+            let application = columns.next()?;
+            let installation = columns.next()?;
+            (application == config::OLD_APP_ID && !installation.is_empty())
+                .then(|| installation.to_string())
+        })
+        .collect()
+}
+
+/// The `flatpak` option that names an installation from that column.
+fn installation_flag(installation: &str) -> String {
+    match installation {
+        "user" => "--user".to_string(),
+        "system" => "--system".to_string(),
+        custom => format!("--installation={custom}"),
+    }
 }
 
 fn probe_host_setup() -> HostSetup {
@@ -564,7 +724,7 @@ fn would_prompt() -> bool {
     host_setup() != HostSetup::Ready || !in_passwordless_group()
 }
 
-/// The groups `polkit/49-cosmic-nightlight.rules` lets run the helper without a
+/// The groups `polkit/49-cosmic-ext-nightlight.rules` lets run the helper without a
 /// password. Keep the two in step.
 const PASSWORDLESS_GROUPS: [&str; 2] = ["sudo", "wheel"];
 
@@ -623,9 +783,31 @@ pub fn defer_without_setup(
 ) {
     // One probe for both halves. Unset-up it costs round trips out of the
     // sandbox, and asking twice a tick would double them for one answer.
-    let ready = host_setup() == HostSetup::Ready;
+    let ready = settings_deliverable(host_setup());
     defer_schedule(handler, settings, ready);
     drop_undeliverable_override(handler, settings, ready);
+}
+
+/// Whether the stored settings have a host setup under them, for
+/// [`defer_without_setup`].
+///
+/// Only a host with no setup at all stands them down. An outdated one keeps
+/// them, because a flatpak update leaves the instances that were already
+/// running on the old build: the panel applet above all, which cosmic-panel
+/// does not restart. That build reads the same helper as current, since it
+/// speaks the old contract, and restores whatever this one parks. Parking here
+/// set the two flipping the schedule between manual and its own value on every
+/// tick, and each time it read as manual the old applet cleared the screen and
+/// put the tint back a moment later.
+///
+/// Keeping them costs nothing the parking was protecting against. An outdated
+/// host still holds every unasked apply back, as [`would_prompt`] treats
+/// anything but [`HostSetup::Ready`] as a password prompt, so a schedule left
+/// in place cannot prompt at sunset. It also hands back a schedule an earlier
+/// build parked on an outdated host, as the deferral already does once the
+/// setup lands.
+fn settings_deliverable(setup: HostSetup) -> bool {
+    setup != HostSetup::Needed
 }
 
 /// Parks a schedule that has no host setup under it, and restores it once the
@@ -701,9 +883,51 @@ fn drop_undeliverable_override(
     if applied().is_some_and(|shown| shown.state.is_some()) {
         return;
     }
+    // The same goes for a tint the flatpak from before 0.7.0 put up. Its record
+    // is out of sight of `applied`, so without this everyone who upgraded with
+    // the tint forced on had it turned off before they had finished the setup.
+    if old_flatpak_shows_tint() {
+        return;
+    }
 
     settings.tint_override = config::Override::Auto;
     config::store_override(handler, config::Override::Auto);
+}
+
+/// Whether the flatpak from before 0.7.0 recorded a tint on screen.
+///
+/// Flatpak gives each app a private runtime directory, kept on the host under
+/// `$XDG_RUNTIME_DIR/.flatpak/<app ID>/xdg-run`, so the old app's record of what
+/// it put up can only be read through the host. Its format has not changed.
+///
+/// Asked once per process, and only by someone who had the old app. The runtime
+/// directory goes a few seconds after the last logout, so a record found here
+/// is from this session, or at worst from a quick logout and back in, where the
+/// tint is put back once the setup is done anyway.
+fn old_flatpak_shows_tint() -> bool {
+    static ANSWER: OnceLock<bool> = OnceLock::new();
+    *ANSWER.get_or_init(|| {
+        if !in_flatpak() || !had_old_app_id() {
+            return false;
+        }
+        let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") else {
+            return false;
+        };
+        let record = PathBuf::from(runtime_dir)
+            .join(".flatpak")
+            .join(config::OLD_APP_ID)
+            .join("xdg-run")
+            .join("cosmic-nightlight-shown");
+        let mut command = host_command("cat", None);
+        command.arg("--").arg(record);
+        match command.stderr(Stdio::null()).output() {
+            Ok(output) if output.status.success() => {
+                parse_shown(&String::from_utf8_lossy(&output.stdout))
+                    .is_some_and(|shown| shown.state.is_some())
+            }
+            _ => false,
+        }
+    })
 }
 
 /// Whether a stored override asks for something this host has no way to deliver.
@@ -791,7 +1015,7 @@ pub fn run_host_setup() -> Result<(), String> {
     // asked that decides whether a refusal arriving in the meantime answers this
     // request too.
     let requested_at = SystemTime::now();
-    let script = bundled_host_path("cosmic-nightlight-setup")
+    let script = bundled_host_path("cosmic-ext-nightlight-setup")
         .ok_or("could not find the setup program inside the flatpak")?;
 
     with_apply_lock(|| {
@@ -841,7 +1065,7 @@ pub fn run_host_setup() -> Result<(), String> {
 /// install or removal is picked up without restarting. Sandboxed the same
 /// question costs a round trip out of the sandbox — see [`host_helper_path`].
 ///
-/// The `COSMIC_NIGHTLIGHT_HELPER` override is handled a level up, in
+/// The `COSMIC_EXT_NIGHTLIGHT_HELPER` override is handled a level up, in
 /// [`privileged_program`], so that it wins over the setup routing too.
 fn helper_path() -> String {
     if in_flatpak() {
@@ -875,7 +1099,7 @@ fn libexec_helper_path() -> Option<PathBuf> {
 /// can be tested without depending on where the test binary lives.
 fn libexec_helper_beside(exe: &std::path::Path) -> Option<PathBuf> {
     let prefix = exe.parent()?.parent()?;
-    Some(prefix.join("libexec").join("cosmic-nightlight-helper"))
+    Some(prefix.join("libexec").join("cosmic-ext-nightlight-helper"))
 }
 
 /// The graphical-session VT, as the `--session-vt` argument to the helper, or
@@ -908,11 +1132,11 @@ fn session_vt_args() -> Vec<String> {
 fn privileged_program() -> (String, bool) {
     // An override names the program outright, so honor it ahead of the setup
     // routing rather than installing something else over the top of it.
-    if let Ok(path) = std::env::var("COSMIC_NIGHTLIGHT_HELPER") {
+    if let Ok(path) = std::env::var("COSMIC_EXT_NIGHTLIGHT_HELPER") {
         return (path, false);
     }
     if in_flatpak() && host_setup() != HostSetup::Ready && !setup_is_ineffective() {
-        if let Some(setup) = bundled_host_path("cosmic-nightlight-setup") {
+        if let Some(setup) = bundled_host_path("cosmic-ext-nightlight-setup") {
             return (setup, true);
         }
     }
@@ -986,16 +1210,22 @@ fn program_exists(program: &str) -> bool {
 /// readable from in here.
 fn run_helper(args: &[String]) -> Result<(), Failure> {
     let (program, installs) = privileged_program();
-    let mut command = if in_flatpak() {
-        let mut command = Command::new("flatpak-spawn");
-        command.args(["--host", "pkexec"]);
-        command
-    } else {
-        Command::new("pkexec")
-    };
-    command.arg(&program).args(args).args(session_vt_args());
+    let mut command = pkexec_command();
+    command
+        .arg(&program)
+        .args(args)
+        .args(session_vt_args())
+        .stdout(Stdio::piped());
 
-    match command.status() {
+    let result = command.spawn().and_then(|child| child.wait_with_output());
+    if let Ok(output) = &result {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Passed on, so the log reads as it did when the helper wrote to it.
+        print!("{stdout}");
+        note_route(nightlight_core::parse_route(&stdout));
+    }
+
+    match result.map(|output| output.status) {
         Ok(status) if status.success() => {
             println!("backend: helper applied {args:?}");
             if installs {
@@ -1051,17 +1281,112 @@ fn run_helper(args: &[String]) -> Result<(), Failure> {
     }
 }
 
-/// Pushes `state` to every display through the helper. Callers must already
-/// hold the apply lock; use [`apply_now`] or [`reconcile`] instead.
-fn apply_unlocked(state: TintState, brightness: f32) -> Result<(), Failure> {
-    match state {
-        Some(kelvin) => run_helper(&[
+/// Remembers whether changes on this machine need the VT bounce, so the GUIs
+/// can say the screen may flicker.
+///
+/// A change that was already showing tried neither route, and a helper too old
+/// to say leaves the route unknown. Neither tells us anything, so both keep
+/// whatever was learned before.
+fn note_route(route: Option<nightlight_core::Route>) {
+    use nightlight_core::Route;
+    match route {
+        Some(Route::Bounced) => config::store_flickers(true),
+        Some(Route::Borrowed) => config::store_flickers(false),
+        Some(Route::Unchanged) | None => {}
+    }
+}
+
+/// `pkexec`, reached through `flatpak-spawn --host` when sandboxed.
+fn pkexec_command() -> Command {
+    if in_flatpak() {
+        let mut command = Command::new("flatpak-spawn");
+        command.args(["--host", "pkexec"]);
+        command
+    } else {
+        Command::new("pkexec")
+    }
+}
+
+/// How long a change takes to fade in. Long enough to read as a fade and not a
+/// jump, short enough that a toggle still feels like it answered the click.
+const FADE: Duration = Duration::from_millis(1000);
+
+/// How long each step of a slider drag takes to fade in. The slider moves in
+/// steps, and this is what makes the screen glide between them.
+const PREVIEW_FADE: Duration = Duration::from_millis(120);
+
+/// The helper arguments that put `state` on the screen.
+fn tint_args(state: TintState, brightness: f32, fade: Duration) -> Vec<String> {
+    let mut args = match state {
+        Some(kelvin) => vec![
             "--temp".to_string(),
             kelvin.to_string(),
             "--brightness".to_string(),
             format!("{brightness:.3}"),
-        ]),
-        None => run_helper(&["--off".to_string()]),
+        ],
+        None => vec!["--off".to_string()],
+    };
+    args.extend(["--fade-ms".to_string(), fade.as_millis().to_string()]);
+    args
+}
+
+/// Pushes `state` to every display through the helper. Callers must already
+/// hold the apply lock; use [`apply_now`] or [`reconcile`] instead.
+fn apply_unlocked(state: TintState, brightness: f32) -> Result<(), Failure> {
+    run_helper(&tint_args(state, brightness, FADE))
+}
+
+/// How long to leave previews alone after one did not work.
+///
+/// A preview only runs where the screen can change without a blink. Where it
+/// can't, the helper says so and changes nothing, and asking again on every
+/// step of the drag would spawn it for nothing. Not forever, though: the same
+/// answer comes back for passing reasons too, like the session being in the
+/// background.
+const PREVIEW_PAUSE: Duration = Duration::from_secs(30);
+
+/// When the last preview failed, if one has.
+fn preview_failed_at() -> &'static Mutex<Option<Instant>> {
+    static FAILED: Mutex<Option<Instant>> = Mutex::new(None);
+    &FAILED
+}
+
+/// Shows `kelvin` at `brightness` on the screen without recording it, while a
+/// slider is still being dragged.
+///
+/// It must never cost the user anything: no password prompt, no setup, no
+/// blink. So it only runs when the helper is reachable without a prompt, and it
+/// asks the helper for a live change, which the helper refuses where it would
+/// need a VT bounce. The drag then previews nothing and the change lands on
+/// release, as it always did.
+///
+/// The shared record is left alone on purpose. It keeps describing the stored
+/// setting, so our other processes go on seeing nothing to do while the drag
+/// lasts. The release applies for real and records what ended up on screen.
+fn preview_now(kelvin: u32, brightness: f32) {
+    let paused = preview_failed_at()
+        .lock()
+        .is_ok_and(|failed| failed.is_some_and(|at| at.elapsed() < PREVIEW_PAUSE));
+    if paused || would_prompt() {
+        return;
+    }
+    let (program, installs) = privileged_program();
+    if installs {
+        return;
+    }
+    let mut command = pkexec_command();
+    command
+        .arg(&program)
+        .args(tint_args(Some(kelvin), brightness, PREVIEW_FADE))
+        .arg("--live")
+        .args(session_vt_args())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let shown = with_apply_lock(|| command.status().is_ok_and(|status| status.success()));
+    if !shown {
+        if let Ok(mut failed) = preview_failed_at().lock() {
+            *failed = Some(Instant::now());
+        }
     }
 }
 
@@ -1081,6 +1406,12 @@ fn apply_unlocked(state: TintState, brightness: f32) -> Result<(), Failure> {
 /// Blocks for as long as the helper runs (~1s: a VT bounce plus polkit).
 fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> bool {
     with_apply_lock(|| {
+        if outdated(state, brightness) {
+            // Not a failure: the change that replaced this one is what the
+            // screen should show, and its own apply will say whether it landed.
+            println!("backend: skipping an apply the settings have moved on from");
+            return true;
+        }
         if refused_since(requested_at) {
             println!("backend: skipping an apply the user already declined");
             return false;
@@ -1105,6 +1436,31 @@ fn apply_now(state: TintState, brightness: f32, requested_at: SystemTime) -> boo
             Err(failure) => settle_failure(&wanted, failure),
         }
     })
+}
+
+/// Whether the stored settings no longer ask for `state` at `brightness`, so a
+/// request for it has been overtaken by a newer change. Callers must hold the
+/// apply lock, and must only ask about requests that came from the settings.
+///
+/// Every request is decided from the settings and queued after they are stored,
+/// but it can then wait a long time for the lock: each apply is about a second
+/// of fade, and every one of our processes queues its own. Spamming the toggle
+/// or the shortcut used to line up one apply per press, across the applet, the
+/// settings window, the daemon and each `--toggle` process, and the screen kept
+/// flipping on and off for a minute or two after the last press. Checked once
+/// the lock is held, all but the latest state fall away, so a burst of presses
+/// costs at most the apply in flight plus one more.
+///
+/// Without a config store there is nothing newer to defer to, so nothing is
+/// outdated.
+fn outdated(state: TintState, brightness: f32) -> bool {
+    let handler = config::handler();
+    if handler.is_none() {
+        return false;
+    }
+    let settings = config::Settings::load_from(&handler);
+    let current = settings.tint_on().then_some(settings.temperature);
+    current != state || settings.brightness as f32 != brightness
 }
 
 /// Whether another of our processes has already put `wanted` on the screen
@@ -1209,6 +1565,11 @@ pub fn reconcile(state: TintState, brightness: f32) -> Reconcile {
         let settled = displays_settled(&wanted.displays);
         let record = applied();
         if record.as_ref() == Some(&wanted) {
+            return Reconcile::UpToDate;
+        }
+        // A stale request is not ours to apply: whoever changed the settings
+        // queued the newer state, and the next tick re-reads them anyway.
+        if outdated(state, brightness) {
             return Reconcile::UpToDate;
         }
         // Do not bounce the VT to apply a schedule change while every display is
@@ -1500,6 +1861,13 @@ pub fn apply_in_background_reporting(state: TintState, brightness: f32, report: 
     queue(Request::force(state, brightness, Some(report)));
 }
 
+/// Queues a preview of `kelvin` at `brightness` for a slider that is still
+/// being dragged. See [`preview_now`]. Follow it with [`apply_in_background`]
+/// when the slider is released.
+pub fn preview_in_background(kelvin: u32, brightness: f32) {
+    queue(Request::Preview(kelvin, brightness));
+}
+
 /// Queues a [`reconcile`] on the background thread; see [`apply_in_background`].
 pub fn reconcile_in_background(state: TintState, brightness: f32) {
     queue(Request::Reconcile(state, brightness));
@@ -1538,6 +1906,8 @@ enum Request {
     },
     /// A scheduled change: apply it only if the screen doesn't already match.
     Reconcile(TintState, f32),
+    /// A slider part-way through a drag: show it if that costs nothing.
+    Preview(u32, f32),
 }
 
 impl Request {
@@ -1597,6 +1967,11 @@ impl Request {
                 report,
                 requested_at,
             },
+            // A preview is only a courtesy, so it never displaces real work.
+            // The drag's next step, or its release, follows close behind.
+            (older @ (Request::Force { .. } | Request::Reconcile(..)), Request::Preview(..)) => {
+                older
+            }
             (_, newer) => newer,
         }
     }
@@ -1617,6 +1992,7 @@ impl Request {
             Request::Reconcile(state, brightness) => {
                 reconcile(state, brightness);
             }
+            Request::Preview(kelvin, brightness) => preview_now(kelvin, brightness),
         }
     }
 }
@@ -1657,7 +2033,7 @@ fn run_worker(receiver: Receiver<Request>) {
     }
 }
 
-/// Runs `f` holding an exclusive lock shared by every cosmic-nightlight process.
+/// Runs `f` holding an exclusive lock shared by every cosmic-ext-nightlight process.
 ///
 /// The applet, the settings window, and the daemon can all notice the same
 /// schedule boundary at once. Each apply bounces the VT to steal DRM master, so
@@ -1707,6 +2083,12 @@ fn apply_in_flight() -> bool {
 
 /// Opens (creating if needed) the file the apply lock is taken on. `None` when
 /// there is no runtime directory, or it can't be written.
+///
+/// This and the other files we keep in `$XDG_RUNTIME_DIR` still carry the
+/// package's name before 0.7.0, on purpose. Processes started before an upgrade
+/// run on beside new ones until the session ends, and they only share the lock
+/// and the record of what is on screen if the names match. The old packages'
+/// removal scripts also clear `cosmic-nightlight-shown` by that name.
 fn lock_file() -> Option<File> {
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
     let path = PathBuf::from(runtime_dir).join("cosmic-nightlight-apply.lock");
@@ -1720,16 +2102,18 @@ fn lock_file() -> Option<File> {
 
 /// Path of the file tracking what is currently on screen.
 ///
-/// It lives in the session's runtime directory, which is **not** where it
-/// belongs. The record describes hardware state, and hardware state outlives the
-/// session: a gamma LUT survives a logout and a user switch, as the whole design
-/// of this app depends on it surviving a VT bounce. Only a full modeset clears
-/// it, which is why a resume from suspend needs handling and a logout does not
-/// get it for free.
+/// It lives in the user's runtime directory, which does not line up with what
+/// it describes in either direction. The directory outlives a logout: systemd
+/// keeps it for `UserStopDelaySec` (10 seconds by default) after the last
+/// session ends, and for good with lingering or another session open. The
+/// gamma LUT, meanwhile, may not: the greeter's compositor can reset it, so a
+/// quick re-login found a record saying the tint was up on a neutral screen and
+/// never applied it.
 ///
-/// So the record dies at logout while the thing it describes does not. A new
-/// session therefore starts out not knowing what is on screen, and its first
-/// reconcile asks the helper, which reads the hardware; see [`assumed`].
+/// So a record only counts if it was written since the current compositor
+/// started; see [`record_predates_compositor`]. A new session therefore starts
+/// out not knowing what is on screen, and its first reconcile asks the helper,
+/// which reads the hardware; see [`assumed`].
 ///
 /// Named `-shown` because it holds a [`Shown`]. The older `-applied` file held
 /// only the temperature, and a process from before an upgrade may still be
@@ -1743,6 +2127,11 @@ fn applied_state_path() -> Option<PathBuf> {
 /// processes last applied one. `None` means "unknown", which callers must treat
 /// as "needs applying".
 pub fn applied() -> Option<Shown> {
+    // Not even this process's own memory survives a new compositor: a daemon
+    // run as a user service lives across a quick logout and back in.
+    if record_predates_compositor() {
+        return None;
+    }
     recorded_on_disk().or_else(|| {
         assumed()
             .lock()
@@ -1824,7 +2213,7 @@ fn discard_record_if_resumed() {
         return;
     }
 
-    println!("cosmic-nightlight: resumed from suspend; re-applying the tint");
+    println!("cosmic-ext-nightlight: resumed from suspend; re-applying the tint");
     forget_applied();
 }
 
@@ -1839,6 +2228,39 @@ fn clock_sample() -> &'static Mutex<Option<(Instant, SystemTime)>> {
 /// counts as not written, so we re-apply rather than trust it.
 fn record_written_since(instant: SystemTime) -> bool {
     record_modified().is_some_and(|modified| modified >= instant)
+}
+
+/// Whether the record on disk was written before the running compositor
+/// started, and so describes a screen from an earlier session (or from before a
+/// compositor restart) that may since have been reset.
+///
+/// The compositor creates its Wayland socket in the runtime directory when it
+/// starts, so the socket's mtime is that start. Every run mode has
+/// `WAYLAND_DISPLAY`, the daemon's user service included, which is why this is
+/// used rather than `XDG_SESSION_ID`, which a user service does not get.
+///
+/// No record, or no socket to compare with, counts as not stale: the first
+/// already reads as unknown, and the second is how this behaved before. Nor
+/// does a record we have stopped writing, since its mtime would then never
+/// catch up and every reconcile would apply again.
+fn record_predates_compositor() -> bool {
+    !RECORD_UNUSABLE.load(Ordering::Relaxed) && predates(record_modified(), compositor_started())
+}
+
+/// The decision behind [`record_predates_compositor`], split out for tests.
+fn predates(record: Option<SystemTime>, compositor: Option<SystemTime>) -> bool {
+    matches!((record, compositor), (Some(record), Some(compositor)) if record < compositor)
+}
+
+/// When the running compositor started, from its Wayland socket's mtime.
+fn compositor_started() -> Option<SystemTime> {
+    let display = std::env::var_os("WAYLAND_DISPLAY")?;
+    // WAYLAND_DISPLAY may be an absolute path to the socket.
+    let socket = match PathBuf::from(&display) {
+        path if path.is_absolute() => path,
+        name => PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join(name),
+    };
+    std::fs::metadata(socket).ok()?.modified().ok()
 }
 
 /// When the record was last written, or `None` if it can't be stat'ed.
@@ -2275,6 +2697,35 @@ mod tests {
 
     use crate::config::Schedule;
 
+    #[test]
+    fn only_the_old_app_id_is_found_for_removal() {
+        let listing = "io.github.cosmic_ext_nightlight\tuser\n\
+                       io.github.cosmic_nightlight\tsystem\n\
+                       io.github.cosmic_nightlight.Other\tuser\n\
+                       org.mozilla.firefox\tsystem\n\
+                       io.github.cosmic_nightlight\tuser\n\
+                       io.github.cosmic_nightlight\textra-drive\n";
+        assert_eq!(
+            old_flatpak_installations(listing),
+            ["system", "user", "extra-drive"]
+        );
+        // With only this version installed there is nothing to remove.
+        assert!(old_flatpak_installations("io.github.cosmic_ext_nightlight\tuser\n").is_empty());
+        assert!(old_flatpak_installations("").is_empty());
+        // A line without the installation column names nothing we could act on.
+        assert!(old_flatpak_installations("io.github.cosmic_nightlight\n").is_empty());
+    }
+
+    #[test]
+    fn each_installation_gets_its_own_flag() {
+        assert_eq!(installation_flag("user"), "--user");
+        assert_eq!(installation_flag("system"), "--system");
+        assert_eq!(
+            installation_flag("extra-drive"),
+            "--installation=extra-drive"
+        );
+    }
+
     /// A closed lid (eDP asleep) with an external monitor lit must still apply
     /// to the monitor, so one awake display is enough to proceed.
     #[test]
@@ -2510,6 +2961,29 @@ mod tests {
         }
     }
 
+    /// Only a host with no setup at all stands the settings down. Parking on an
+    /// outdated host fought the applet still running the build from before a
+    /// flatpak update, which reads the same helper as current and restores the
+    /// schedule, so the two flipped it on every tick and blinked the screen.
+    #[test]
+    fn an_outdated_helper_keeps_the_stored_settings() {
+        assert!(settings_deliverable(HostSetup::Ready));
+        assert!(settings_deliverable(HostSetup::Outdated));
+        assert!(!settings_deliverable(HostSetup::Needed));
+        assert_eq!(
+            deferral(
+                settings_deliverable(HostSetup::Outdated),
+                Schedule::Manual,
+                Some(Schedule::Custom),
+            ),
+            Some(ScheduleDeferral {
+                schedule: Schedule::Custom,
+                deferred: None,
+            }),
+            "a schedule an earlier build parked comes back"
+        );
+    }
+
     /// The regression this exists for. `/etc/polkit-1/rules.d` is `0750
     /// root:polkitd` across the Debian family, so the rule the setup installs
     /// there is invisible to the user we run as, and reading that as "not
@@ -2646,6 +3120,21 @@ mod tests {
         assert_eq!(parse_shown("3500 920"), None);
         assert_eq!(parse_shown("3500 bright card1-eDP-1"), None);
         assert_eq!(parse_shown("3500 920 card1-eDP-1 extra"), None);
+    }
+
+    /// A quick logout and back in: the runtime directory, and the record in
+    /// it, outlived the old session, but the new compositor started after it.
+    #[test]
+    fn a_record_from_before_the_compositor_started_is_stale() {
+        let login = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let before = login - Duration::from_secs(21);
+        let after = login + Duration::from_secs(5);
+        assert!(predates(Some(before), Some(login)));
+        assert!(!predates(Some(after), Some(login)));
+        assert!(!predates(Some(login), Some(login)));
+        // Nothing to compare against: trust the record, as before.
+        assert!(!predates(Some(before), None));
+        assert!(!predates(None, Some(login)));
     }
 
     #[test]
@@ -3022,7 +3511,53 @@ mod tests {
             Request::Reconcile(state, brightness) => {
                 panic!("expected a forced apply, got a reconcile of {state:?} at {brightness}")
             }
+            Request::Preview(kelvin, brightness) => {
+                panic!("expected a forced apply, got a preview of {kelvin} at {brightness}")
+            }
         }
+    }
+
+    /// A drag's preview arriving behind real work must not push it out of the
+    /// queue: the apply the user is owed would never run.
+    #[test]
+    fn a_preview_does_not_displace_an_apply() {
+        let force = Request::force(Some(3500), 0.9, None);
+        let (state, brightness, ..) = as_force(force.superseded_by(Request::Preview(4000, 0.8)));
+        assert_eq!((state, brightness), (Some(3500), 0.9));
+
+        let reconcile = Request::Reconcile(Some(3500), 0.9);
+        assert!(matches!(
+            reconcile.superseded_by(Request::Preview(4000, 0.8)),
+            Request::Reconcile(Some(3500), _)
+        ));
+    }
+
+    /// The other way round, the release of a drag replaces its previews.
+    #[test]
+    fn an_apply_replaces_a_pending_preview() {
+        let preview = Request::Preview(4000, 0.8);
+        let (state, ..) = as_force(preview.superseded_by(Request::force(Some(3500), 0.9, None)));
+        assert_eq!(state, Some(3500));
+
+        let newer = Request::Preview(4000, 0.8).superseded_by(Request::Preview(4100, 0.8));
+        assert!(matches!(newer, Request::Preview(4100, _)));
+    }
+
+    #[test]
+    fn every_change_asks_for_a_fade() {
+        let on = tint_args(Some(3500), 0.9, FADE);
+        assert_eq!(
+            on,
+            [
+                "--temp",
+                "3500",
+                "--brightness",
+                "0.900",
+                "--fade-ms",
+                "1000"
+            ]
+        );
+        assert_eq!(tint_args(None, 0.9, FADE), ["--off", "--fade-ms", "1000"]);
     }
 
     /// The queue as a brightness change actually fills it: the commit stores the
@@ -3159,10 +3694,10 @@ mod tests {
     fn the_libexec_helper_sits_beside_our_own_bin() {
         assert_eq!(
             libexec_helper_beside(std::path::Path::new(
-                "/nix/store/abc-cosmic-nightlight-0.6.0/bin/.cosmic-nightlight-wrapped"
+                "/nix/store/abc-cosmic-ext-nightlight-0.6.0/bin/.cosmic-ext-nightlight-wrapped"
             )),
             Some(PathBuf::from(
-                "/nix/store/abc-cosmic-nightlight-0.6.0/libexec/cosmic-nightlight-helper"
+                "/nix/store/abc-cosmic-ext-nightlight-0.6.0/libexec/cosmic-ext-nightlight-helper"
             ))
         );
     }

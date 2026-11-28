@@ -68,11 +68,11 @@ jobs:
           # Name the archive after the spec's own Version, since that is the name
           # rpmbuild looks for. Taking it from Cargo.toml instead fails a manual
           # run whenever the two have drifted apart.
-          version=$(rpmspec -q --srpm --qf '%{version}' rpm/cosmic-nightlight.spec)
+          version=$(rpmspec -q --srpm --qf '%{version}' rpm/cosmic-ext-nightlight.spec)
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          git archive --prefix="cosmic-nightlight-$version/" \
-            -o ~/rpmbuild/SOURCES/"cosmic-nightlight-$version.tar.gz" HEAD
-          rpmbuild -bb rpm/cosmic-nightlight.spec
+          git archive --prefix="cosmic-ext-nightlight-$version/" \
+            -o ~/rpmbuild/SOURCES/"cosmic-ext-nightlight-$version.tar.gz" HEAD
+          rpmbuild -bb rpm/cosmic-ext-nightlight.spec
 
           mkdir -p dist
           cp ~/rpmbuild/RPMS/*/*.rpm dist/
@@ -81,7 +81,7 @@ jobs:
       - name: Upload the .rpm as a build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cosmic-nightlight-rpm
+          name: cosmic-ext-nightlight-rpm
           path: dist/*.rpm
           if-no-files-found: error
 

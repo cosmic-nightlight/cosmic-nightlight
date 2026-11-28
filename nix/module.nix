@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 #
-# NixOS module for cosmic-nightlight. flake.nix exports it as
+# NixOS module for cosmic-ext-nightlight. flake.nix exports it as
 # nixosModules.default; see the README for how to use it.
 #
 # The package alone is not enough on NixOS. The polkit rule the other packages
@@ -17,17 +17,26 @@
 }:
 
 let
-  cfg = config.programs.cosmic-nightlight;
+  cfg = config.programs.cosmic-ext-nightlight;
 in
 {
-  options.programs.cosmic-nightlight = {
+  # The option path before 0.7.0. Configurations that still set it keep
+  # working, with a warning that says what to rename it to.
+  imports = [
+    (lib.mkRenamedOptionModule
+      [ "programs" "cosmic-nightlight" ]
+      [ "programs" "cosmic-ext-nightlight" ]
+    )
+  ];
+
+  options.programs.cosmic-ext-nightlight = {
     enable = lib.mkEnableOption "Night Light for the COSMIC desktop";
 
     package = lib.mkOption {
       type = lib.types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
-      defaultText = lib.literalExpression "cosmic-nightlight.packages.\${system}.default";
-      description = "The cosmic-nightlight package to use.";
+      defaultText = lib.literalExpression "cosmic-ext-nightlight.packages.\${system}.default";
+      description = "The cosmic-ext-nightlight package to use.";
     };
   };
 
@@ -39,14 +48,15 @@ in
         # The user service, left disabled like the other packages leave it.
         systemd.packages = [ cfg.package ];
 
-        # The same rule as polkit/49-cosmic-nightlight.rules: members of wheel run the
+        # The same rule as polkit/49-cosmic-ext-nightlight.rules: members of wheel run the
         # helper without a password. pkexec comes from polkit.
         security.polkit.enable = true;
         security.polkit.extraConfig = ''
           polkit.addRule(function (action, subject) {
               if (
                   action.id == "org.freedesktop.policykit.exec" &&
-                  action.lookup("program") == "${cfg.package}/libexec/cosmic-nightlight-helper" &&
+                  action.lookup("user") == "root" &&
+                  action.lookup("program") == "${cfg.package}/libexec/cosmic-ext-nightlight-helper" &&
                   subject.isInGroup("wheel")
               ) {
                   return polkit.Result.YES;

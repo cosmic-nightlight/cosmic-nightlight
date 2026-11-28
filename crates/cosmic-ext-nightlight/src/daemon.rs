@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Background daemon mode (`cosmic-nightlight --daemon`).
+//! Background daemon mode (`cosmic-ext-nightlight --daemon`).
 //!
 //! Runs an indefinite loop that re-reads the shared [`config`] every
 //! [`TICK_INTERVAL`] and reconciles the screen against it.
@@ -33,6 +33,16 @@ const POLL_INTERVAL: Duration = TICK_INTERVAL;
 const SESSION_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_READY_POLL: Duration = Duration::from_millis(500);
 
+/// How long a managed daemon waits for the slot before deciding another one
+/// really has the job.
+///
+/// A daemon from before an upgrade exits once its autostart entry is gone, but
+/// only when it next polls, and the one started to replace it gets here first.
+/// See [`autostart::adopt_old_entry`]. This covers two of the old daemon's
+/// polls. An ordinary duplicate just leaves that much later, having done nothing.
+const SLOT_HANDOVER_TIMEOUT: Duration = Duration::from_secs(40);
+const SLOT_HANDOVER_POLL: Duration = Duration::from_secs(1);
+
 /// Runs the daemon loop. Applies a change only when the desired tint actually
 /// differs from what's already applied, so we don't trigger a VT bounce on every
 /// poll.
@@ -44,20 +54,28 @@ const SESSION_READY_POLL: Duration = Duration::from_millis(500);
 /// until it is stopped the same way it was started, and ignores all of this.
 pub fn run(managed: bool) {
     // Before the VT wait, so a duplicate started by a login that raced the
-    // window costs nothing rather than sitting out the timeout first.
+    // window does not sit out that timeout too.
     let _slot = if managed {
-        match autostart::claim_slot() {
-            autostart::Slot::Taken => {
-                println!("cosmic-nightlight: another background process is already running");
-                return;
+        let deadline = Instant::now() + SLOT_HANDOVER_TIMEOUT;
+        loop {
+            match autostart::claim_slot() {
+                autostart::Slot::Free(guard) => break guard,
+                autostart::Slot::Taken if Instant::now() < deadline => {
+                    thread::sleep(SLOT_HANDOVER_POLL);
+                }
+                autostart::Slot::Taken => {
+                    println!(
+                        "cosmic-ext-nightlight: another background process is already running"
+                    );
+                    return;
+                }
             }
-            autostart::Slot::Free(guard) => guard,
         }
     } else {
         None
     };
 
-    println!("cosmic-nightlight: running in daemon mode");
+    println!("cosmic-ext-nightlight: running in daemon mode");
 
     // At login the daemon can start before the compositor owns its VT. Doing a
     // VT bounce during that handoff can strand the user on a spare TTY, so wait
@@ -72,7 +90,7 @@ pub fn run(managed: bool) {
         // signalled, because sandboxed the two are in separate PID namespaces
         // and neither can find the other to signal it.
         if managed && !autostart::is_enabled() {
-            println!("cosmic-nightlight: background running was turned off, exiting");
+            println!("cosmic-ext-nightlight: background running was turned off, exiting");
             return;
         }
 
@@ -85,11 +103,11 @@ pub fn run(managed: bool) {
         // `retire_redundant_background`, which does the same on the same terms.
         if managed && config::applet_on_panel() == Some(true) {
             println!(
-                "cosmic-nightlight: the applet is on the panel, so background running is no \
+                "cosmic-ext-nightlight: the applet is on the panel, so background running is no \
                  longer needed and has been turned off"
             );
             if let Err(err) = autostart::set_enabled(false) {
-                eprintln!("cosmic-nightlight: {err}");
+                eprintln!("cosmic-ext-nightlight: {err}");
             }
             return;
         }
@@ -103,8 +121,8 @@ pub fn run(managed: bool) {
 
         match backend::reconcile(desired, settings.brightness as f32) {
             backend::Reconcile::Applied => match desired {
-                Some(kelvin) => println!("cosmic-nightlight: applied {kelvin}K"),
-                None => println!("cosmic-nightlight: cleared tint"),
+                Some(kelvin) => println!("cosmic-ext-nightlight: applied {kelvin}K"),
+                None => println!("cosmic-ext-nightlight: cleared tint"),
             },
             // Nothing to do, or the backend is backing off from a failure and
             // will let us retry on a later poll.
@@ -136,7 +154,7 @@ fn wait_for_session_foreground() {
         }
         if Instant::now() >= deadline {
             eprintln!(
-                "cosmic-nightlight: timed out waiting for session VT {session_vt} to be foreground; proceeding anyway"
+                "cosmic-ext-nightlight: timed out waiting for session VT {session_vt} to be foreground; proceeding anyway"
             );
             return;
         }

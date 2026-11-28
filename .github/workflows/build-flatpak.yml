@@ -58,7 +58,7 @@ jobs:
           python3 - <<'PY'
           import json, os
 
-          path = "flatpak/io.github.cosmic_nightlight.json"
+          path = "flatpak/io.github.cosmic_ext_nightlight.json"
           manifest = json.load(open(path))
           source = manifest["modules"][0]["sources"][0]
 
@@ -101,20 +101,20 @@ jobs:
           ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json
 
           flatpak-builder --user --force-clean --install-deps-from=flathub \
-            --repo=repo build io.github.cosmic_nightlight.json
+            --repo=repo build io.github.cosmic_ext_nightlight.json
 
       - name: Bundle it
         run: |
           mkdir -p dist
           flatpak build-bundle flatpak/repo \
-            "dist/cosmic-nightlight-${GITHUB_REF_NAME#v}.flatpak" \
-            io.github.cosmic_nightlight master
+            "dist/cosmic-ext-nightlight-${GITHUB_REF_NAME#v}.flatpak" \
+            io.github.cosmic_ext_nightlight master
           ls -lh dist/
 
       - name: Upload the bundle as a build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cosmic-nightlight-flatpak
+          name: cosmic-ext-nightlight-flatpak
           path: dist/*.flatpak
           if-no-files-found: error
 

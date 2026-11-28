@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The settings window (`cosmic-nightlight --settings`).
+//! The settings window (`cosmic-ext-nightlight`, or `cosmic-ext-nightlight --settings`).
 //!
 //! A normal libcosmic top-level window for the less-frequent configuration: the
 //! night temperature and brightness, the schedule mode, and the times the tint
 //! turns on and off. Every change is written through to the shared `cosmic_config`
 //! store, so the applet and the daemon pick it up.
+
+use std::time::Instant;
 
 use cosmic::app::{Core, Task};
 use cosmic::iced::{Alignment, Length, Limits, Size};
@@ -15,6 +17,7 @@ use crate::autostart;
 use crate::backend;
 use crate::config::{self, Schedule, SETTINGS_APP_ID};
 use crate::fl;
+use crate::settle::{self, Settle, Woke};
 use crate::shortcut;
 use crate::solar;
 use crate::TICK_INTERVAL;
@@ -123,6 +126,10 @@ pub struct SettingsWindow {
     /// slider: a drag on either must not disturb the other.
     temperature_dragging: bool,
     brightness_dragging: bool,
+    /// Saves a slider moved by Ctrl+scroll or the arrow keys, which never
+    /// release it. One per slider, like the flags above.
+    temperature_settle: Settle,
+    brightness_settle: Settle,
     /// Whether to present times on a 24-hour clock, which also decides whether
     /// the pickers show an AM/PM dropdown.
     military: bool,
@@ -162,6 +169,9 @@ pub struct SettingsWindow {
     shortcut: shortcut::State,
     /// Why the last attempt to add the shortcut didn't take, if it didn't.
     shortcut_error: Option<String>,
+    /// Whether changes on this machine flicker the screen, which decides
+    /// whether the window says so. See [`config::flickers`].
+    flickers: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -171,8 +181,12 @@ pub enum Message {
     Toggle(bool),
     TemperatureChanged(f32),
     TemperatureCommitted,
+    /// The temperature slider's [`Settle`] timer went off.
+    TemperatureSettle,
     BrightnessChanged(f32),
     BrightnessCommitted,
+    /// The brightness slider's [`Settle`] timer went off.
+    BrightnessSettle,
     ConfigUpdated(config::Settings),
     /// The applet was added to or removed from a panel, or the answer to that
     /// became unknown.
@@ -180,6 +194,8 @@ pub enum Message {
     /// The keyboard shortcut was added, changed or removed, here or in COSMIC
     /// Settings.
     ShortcutChanged(shortcut::State),
+    /// Whether changes flicker the screen, as learned by the last one.
+    FlickersChanged(bool),
     Tick,
     /// A toggle's apply came back. `previous` is the override to fall back to
     /// if it didn't land.
@@ -266,6 +282,8 @@ impl cosmic::Application for SettingsWindow {
             brightness: settings.brightness as f32,
             temperature_dragging: false,
             brightness_dragging: false,
+            temperature_settle: Settle::default(),
+            brightness_settle: Settle::default(),
             military,
             hour_labels: hour_labels(military),
             minute_labels: (0..60).map(|minute| format!("{minute:02}")).collect(),
@@ -280,6 +298,7 @@ impl cosmic::Application for SettingsWindow {
             autostart_error: None,
             shortcut: shortcut::state(),
             shortcut_error: None,
+            flickers: config::flickers(),
         };
 
         // Before the first render, so a setting the applet has made redundant is
@@ -292,6 +311,13 @@ impl cosmic::Application for SettingsWindow {
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
             Message::ScheduleSelected(index) => {
+                // The dropdown stays live while a setup's password prompt is up,
+                // but a second pick must not start a second setup. It would take
+                // the pending choice as the one to fall back to, and once the
+                // first prompt was answered it would ask for the password again.
+                if self.setup_busy {
+                    return Task::none();
+                }
                 let chosen = Schedule::ALL[index];
                 // A schedule is a promise to change the screen while nobody is
                 // watching — which is the one moment a password prompt is worst,
@@ -308,8 +334,7 @@ impl cosmic::Application for SettingsWindow {
                     self.settings.schedule = chosen;
                     return self.start_host_setup(Some(previous));
                 }
-                self.settings.schedule = chosen;
-                config::store_schedule(&self.config, chosen);
+                config::set_schedule(&self.config, &mut self.settings, chosen);
             }
             Message::TimeSelected(bound, part) => {
                 let current = match bound {
@@ -362,23 +387,37 @@ impl cosmic::Application for SettingsWindow {
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
                 self.temperature_dragging = true;
+                self.preview_if_tinted();
+                if let Some(delay) = self.temperature_settle.stepped(Instant::now()) {
+                    return settle::after(delay, Message::TemperatureSettle);
+                }
             }
             Message::TemperatureCommitted => {
-                self.temperature_dragging = false;
-                self.settings.temperature = self.temperature as u32;
-                config::store_temperature(&self.config, self.settings.temperature);
-                self.apply_if_tinted();
+                self.temperature_settle.released();
+                self.commit_temperature();
             }
+            Message::TemperatureSettle => match self.temperature_settle.woke(Instant::now()) {
+                Woke::Idle => {}
+                Woke::Settled => self.commit_temperature(),
+                Woke::Wait(delay) => return settle::after(delay, Message::TemperatureSettle),
+            },
             Message::BrightnessChanged(value) => {
                 self.brightness = value;
                 self.brightness_dragging = true;
+                self.preview_if_tinted();
+                if let Some(delay) = self.brightness_settle.stepped(Instant::now()) {
+                    return settle::after(delay, Message::BrightnessSettle);
+                }
             }
             Message::BrightnessCommitted => {
-                self.brightness_dragging = false;
-                self.settings.brightness = self.brightness as f64;
-                config::store_brightness(&self.config, self.settings.brightness);
-                self.apply_if_tinted();
+                self.brightness_settle.released();
+                self.commit_brightness();
             }
+            Message::BrightnessSettle => match self.brightness_settle.woke(Instant::now()) {
+                Woke::Idle => {}
+                Woke::Settled => self.commit_brightness(),
+                Woke::Wait(delay) => return settle::after(delay, Message::BrightnessSettle),
+            },
             Message::ConfigUpdated(settings) => {
                 // A schedule waiting on the setup is shown but not stored yet, so
                 // no config update carries it. Taking the update whole would put
@@ -410,6 +449,9 @@ impl cosmic::Application for SettingsWindow {
             }
             Message::ShortcutChanged(state) => {
                 self.shortcut = state;
+            }
+            Message::FlickersChanged(flickers) => {
+                self.flickers = flickers;
             }
             Message::Tick => {
                 // Before anything decides: the steps below reconcile the screen
@@ -482,7 +524,7 @@ impl cosmic::Application for SettingsWindow {
                 // as the icon appears.
                 Ok(()) => self.applet_present = Some(true),
                 Err(err) => {
-                    eprintln!("cosmic-nightlight: could not add the applet: {err}");
+                    eprintln!("cosmic-ext-nightlight: could not add the applet: {err}");
                     // Panel and dock have separate applet pages, and the panel
                     // is the one we tried to add to, so it is the one to open.
                     return self.open_cosmic_settings(PANEL_APPLET_PAGE);
@@ -494,7 +536,7 @@ impl cosmic::Application for SettingsWindow {
                     self.shortcut_error = None;
                 }
                 Err(err) => {
-                    eprintln!("cosmic-nightlight: could not add the keyboard shortcut: {err}");
+                    eprintln!("cosmic-ext-nightlight: could not add the keyboard shortcut: {err}");
                     self.shortcut_error = Some(err);
                 }
             },
@@ -505,7 +547,7 @@ impl cosmic::Application for SettingsWindow {
                 if let Err(err) =
                     backend::spawn_on_host_falling_back("cosmic-settings", page, token)
                 {
-                    eprintln!("cosmic-nightlight: {err}");
+                    eprintln!("cosmic-ext-nightlight: {err}");
                 }
             }
         }
@@ -518,6 +560,7 @@ impl cosmic::Application for SettingsWindow {
             config::subscription().map(Message::ConfigUpdated),
             config::panel_subscription().map(Message::PanelChanged),
             shortcut::subscription().map(Message::ShortcutChanged),
+            config::flickers_subscription().map(Message::FlickersChanged),
             cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
         ])
     }
@@ -525,17 +568,18 @@ impl cosmic::Application for SettingsWindow {
     fn view(&self) -> Element<'_, Self::Message> {
         let tint_on = self.settings.tint_on();
 
+        // `title` is just `header` with a heading in it, so building the header
+        // by hand hangs the flicker note off the section instead of off a row.
+        // Every control below it flickers, and the toggle already spends its
+        // description on the schedule status.
+        let mut header = widget::Column::new()
+            .spacing(2)
+            .push(widget::text::heading(fl!("app-name")));
+        if self.flickers {
+            header = header.push(widget::text::caption(config::flicker_note()));
+        }
         let night_light = widget::settings::section()
-            // `title` is just `header` with a heading in it, so building the
-            // header by hand hangs the flicker note off the section instead of
-            // off a row. Every control below it flickers, and the toggle already
-            // spends its description on the schedule status.
-            .header(
-                widget::Column::new()
-                    .spacing(2)
-                    .push(widget::text::heading(fl!("app-name")))
-                    .push(widget::text::caption(config::flicker_note())),
-            )
+            .header(header)
             .add(
                 widget::settings::item::builder(fl!("app-name"))
                     .description(config::status_text(&self.settings, tint_on))
@@ -813,7 +857,7 @@ impl SettingsWindow {
             Ok(()) => {
                 self.autostart_error = None;
                 println!(
-                    "cosmic-nightlight: the applet is on the panel, so background running \
+                    "cosmic-ext-nightlight: the applet is on the panel, so background running \
                      is no longer needed and has been turned off"
                 );
             }
@@ -939,15 +983,40 @@ impl SettingsWindow {
         }
     }
 
+    /// Stores the temperature slider's position and puts it on the screen, at
+    /// the end of a drag or once a scroll or key step has settled.
+    fn commit_temperature(&mut self) {
+        self.temperature_dragging = false;
+        self.settings.temperature = self.temperature as u32;
+        config::store_temperature(&self.config, self.settings.temperature);
+        self.apply_if_tinted();
+    }
+
+    /// The brightness slider's twin of [`Self::commit_temperature`].
+    fn commit_brightness(&mut self) {
+        self.brightness_dragging = false;
+        self.settings.brightness = self.brightness as f64;
+        config::store_brightness(&self.config, self.settings.brightness);
+        self.apply_if_tinted();
+    }
+
     /// Pushes the current temperature and brightness to the screen, but only if a
     /// tint is up: with the night light off the screen shows a neutral ramp, which
-    /// neither setting affects, so applying would cost a flicker for no change.
+    /// neither setting affects, so there is nothing to apply.
     fn apply_if_tinted(&self) {
         if self.settings.tint_on() {
             backend::apply_in_background(
                 Some(self.settings.temperature),
                 self.settings.brightness as f32,
             );
+        }
+    }
+
+    /// Shows the sliders' live positions on the screen while one is dragged, but
+    /// only if a tint is up, for the same reason as [`Self::apply_if_tinted`].
+    fn preview_if_tinted(&self) {
+        if self.settings.tint_on() {
+            backend::preview_in_background(self.temperature as u32, self.brightness);
         }
     }
 
@@ -967,10 +1036,15 @@ impl SettingsWindow {
         // it, and parking it here would blank the dropdown under the user while
         // they were still answering for it. `HostSetupFinished` settles that
         // choice either way, and the next tick picks up from there.
+        //
+        // The override waits too. It would be judged against the schedule on
+        // show rather than the one stored: picking a schedule at night with the
+        // tint on manually would store `Auto` beside a stored `Manual`, which
+        // clears the screen, and dismissing the prompt would leave it cleared.
         if !self.setup_busy {
             backend::defer_without_setup(&self.config, &mut self.settings);
+            config::expire_override(&self.config, &mut self.settings);
         }
-        config::expire_override(&self.config, &mut self.settings);
         self.show_current();
     }
 

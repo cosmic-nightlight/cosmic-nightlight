@@ -68,6 +68,12 @@ fn activate(fd: RawFd, vt: libc::c_int) -> io::Result<()> {
     Ok(())
 }
 
+/// The foreground VT, read from sysfs so it needs no console handle.
+pub fn foreground() -> Option<libc::c_int> {
+    let active = std::fs::read_to_string("/sys/class/tty/tty0/active").ok()?;
+    active.trim().strip_prefix("tty")?.parse().ok()
+}
+
 /// Restores the original VT when dropped, so we return the user to their
 /// session even if the closure returns early or panics.
 struct VtRestore {

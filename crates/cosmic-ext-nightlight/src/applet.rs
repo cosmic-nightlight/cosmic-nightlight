@@ -10,6 +10,7 @@
 //! to `app_popup`.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use cosmic::app::{Core, Task};
 use cosmic::iced::core::window;
@@ -22,6 +23,7 @@ use cosmic::Element;
 use crate::backend;
 use crate::config::{self, APP_ID};
 use crate::fl;
+use crate::settle::{self, Settle, Woke};
 use crate::TICK_INTERVAL;
 
 /// Runs the application as a COSMIC panel applet.
@@ -43,6 +45,12 @@ pub struct NightLightApplet {
     /// True between a slider drag starting and being released, so an incoming
     /// config change doesn't yank the handle out from under the pointer.
     dragging: bool,
+    /// Saves the slider when it is moved by Ctrl+scroll or the arrow keys,
+    /// which never release it.
+    settle: Settle,
+    /// Whether changes on this machine flicker the screen, which decides
+    /// whether the popup says so. See [`config::flickers`].
+    flickers: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -51,10 +59,14 @@ pub enum Message {
     Toggle(bool),
     TemperatureChanged(f32),
     TemperatureCommitted,
+    /// The slider's [`Settle`] timer went off.
+    TemperatureSettle,
     OpenSettings,
     Surface(cosmic::surface::Action),
     RefreshInit,
     ConfigUpdated(config::Settings),
+    /// Whether changes flicker the screen, as learned by the last one.
+    FlickersChanged(bool),
     Tick,
     /// A toggle's apply came back. `previous` is the override to fall back to
     /// if it didn't land.
@@ -118,6 +130,8 @@ impl cosmic::Application for NightLightApplet {
             settings,
             temperature: settings.temperature as f32,
             dragging: false,
+            settle: Settle::default(),
+            flickers: config::flickers(),
         };
 
         let init_task = cosmic::task::future(async { Message::RefreshInit });
@@ -165,18 +179,22 @@ impl cosmic::Application for NightLightApplet {
             Message::TemperatureChanged(value) => {
                 self.temperature = value;
                 self.dragging = true;
-            }
-            Message::TemperatureCommitted => {
-                self.dragging = false;
-                self.settings.temperature = self.temperature as u32;
-                config::store_temperature(&self.config, self.settings.temperature);
                 if self.settings.tint_on() {
-                    backend::apply_in_background(
-                        Some(self.settings.temperature),
-                        self.settings.brightness as f32,
-                    );
+                    backend::preview_in_background(value as u32, self.settings.brightness as f32);
+                }
+                if let Some(delay) = self.settle.stepped(Instant::now()) {
+                    return settle::after(delay, Message::TemperatureSettle);
                 }
             }
+            Message::TemperatureCommitted => {
+                self.settle.released();
+                self.commit_temperature();
+            }
+            Message::TemperatureSettle => match self.settle.woke(Instant::now()) {
+                Woke::Idle => {}
+                Woke::Settled => self.commit_temperature(),
+                Woke::Wait(delay) => return settle::after(delay, Message::TemperatureSettle),
+            },
             Message::OpenSettings => {
                 spawn_settings_window();
                 if let Some(id) = self.popup.take() {
@@ -197,6 +215,9 @@ impl cosmic::Application for NightLightApplet {
                 }
                 self.show_current();
             }
+            Message::FlickersChanged(flickers) => {
+                self.flickers = flickers;
+            }
             Message::Tick => {
                 // Before anything decides: the steps below reconcile the screen
                 // against this snapshot, so a stale one doesn't just draw wrong,
@@ -216,6 +237,7 @@ impl cosmic::Application for NightLightApplet {
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
         cosmic::iced::Subscription::batch([
             config::subscription().map(Message::ConfigUpdated),
+            config::flickers_subscription().map(Message::FlickersChanged),
             cosmic::iced::time::every(TICK_INTERVAL).map(|_| Message::Tick),
         ])
     }
@@ -311,6 +333,20 @@ impl NightLightApplet {
         self.show_current();
     }
 
+    /// Stores the slider's position and puts it on the screen, at the end of a
+    /// drag or once a scroll or key step has settled.
+    fn commit_temperature(&mut self) {
+        self.dragging = false;
+        self.settings.temperature = self.temperature as u32;
+        config::store_temperature(&self.config, self.settings.temperature);
+        if self.settings.tint_on() {
+            backend::apply_in_background(
+                Some(self.settings.temperature),
+                self.settings.brightness as f32,
+            );
+        }
+    }
+
     /// Re-reads the stored settings, so a snapshot that has drifted from the
     /// store is corrected instead of fought over. See [`config::resync`] for
     /// what drift costs and why the tick can't just trust the watcher.
@@ -377,13 +413,15 @@ impl NightLightApplet {
         );
 
         // The note is a footnote to the controls above it, not to the slider it
-        // happens to follow — the toggle flickers just as much. Temperature is
+        // happens to follow. The toggle flickers just as much. Temperature is
         // the last control, so riding along at the bottom of its column puts the
         // caption under the group without the padding a row of its own would add.
-        let temperature = cosmic::widget::Column::new()
+        let mut temperature = cosmic::widget::Column::new()
             .spacing(2)
-            .push(temperature_row)
-            .push(widget::text::caption(config::flicker_note()));
+            .push(temperature_row);
+        if self.flickers {
+            temperature = temperature.push(widget::text::caption(config::flicker_note()));
+        }
 
         // Match the native COSMIC applets (e.g. the keyboard applet's "Keyboard
         // Settings...") — a flat, full-width `AppletMenu` row that highlights on
@@ -419,12 +457,12 @@ fn surface_task(action: cosmic::surface::Action) -> Task<Message> {
     cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(action)))
 }
 
-/// Launches `cosmic-nightlight --settings` as a detached child process.
+/// Launches `cosmic-ext-nightlight --settings` as a detached child process.
 ///
 /// The settings UI is a normal top-level window, which an applet's layer-shell
 /// surface can't host in-process, so we run it as a separate process.
 fn spawn_settings_window() {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cosmic-nightlight"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cosmic-ext-nightlight"));
     match std::process::Command::new(exe).arg("--settings").spawn() {
         Ok(mut child) => {
             // Wait on it from a thread of its own. Nothing here wants the exit
@@ -441,6 +479,6 @@ fn spawn_settings_window() {
                 let _ = child.wait();
             });
         }
-        Err(err) => eprintln!("cosmic-nightlight: failed to open settings window: {err}"),
+        Err(err) => eprintln!("cosmic-ext-nightlight: failed to open settings window: {err}"),
     }
 }

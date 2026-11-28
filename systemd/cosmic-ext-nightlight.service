@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MPL-2.0
 #
-# User-level systemd service for cosmic-nightlight's background daemon.
+# User-level systemd service for cosmic-ext-nightlight's background daemon.
 #
 # Install with:
 #   mkdir -p ~/.config/systemd/user
-#   cp systemd/cosmic-nightlight.service ~/.config/systemd/user/
+#   cp systemd/cosmic-ext-nightlight.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now cosmic-nightlight.service
+#   systemctl --user enable --now cosmic-ext-nightlight.service
 #
 # Adjust ExecStart below if the binary isn't installed to /usr/local/bin.
 
@@ -15,7 +15,7 @@ Description=Cosmic Night Light background service
 After=graphical-session.target
 
 [Service]
-ExecStart=/usr/local/bin/cosmic-nightlight --daemon
+ExecStart=/usr/local/bin/cosmic-ext-nightlight --daemon
 Restart=on-failure
 RestartSec=5
 

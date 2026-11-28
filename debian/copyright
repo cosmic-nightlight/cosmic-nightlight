@@ -1,5 +1,5 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: cosmic-nightlight
+Upstream-Name: cosmic-ext-nightlight
 Source: https://github.com/cosmic-nightlight/cosmic-nightlight
 
 Files: *

@@ -29,7 +29,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             base-devel git github-cli cargo \
-            libdrm libxkbcommon wayland fontconfig expat polkit
+            libdrm libxkbcommon wayland fontconfig expat hicolor-icon-theme polkit
 
       - uses: actions/checkout@v4
         with:
@@ -63,8 +63,8 @@ jobs:
           # named after the PKGBUILD's own pkgver, so makepkg builds this commit
           # rather than fetching a tag from GitHub.
           pkgver=$(sed -n 's/^pkgver=//p' arch/PKGBUILD)
-          git archive --prefix="cosmic-nightlight-$pkgver/" \
-            -o arch/"cosmic-nightlight-$pkgver.tar.gz" HEAD
+          git archive --prefix="cosmic-ext-nightlight-$pkgver/" \
+            -o arch/"cosmic-ext-nightlight-$pkgver.tar.gz" HEAD
 
           # makepkg refuses to run as root, so build as a throwaway user. The
           # dependencies are installed above, so it needs no sudo of its own.
@@ -79,7 +79,7 @@ jobs:
       - name: Upload the package as a build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cosmic-nightlight-arch
+          name: cosmic-ext-nightlight-arch
           path: dist/*.pkg.tar.zst
           if-no-files-found: error
 

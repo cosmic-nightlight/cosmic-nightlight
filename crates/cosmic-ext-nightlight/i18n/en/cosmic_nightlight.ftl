@@ -28,9 +28,10 @@ applet-settings-button = Night Light Settings...
 
 ## Controls shared by the applet popup and the settings window
 
-# Sits under the whole group of controls rather than under any one of them: the
-# toggle and both sliders all cost a flicker. "May" is accuracy rather than
-# softening — how long the flicker lasts depends on the graphics card.
+# Only shown on computers where changes make the screen blink. It sits under the
+# whole group of controls rather than under any one of them, since the toggle
+# and both sliders all cause it. "May" is accurate, not softening. How long the
+# flicker lasts depends on the graphics card.
 flicker-note = Night light changes may briefly flicker the screen
 
 # { $kelvin } is a colour temperature, already formatted, e.g. "5300". "K" is

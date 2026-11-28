@@ -5,23 +5,24 @@ The manifest here is the one submitted to
 [pop-os/cosmic-flatpak](https://github.com/pop-os/cosmic-flatpak), which is what
 puts the applet in the COSMIC Store. It is kept in this repo so it stays in step
 with the code; submitting means copying it plus `cargo-sources.json` to
-`app/io.github.cosmic_nightlight/` over there.
+`app/io.github.cosmic_ext_nightlight/` over there.
 
 ## Why the sandbox needs a host helper
 
 Writing gamma LUTs needs DRM master, which needs `CAP_SYS_ADMIN`. No flatpak
 permission grants that, so the sandbox cannot tint the screen however it is
-configured — note that the manifest asks for no device access at all. Instead the
-applet reaches the host through `flatpak-spawn --host pkexec`, and the privileged
-helper runs there.
+configured. The manifest's `--device=dri` is only for libcosmic's GPU
+rendering, and the sandbox never touches DRM itself. Instead the applet reaches
+the host through `flatpak-spawn --host pkexec`, and the privileged helper runs
+there.
 
 That means the helper has to run **on the host**. It ships at
-`/app/libexec/cosmic-nightlight-helper` and is used two ways: as the payload for
+`/app/libexec/cosmic-ext-nightlight-helper` and is used two ways: as the payload for
 a one-time, user-triggered setup that copies it to
-`/usr/local/bin/cosmic-nightlight-helper` and installs the polkit rule beside it,
+`/usr/local/bin/cosmic-ext-nightlight-helper` and installs the polkit rule beside it,
 and — before that setup has ever been run — directly, via the host-side path
 `/.flatpak-info` reports as `app-path`. Both `/usr/bin` and `/usr/local/bin` are
-whitelisted by `polkit/49-cosmic-nightlight.rules`, so nothing about the rule
+whitelisted by `polkit/49-cosmic-ext-nightlight.rules`, so nothing about the rule
 changes between the `.deb` and the flatpak.
 
 Until the setup has been run the app still works — pkexec just prompts for a
@@ -32,7 +33,7 @@ path inside the flatpak. That is the whole of what the setup buys.
 
 Fedora Atomic redirects `/usr/local` to `/var/usrlocal`. `pkexec` resolves
 symlinks before passing the executable path to polkit, so the rule must also
-allow `/var/usrlocal/bin/cosmic-nightlight-helper`. Older rules only allowed
+allow `/var/usrlocal/bin/cosmic-ext-nightlight-helper`. Older rules only allowed
 the `/usr/bin` and `/usr/local/bin` paths: setup could succeed, yet every tint
 change still required authentication, including automatic applies at login or
 after resume.
@@ -40,9 +41,9 @@ after resume.
 For an existing installation, install the corrected rule from this checkout:
 
 ```bash
-sudo install -o root -g root -m 0644 polkit/49-cosmic-nightlight.rules \
-    /etc/polkit-1/rules.d/49-cosmic-nightlight.rules
-pkexec /usr/local/bin/cosmic-nightlight-helper --version
+sudo install -o root -g root -m 0644 polkit/49-cosmic-ext-nightlight.rules \
+    /etc/polkit-1/rules.d/49-cosmic-ext-nightlight.rules
+pkexec /usr/local/bin/cosmic-ext-nightlight-helper --version
 ```
 
 Polkit reloads rule changes automatically. The version command should print the
@@ -93,19 +94,19 @@ local manifest before every build. Stop if either generation command fails:
 ```bash
 ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json &&
 python3 generate-local-manifest.py &&
-flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.local.json
+flatpak-builder --force-clean --user --install build io.github.cosmic_ext_nightlight.local.json
 ```
 
 The script copies the main manifest and replaces the app's git source with the
 working directory, excluding build artifacts. This preserves permissions and
 build commands without maintaining a second manifest by hand. The generated
-`io.github.cosmic_nightlight.local.json` is gitignored.
+`io.github.cosmic_ext_nightlight.local.json` is gitignored.
 
 To build the pinned release instead, generate `cargo-sources.json` from the
 `Cargo.lock` at the main manifest's pinned commit, then run:
 
 ```bash
-flatpak-builder --force-clean --user --install build io.github.cosmic_nightlight.json
+flatpak-builder --force-clean --user --install build io.github.cosmic_ext_nightlight.json
 ```
 
 CI regenerates dependency sources and sets the main manifest's source to the ref

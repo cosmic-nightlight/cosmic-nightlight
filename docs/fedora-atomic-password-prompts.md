@@ -72,7 +72,7 @@ to install it and check with `--version`, which does not alter the display.
 
 At the user's subsequent request, the 0.5.0 Flatpak was reinstalled system-wide
 from the existing Downloads bundle. The version check through
-`flatpak run --command=flatpak-spawn io.github.cosmic_nightlight --host pkexec
+`flatpak run --command=flatpak-spawn io.github.cosmic_ext_nightlight --host pkexec
 /usr/local/bin/cosmic-nightlight-helper --version` then succeeded without a
 password prompt. The existing panel entry was removed and restored to launch
 the applet again in the current session, preserving the final panel configuration.

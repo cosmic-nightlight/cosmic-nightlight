@@ -1,0 +1,22 @@
+[Desktop Entry]
+# Translations go in this file, not in the Fluent catalogs: the desktop and the
+# software centers read this entry directly, before anything of ours has run.
+# Add a suffixed line beside each of Name, GenericName, Comment and Keywords —
+# `Name[de]=...` — and leave the unsuffixed lines as the English fallback. See
+# docs/translating.md.
+Type=Application
+Name=Night Light
+GenericName=Color Temperature
+Comment=Warm the screen color temperature on a schedule
+Exec=cosmic-ext-nightlight --applet
+Icon=io.github.cosmic_ext_nightlight
+Terminal=false
+Categories=Utility;Settings;DesktopSettings;
+Keywords=night;light;shift;redshift;gamma;color;temperature;blue;warm;
+StartupNotify=true
+StartupWMClass=io.github.cosmic_ext_nightlight
+# Marks this as a COSMIC panel applet so it appears in the panel/dock applet
+# picker. NoDisplay keeps it out of the regular app launcher (launching the
+# applet outside the panel has no anchor); use the Settings entry instead.
+X-CosmicApplet=true
+NoDisplay=true

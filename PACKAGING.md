@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
-# Packaging cosmic-nightlight
+# Packaging cosmic-ext-nightlight
 
 This covers the `.deb`, which most of this file is about, the `.rpm` for
 Fedora (see [RPM (Fedora)](#rpm-fedora)), the Arch Linux package (see
@@ -15,15 +15,41 @@ privileged helper runs on the host instead. That is how it reaches the COSMIC
 Store; see [docs/flatpak-design.md](docs/flatpak-design.md).
 
 The `debian/` directory here produces a single binary package,
-`cosmic-nightlight`, that installs:
+`cosmic-ext-nightlight`, that installs:
 
 | Path | What |
 | --- | --- |
-| `/usr/bin/cosmic-nightlight-helper` | privileged DRM/VT helper (run via pkexec) |
-| `/usr/bin/cosmic-nightlight` | libcosmic GUI + `--daemon` scheduler |
-| `/usr/share/polkit-1/rules.d/49-cosmic-nightlight.rules` | passwordless pkexec for `wheel`/`sudo` |
-| `/usr/share/applications/io.github.cosmic_nightlight.desktop` | launcher entry |
-| `/usr/lib/systemd/user/cosmic-nightlight.service` | per-user scheduler unit |
+| `/usr/bin/cosmic-ext-nightlight-helper` | privileged DRM/VT helper (run via pkexec) |
+| `/usr/bin/cosmic-ext-nightlight` | libcosmic GUI + `--daemon` scheduler |
+| `/usr/share/polkit-1/rules.d/49-cosmic-ext-nightlight.rules` | passwordless pkexec for `wheel`/`sudo` |
+| `/usr/share/applications/io.github.cosmic_ext_nightlight.desktop` | the applet's entry, which the panel starts it by |
+| `/usr/share/applications/io.github.cosmic_ext_nightlight.Settings.desktop` | launcher entry for the settings window |
+| `/usr/share/applications/io.github.cosmic_nightlight.desktop` | the applet's entry under its pre-0.7.0 app ID |
+| `/usr/lib/systemd/user/cosmic-ext-nightlight.service` | per-user scheduler unit |
+| `/usr/lib/systemd/user/cosmic-nightlight.service` | alias of the unit under its pre-0.7.0 name |
+
+Before 0.7.0 the package was called `cosmic-nightlight`, and every package format
+declares that it replaces it (`Conflicts`/`Replaces`, `Obsoletes`, `replaces`).
+The alias keeps a service enabled under the old name starting; the app moves the
+enablement to the new name the first time it runs (`migrate.rs`), so the alias can
+go in a later release.
+
+The app ID changed in 0.7.0 as well, from `io.github.cosmic_nightlight` to
+`io.github.cosmic_ext_nightlight`. Settings, the panel entry, a dock pin,
+the keyboard shortcut and the autostart entry are all filed under it, and the app
+carries each one over the first time it runs (`migrate.rs`, `config.rs`,
+`autostart.rs`, `shortcut.rs`). The one piece a package has to supply is the
+applet's desktop entry under the old ID. cosmic-panel starts an applet by the
+entry its config names, so without that file the applet would never start to
+rename its own panel entry. Every package format and `install.sh` ship it. It is
+hidden from the applet picker, and can go in a later release together with the
+alias.
+
+The flatpak cannot ship that entry, since flatpak only exports files named after
+the app's own ID, and flatpak treats the new ID as a separate app. So a 0.6
+flatpak stays installed beside this one until this one has been opened once. It
+then carries everything over as above and uninstalls the old flatpak itself
+(`retire_old_flatpak` in `backend.rs`).
 
 ## Build dependencies
 
@@ -42,8 +68,8 @@ libcosmic is a **git dependency**, so cargo must fetch it. On your own machine
 
 ```sh
 dpkg-buildpackage -b -us -uc
-# -> ../cosmic-nightlight_0.1.0-1_amd64.deb
-sudo apt install ../cosmic-nightlight_0.1.0-1_amd64.deb
+# -> ../cosmic-ext-nightlight_0.1.0-1_amd64.deb
+sudo apt install ../cosmic-ext-nightlight_0.1.0-1_amd64.deb
 ```
 
 ## Automated builds & releases (GitHub Actions)
@@ -86,7 +112,7 @@ git tag v0.2.0
 git push --tags
 ```
 
-The workflow then builds `cosmic-nightlight_0.2.0-1_amd64.deb` and attaches it to
+The workflow then builds `cosmic-ext-nightlight_0.2.0-1_amd64.deb` and attaches it to
 a `v0.2.0` Release. The release text comes from `docs/release-notes/v0.2.0.md`
 if it exists, or is generated from the changelog if not. Write that file before
 tagging, following [docs/release-notes/README.md](docs/release-notes/README.md).
@@ -113,7 +139,7 @@ With `vendor/` committed and `.cargo/config.toml` redirecting crates to it, the
 
 ## RPM (Fedora)
 
-[`rpm/cosmic-nightlight.spec`](rpm/cosmic-nightlight.spec) builds the same set of
+[`rpm/cosmic-ext-nightlight.spec`](rpm/cosmic-ext-nightlight.spec) builds the same set of
 files as the `.deb`. [`.github/workflows/build-rpm.yml`](.github/workflows/build-rpm.yml)
 builds it in a `fedora:44` container on every `v*` tag and attaches the `.rpm`
 to the Release that the `.deb` workflow creates. It does not run on pushes or
@@ -196,7 +222,7 @@ the Store reads off the metainfo once it is listed.
 
 Hosting the `.deb` in an apt repository is still worth doing for people who want
 a native package — a Launchpad PPA is the easiest (`debuild -S` then
-`dput ppa:you/cosmic-nightlight`), or self-host with `reprepro`. Note that it
+`dput ppa:you/cosmic-ext-nightlight`), or self-host with `reprepro`. Note that it
 does **not** lead to a Store listing: PPAs publish no DEP-11, so the System
 catalog cannot see them. Inclusion in the first-party Pop!_OS repos is a System76
 decision, worth opening upstream only once the PPA is proven.

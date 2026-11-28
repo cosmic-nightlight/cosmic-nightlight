@@ -8,9 +8,10 @@
 
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::fd::{AsFd, BorrowedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use drm::control::{crtc, Device as ControlDevice};
 use drm::Device as BasicDevice;
@@ -120,6 +121,274 @@ fn apply_card(path: &Path, kelvin: u32, brightness: f64, updated: &mut usize) ->
     // if a write failed.
     let released = card.release_master_lock();
     written.and(released)
+}
+
+/// The DRM subsystem's character device major number.
+const DRM_MAJOR: u32 = 226;
+
+/// The pids of the running compositors, by process name, and only the
+/// caller's own when we know who the caller is.
+///
+/// A name proves nothing, and the writes do not rely on it: a handle from the
+/// wrong process is simply not the DRM master, so the kernel refuses the write.
+/// That also covers the greeter's own cosmic-comp, which sits on another VT.
+///
+/// The owner check is about resources instead. Any user can name a process
+/// `cosmic-comp` and fill it with open DRM handles, and borrowing all of those
+/// ran this root process out of descriptors before it reached the real
+/// compositor, which forced every change through the VT bounce. A caller only
+/// borrows when its session is on screen (see [`crate::apply_with`]), and then
+/// its own compositor is the one holding DRM master.
+fn compositor_pids() -> Vec<libc::pid_t> {
+    let owner = crate::invoking_uid();
+    let mut pids = Vec::new();
+    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) else {
+            continue;
+        };
+        let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
+        if is_compositor_name(&comm) && owner.is_none_or(|uid| process_uid(pid) == Some(uid)) {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+/// The real uid of `pid`, from `/proc/<pid>/status`. Not the owner of
+/// `/proc/<pid>`, which is root for a process that is not dumpable.
+fn process_uid(pid: libc::pid_t) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    uid_from_status(&status)
+}
+
+/// The real uid on the `Uid:` line of a `/proc/<pid>/status`.
+fn uid_from_status(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Whether a process name read from `/proc/<pid>/comm` is cosmic-comp's.
+///
+/// nixpkgs starts the real binary as `.cosmic-comp-wrapped` from a wrapper
+/// script, and the kernel cuts process names to 15 bytes, which leaves
+/// `.cosmic-comp-wr`. Missing that name sent every change on NixOS through the
+/// VT bounce.
+fn is_compositor_name(comm: &str) -> bool {
+    matches!(comm.trim(), "cosmic-comp" | ".cosmic-comp-wr")
+}
+
+fn owned_fd(rc: libc::c_long) -> io::Result<OwnedFd> {
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the kernel just returned this descriptor and nothing else owns it.
+    Ok(unsafe { OwnedFd::from_raw_fd(rc as RawFd) })
+}
+
+/// The `drm-client-id` of one of `pid`'s descriptors. Descriptors sharing one
+/// are the same open file, so only one of them needs borrowing.
+fn drm_client_id(pid: libc::pid_t, fd: RawFd) -> Option<String> {
+    let info = std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{fd}")).ok()?;
+    info.lines()
+        .find_map(|line| line.strip_prefix("drm-client-id:"))
+        .map(|id| id.trim().to_string())
+}
+
+/// Duplicates each distinct DRM card handle that `pid` holds open.
+///
+/// `pidfd_getfd` hands back a second descriptor for the very same open file.
+/// DRM master belongs to the open file, not to the process, so a write through
+/// the copy counts as the compositor's own. Needs root (or ptrace rights over
+/// `pid`) and Linux 5.6.
+fn borrow_cards(pid: libc::pid_t) -> Vec<Card> {
+    // SAFETY: a plain syscall taking integers.
+    let Ok(pidfd) = owned_fd(unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) }) else {
+        return Vec::new();
+    };
+    let mut fds: Vec<RawFd> = std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+        .collect();
+    fds.sort_unstable();
+
+    let mut seen = Vec::new();
+    let mut cards = Vec::new();
+    for fd in fds {
+        // Only a filter to avoid duplicating every descriptor the compositor
+        // has. What the copy really is gets checked below. Render nodes
+        // (`renderD*`) are DRM devices too but cannot set gamma, so they are
+        // left out here.
+        let is_card = std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).is_ok_and(|target| {
+            target
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("card"))
+                && target.starts_with("/dev/dri")
+        });
+        if !is_card {
+            continue;
+        }
+        // SAFETY: a plain syscall taking integers.
+        let copy = unsafe { libc::syscall(libc::SYS_pidfd_getfd, pidfd.as_raw_fd(), fd, 0) };
+        let Ok(copy) = owned_fd(copy) else {
+            continue;
+        };
+        let file = File::from(copy);
+        let Ok(meta) = file.metadata() else {
+            continue;
+        };
+        if !meta.file_type().is_char_device() || libc::major(meta.rdev()) != DRM_MAJOR {
+            continue;
+        }
+        let key = (meta.rdev(), drm_client_id(pid, fd));
+        if key.1.is_some() && seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        cards.push(Card(file));
+    }
+    cards
+}
+
+/// How often a fade writes a new ramp. One write takes a few milliseconds, so
+/// this keeps pace with a 60 Hz display.
+const FADE_STEP: Duration = Duration::from_millis(16);
+
+/// A ramp read from the hardware, stretched or shrunk to `size` entries.
+///
+/// The `GAMMA_LUT` a CRTC reports can be longer than the legacy table the write
+/// takes, and a fade has to start from a ramp of the size it writes.
+fn resample(ramp: [Vec<u16>; 3], size: usize) -> [Vec<u16>; 3] {
+    ramp.map(|channel| {
+        if channel.len() == size || channel.is_empty() || size < 2 {
+            return channel;
+        }
+        (0..size)
+            .map(|i| channel[i * (channel.len() - 1) / (size - 1)])
+            .collect()
+    })
+}
+
+/// The ramp `t` of the way from `from` to `to`, with `t` in `0.0..=1.0`.
+fn blend(from: &[Vec<u16>; 3], to: &[Vec<u16>; 3], t: f64) -> [Vec<u16>; 3] {
+    let channel = |c: usize| {
+        from[c]
+            .iter()
+            .zip(&to[c])
+            .map(|(&a, &b)| (f64::from(a) + (f64::from(b) - f64::from(a)) * t).round() as u16)
+            .collect()
+    };
+    [channel(0), channel(1), channel(2)]
+}
+
+/// Slow at both ends, so a fade neither starts nor stops with a jolt.
+fn ease(t: f64) -> f64 {
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// One CRTC a borrowed handle can write to, and the fade it is part-way through.
+struct Fading {
+    /// Index into the borrowed cards.
+    card: usize,
+    crtc: crtc::Handle,
+    from: [Vec<u16>; 3],
+    to: [Vec<u16>; 3],
+}
+
+/// Writes the gamma ramp through handles borrowed from the running compositor,
+/// with no VT switch, and returns how many CRTCs took it.
+///
+/// With a non-zero `fade` the screen moves from what it shows now to the new
+/// ramp over that long, in small steps, and this blocks until it is done.
+///
+/// Zero means this route is not available: no compositor found, no permission
+/// to borrow from it, or its session is not the foreground one, so its handle
+/// is not the DRM master. The caller should check [`showing`] afterwards and
+/// fall back to [`apply_all`] inside a VT bounce.
+///
+/// The borrowed handle is only ever read from and given a gamma ramp. It must
+/// never have master set or dropped on it: that would take the display away
+/// from the compositor itself.
+pub fn apply_borrowed(kelvin: u32, brightness: f64, fade: Duration) -> usize {
+    let cards: Vec<Card> = compositor_pids()
+        .into_iter()
+        .flat_map(borrow_cards)
+        .collect();
+
+    let mut fading = Vec::new();
+    for (index, card) in cards.iter().enumerate() {
+        let Ok(crtcs) = gamma_crtcs(card) else {
+            continue;
+        };
+        for (crtc, size) in crtcs {
+            let to = gamma::target(kelvin, brightness, size);
+            // A ramp that cannot be read, or comes back an odd shape, just
+            // means no fade for this display.
+            let from = read_ramp(card, crtc, size)
+                .map(|ramp| resample(ramp, size))
+                .ok()
+                .filter(|ramp| ramp.iter().all(|channel| channel.len() == size))
+                .unwrap_or_else(|| to.clone());
+            fading.push(Fading {
+                card: index,
+                crtc,
+                from,
+                to,
+            });
+        }
+    }
+
+    let started = Instant::now();
+    loop {
+        let step_started = Instant::now();
+        let progress = fade_progress(started.elapsed(), fade);
+        let last = progress >= 1.0;
+        let t = ease(progress);
+        // The first write doubles as the test of whether a handle is the
+        // master. One that is not drops out here and takes no further part.
+        fading.retain(|f| {
+            let blended;
+            let [red, green, blue] = if last {
+                &f.to
+            } else {
+                blended = blend(&f.from, &f.to, t);
+                &blended
+            };
+            cards[f.card].set_gamma(f.crtc, red, green, blue).is_ok()
+        });
+        if fading.is_empty() {
+            return 0;
+        }
+        if last {
+            return fading.len();
+        }
+        std::thread::sleep(FADE_STEP.saturating_sub(step_started.elapsed()));
+    }
+}
+
+/// How far through a fade of length `fade` to be, `elapsed` after it started,
+/// from `0.0` to `1.0`.
+///
+/// Taken from the clock rather than a count of steps. Each write waits for the
+/// display to take it, and on some drivers that is slower than [`FADE_STEP`],
+/// so counting steps made a fade run about three times as long as asked, with
+/// the machine-wide lock held throughout. Going by the clock, a slow write only
+/// means fewer steps.
+///
+/// One step ahead of the clock, so the first write already moves the screen
+/// and the last lands at about `fade`.
+fn fade_progress(elapsed: Duration, fade: Duration) -> f64 {
+    if fade.is_zero() {
+        return 1.0;
+    }
+    ((elapsed + FADE_STEP).as_secs_f64() / fade.as_secs_f64()).min(1.0)
 }
 
 /// How far, in 16-bit LUT units, a read-back entry may sit from an identity
@@ -261,6 +530,56 @@ pub fn apply_all(kelvin: u32, brightness: f64) -> io::Result<Written> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_real_uid_is_read_from_status() {
+        let status = "Name:\tcosmic-comp\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\n";
+        assert_eq!(uid_from_status(status), Some(1000));
+        assert_eq!(uid_from_status("Name:\tx\n"), None);
+    }
+
+    #[test]
+    fn a_fade_starts_and_ends_on_the_given_ramps() {
+        let from = gamma::identity(256);
+        let to = gamma::ramp(3500, 0.8, 256);
+        assert_eq!(blend(&from, &to, ease(0.0)), from);
+        assert_eq!(blend(&from, &to, ease(1.0)), to);
+        let middle = blend(&from, &to, ease(0.5));
+        assert!(middle[2][255] < from[2][255] && middle[2][255] > to[2][255]);
+    }
+
+    #[test]
+    fn a_fade_goes_by_the_clock() {
+        let second = Duration::from_secs(1);
+        assert_eq!(fade_progress(Duration::ZERO, Duration::ZERO), 1.0);
+        assert_eq!(
+            fade_progress(Duration::ZERO, Duration::from_millis(10)),
+            1.0
+        );
+        let first = fade_progress(Duration::ZERO, second);
+        assert!(first > 0.0 && first < 0.1);
+        assert!((fade_progress(Duration::from_millis(484), second) - 0.5).abs() < 1e-9);
+        // A write slow enough to overshoot the end still finishes the fade.
+        assert_eq!(fade_progress(Duration::from_secs(3), second), 1.0);
+    }
+
+    #[test]
+    fn the_nixos_wrapper_name_is_the_compositor() {
+        assert!(is_compositor_name("cosmic-comp\n"));
+        assert!(is_compositor_name(".cosmic-comp-wr\n"));
+        assert!(!is_compositor_name("cosmic-comp-helper"));
+        assert!(!is_compositor_name("cosmic-panel"));
+    }
+
+    #[test]
+    fn a_longer_hardware_ramp_is_shrunk_to_the_written_size() {
+        let long = gamma::identity(1024);
+        let short = resample(long.clone(), 256);
+        assert!(short.iter().all(|channel| channel.len() == 256));
+        assert_eq!(short[0][0], long[0][0]);
+        assert_eq!(short[0][255], long[0][1023]);
+        assert_eq!(resample(long.clone(), 1024), long);
+    }
 
     #[test]
     fn kernel_identity_counts_as_identity() {
