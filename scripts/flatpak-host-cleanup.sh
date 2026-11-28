@@ -17,7 +17,9 @@
 # or passed on from them. The worst a user can do through them is fake an
 # install, which keeps the helper around, which is the state the setup left
 # anyway. The one thing it does read is flatpak's own list of custom
-# installations, under /etc, which only root can write.
+# installations, under /etc, which only root can write. The one thing it writes
+# outside its own files is a stale record in each user's runtime directory, and
+# it deletes that as the user; see forget_shown.
 #
 # Installed by the setup as /var/lib/cosmic-ext-nightlight/cleanup.sh, run as root.
 #
@@ -155,6 +157,29 @@ remove_self() {
     rm -rf "$state_dir"
 }
 
+# Removes each session's record of what the app last put on the screen, which
+# the reset has just made wrong. Flatpak keeps the app's runtime directory on
+# the host and leaves it there after an uninstall, so a reinstall in the same
+# session would read the record, believe the tint was still up and never put it
+# back.
+#
+# Everything below /run/user/<uid> belongs to that user, so the removal runs as
+# them. A symlink they plant on the way then reaches nothing they could not
+# delete themselves.
+forget_shown() {
+    local dir uid owner gid
+    for dir in /run/user/*/; do
+        dir="${dir%/}"
+        uid="${dir##*/}"
+        [[ "$uid" =~ ^[0-9]+$ && ! -L "$dir" ]] || continue
+        read -r owner gid < <(stat -c '%u %g' -- "$dir") || continue
+        [[ "$owner" == "$uid" ]] || continue
+        setpriv --reuid="$uid" --regid="$gid" --clear-groups -- \
+            rm -f -- "$dir/.flatpak/$app_id/xdg-run/cosmic-nightlight-shown" \
+            2>/dev/null || true
+    done
+}
+
 clean_up() {
     local mode="$1"
 
@@ -183,7 +208,9 @@ clean_up() {
     # A helper from this release on skips the VT switch, and so the blink, when
     # the screen is already untinted; an older one switches either way.
     if [[ "$mode" == watch ]] && ours "$helper"; then
-        "$helper" --off || true
+        if "$helper" --off; then
+            forget_shown
+        fi
     fi
 
     # The helper goes first. A leftover applet process that calls it in between
