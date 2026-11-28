@@ -13,7 +13,7 @@
 # Night Light once.
 Type=Application
 Name=Night Light
-Exec=cosmic-ext-nightlight
+Exec=cosmic-ext-nightlight --applet
 Icon=io.github.cosmic_ext_nightlight
 Terminal=false
 NoDisplay=true

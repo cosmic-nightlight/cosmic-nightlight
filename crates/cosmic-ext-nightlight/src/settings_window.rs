@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The settings window (`cosmic-ext-nightlight --settings`).
+//! The settings window (`cosmic-ext-nightlight`, or `cosmic-ext-nightlight --settings`).
 //!
 //! A normal libcosmic top-level window for the less-frequent configuration: the
 //! night temperature and brightness, the schedule mode, and the times the tint

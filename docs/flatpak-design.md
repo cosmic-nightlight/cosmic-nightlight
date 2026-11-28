@@ -535,7 +535,7 @@ Established by building the flatpak and running it, since none of it is in a spe
   foreground-VT check needs no extra permission.
 - `/usr/local/libexec` does **not** exist on Pop!_OS. `/usr/local/bin` does, and
   is already whitelisted by the rule.
-- Flatpak rewrites `Exec=` on export and preserves both the `--settings` argument
+- Flatpak rewrites `Exec=` on export and preserves both the `--applet`/`--settings` arguments
   and `X-CosmicApplet=true`, so the applet picker lists it.
 - `/.flatpak-info` carries the sandbox's host-side location as `app-path` under
   `[Instance]`, already resolved to the running commit — so reaching the bundled
