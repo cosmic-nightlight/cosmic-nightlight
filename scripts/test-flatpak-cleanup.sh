@@ -33,7 +33,7 @@ state=
 # Sets up an empty fake host for one case.
 fresh() {
     case_dir="$work/$1"
-    mkdir -p "$case_dir"/{varlib/cosmic-ext-nightlight,varlib/flatpak,home/alice,home/bob,systemd,polkit,bin,etc-flatpak/installations.d,mnt,stubs}
+    mkdir -p "$case_dir"/{varlib/cosmic-ext-nightlight,varlib/flatpak,home/alice,home/bob,systemd,polkit,bin,etc-flatpak/installations.d,mnt,run,stubs}
     state="$case_dir/varlib/cosmic-ext-nightlight"
     cp "$cleanup" "$state/cleanup.sh"
     printf '#!/bin/sh\necho "helper $*"\n' >"$case_dir/bin/cosmic-ext-nightlight-helper"
@@ -52,6 +52,9 @@ fresh() {
     printf 'passwd: files\ngroup: files\n' >"$case_dir/nsswitch.conf"
     printf '#!/bin/sh\necho "systemctl $*"\n' >"$case_dir/stubs/systemctl"
     printf '#!/bin/sh\nexit 0\n' >"$case_dir/stubs/sleep"
+    # Dropping to a user takes root, and the cases run as you, who already are
+    # the user that owns the fake runtime directory. So run the command as is.
+    printf '#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n' >"$case_dir/stubs/setpriv"
     chmod +x "$case_dir/stubs/"*
     : >"$case_dir/log"
 }
@@ -97,6 +100,7 @@ run() {
         --bind "$case_dir/varlib" /var/lib \
         --bind "$case_dir/home" /home \
         --bind "$case_dir/mnt" /mnt \
+        --bind "$case_dir/run" /run/user \
         --bind "$case_dir/systemd" /etc/systemd/system \
         --bind "$case_dir/polkit" /etc/polkit-1/rules.d \
         --bind "$case_dir/bin" /usr/local/bin \
@@ -195,6 +199,33 @@ uninstall_from /var/lib/flatpak
 run watch
 check "a watch run resets the tint before removing the helper" \
     eval 'helper_removed && grep -q "helper --off" "$case_dir/log"'
+
+# The fake runtime directory is named after you, since the script only trusts
+# one owned by the uid it is named after.
+shown_record() { echo "$case_dir/run/$(id -u)/.flatpak/$app_id/xdg-run/cosmic-nightlight-shown"; }
+leave_shown_record() {
+    mkdir -p "$(dirname "$(shown_record)")"
+    echo "6500 1.0" >"$(shown_record)"
+}
+
+fresh watch-forgets-shown
+install_in /var/lib/flatpak
+record_roots /var/lib/flatpak
+leave_shown_record
+uninstall_from /var/lib/flatpak
+run watch
+check "a watch run forgets what the app last put on the screen" \
+    eval '[[ ! -e $(shown_record) ]]'
+
+fresh gui-keeps-shown
+install_in /var/lib/flatpak
+record_roots /var/lib/flatpak
+leave_shown_record
+echo gui >"$case_dir/bin/cosmic-ext-nightlight"
+uninstall_from /var/lib/flatpak
+run watch
+check "the record stays when the screen was left alone" \
+    eval '[[ -e $(shown_record) ]]'
 
 if grep -q custom_installations "$cleanup"; then
     fresh custom-drive-unmounted
