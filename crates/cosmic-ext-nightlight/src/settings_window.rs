@@ -311,6 +311,13 @@ impl cosmic::Application for SettingsWindow {
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
             Message::ScheduleSelected(index) => {
+                // The dropdown stays live while a setup's password prompt is up,
+                // but a second pick must not start a second setup. It would take
+                // the pending choice as the one to fall back to, and once the
+                // first prompt was answered it would ask for the password again.
+                if self.setup_busy {
+                    return Task::none();
+                }
                 let chosen = Schedule::ALL[index];
                 // A schedule is a promise to change the screen while nobody is
                 // watching — which is the one moment a password prompt is worst,
