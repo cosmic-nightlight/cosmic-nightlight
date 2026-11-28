@@ -1029,10 +1029,15 @@ impl SettingsWindow {
         // it, and parking it here would blank the dropdown under the user while
         // they were still answering for it. `HostSetupFinished` settles that
         // choice either way, and the next tick picks up from there.
+        //
+        // The override waits too. It would be judged against the schedule on
+        // show rather than the one stored: picking a schedule at night with the
+        // tint on manually would store `Auto` beside a stored `Manual`, which
+        // clears the screen, and dismissing the prompt would leave it cleared.
         if !self.setup_busy {
             backend::defer_without_setup(&self.config, &mut self.settings);
+            config::expire_override(&self.config, &mut self.settings);
         }
-        config::expire_override(&self.config, &mut self.settings);
         self.show_current();
     }
 
