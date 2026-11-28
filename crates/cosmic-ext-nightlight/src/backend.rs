@@ -970,8 +970,16 @@ fn deferral(
             deferred: Some(schedule),
         })
     } else {
+        // Hand the parked schedule back, unless one is live already. That one
+        // was picked since, in the settings window that ran the setup, so it is
+        // the more recent intent, and restoring the parked one over it would
+        // undo the user's choice on the next tick.
         deferred.map(|parked| ScheduleDeferral {
-            schedule: parked,
+            schedule: if schedule == config::Schedule::Manual {
+                parked
+            } else {
+                schedule
+            },
             deferred: None,
         })
     }
@@ -1462,7 +1470,6 @@ fn outdated(state: TintState, brightness: f32) -> bool {
     let current = settings.tint_on().then_some(settings.temperature);
     current != state || settings.brightness as f32 != brightness
 }
-
 /// Whether another of our processes has already put `wanted` on the screen
 /// since the user asked for it, so a forced apply would only repeat it.
 ///
@@ -2900,6 +2907,19 @@ mod tests {
     fn completing_the_setup_restores_the_parked_schedule() {
         assert_eq!(
             deferral(true, Schedule::Manual, Some(Schedule::Solar)),
+            Some(ScheduleDeferral {
+                schedule: Schedule::Solar,
+                deferred: None,
+            })
+        );
+    }
+
+    /// Picking a schedule while unset-up runs the setup, and the pick is stored
+    /// once it lands. A schedule parked before then must not replace it.
+    #[test]
+    fn a_schedule_picked_during_the_setup_beats_the_parked_one() {
+        assert_eq!(
+            deferral(true, Schedule::Solar, Some(Schedule::Custom)),
             Some(ScheduleDeferral {
                 schedule: Schedule::Solar,
                 deferred: None,
