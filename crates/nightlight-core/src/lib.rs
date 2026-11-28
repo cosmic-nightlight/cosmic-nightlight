@@ -214,12 +214,25 @@ pub fn apply_with(
     } else {
         // Trust the screen, not the count: a display the borrowed handle could
         // not reach still needs the bounce below.
-        if let drm::Showing::All(crtcs) = drm::showing(kelvin, brightness) {
-            return Ok(Applied {
-                crtcs,
-                failed_cards: 0,
-                route: Route::Borrowed,
-            });
+        match drm::showing(kelvin, brightness) {
+            drm::Showing::All(crtcs) => {
+                return Ok(Applied {
+                    crtcs,
+                    failed_cards: 0,
+                    route: Route::Borrowed,
+                });
+            }
+            // The displays went to sleep during the fade. As in the check
+            // before it, a bounce would only wake one, and no CRTCs has the
+            // daemon try again later.
+            drm::Showing::NoneActive => {
+                return Ok(Applied {
+                    crtcs: 0,
+                    failed_cards: 0,
+                    route: Route::Unchanged,
+                });
+            }
+            drm::Showing::Different => {}
         }
         "some displays did not take the change through the compositor's handle"
     };
