@@ -14,7 +14,7 @@ GUI:
 | --- | --- | --- |
 | [`nightlight-core`](../crates/nightlight-core) | library | Color math ([`gamma.rs`](../crates/nightlight-core/src/gamma.rs)), DRM writes ([`drm.rs`](../crates/nightlight-core/src/drm.rs)), the VT switching fallback ([`vt.rs`](../crates/nightlight-core/src/vt.rs)) |
 | [`nightlight-helper`](../crates/nightlight-helper) | root (via `pkexec`) | Small CLI: reads `--temp`/`--brightness` and calls core |
-| [`cosmic-ext-nightlight`](../crates/cosmic-ext-nightlight) | your user | The panel applet, `--settings` window and optional `--daemon`; calls the helper |
+| [`cosmic-ext-nightlight`](../crates/cosmic-ext-nightlight) | your user | The settings window (default), `--applet`, and optional `--daemon`; calls the helper |
 
 The applet, the settings window and the daemon can each run the schedule. They
 share a lock and a record of what's on screen in `$XDG_RUNTIME_DIR`, so running

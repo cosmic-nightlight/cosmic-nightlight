@@ -180,7 +180,7 @@ Download the latest `cosmic-ext-nightlight-*.flatpak` from the
 page and run:
 
 ```sh
-flatpak install --user ./cosmic-ext-nightlight-*.flatpak && flatpak run io.github.cosmic_ext_nightlight --settings
+flatpak install --user ./cosmic-ext-nightlight-*.flatpak && flatpak run io.github.cosmic_ext_nightlight
 ```
 
 Turn it on and type your password once to install a small helper.
@@ -241,7 +241,7 @@ curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/41c20
 ./venv/bin/python flatpak-cargo-generator.py ../Cargo.lock -o cargo-sources.json
 
 flatpak-builder --force-clean --user --install build io.github.cosmic_ext_nightlight.json
-flatpak run io.github.cosmic_ext_nightlight --settings
+flatpak run io.github.cosmic_ext_nightlight
 ```
 
 This builds the latest release. To build your local changes instead, run

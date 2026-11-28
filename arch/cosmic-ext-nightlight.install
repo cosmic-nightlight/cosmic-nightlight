@@ -3,7 +3,8 @@
 # Stop what is still running a binary this upgrade replaced, so the new version
 # takes over now instead of at the next login.
 #
-# Panel applets are restarted. The panel starts the applet with no arguments
+# Panel applets are restarted. The panel starts the applet with `--applet` (or
+# with no arguments and `COSMIC_PANEL_NAME` set for versions before `--applet`)
 # and brings it back within milliseconds, as the new version.
 #
 # A settings window or daemon from before 0.7.0 reads the settings saved under
@@ -27,7 +28,9 @@ stop_replaced_processes() {
         esac
         dir=${exe%/exe}
         pid=${dir#/proc/}
-        if [ "$(tr -cd '\0' <"$dir/cmdline" 2>/dev/null | wc -c)" -eq 1 ]; then
+        if grep -qxz -e --applet "$dir/cmdline" 2>/dev/null \
+            || { [ "$(tr -cd '\0' <"$dir/cmdline" 2>/dev/null | wc -c)" -eq 1 ] \
+                 && grep -qz '^COSMIC_PANEL_NAME=.' "$dir/environ" 2>/dev/null; }; then
             kill "$pid" 2>/dev/null || true
         elif [ "$old" = true ] && ! grep -qxz -e --managed "$dir/cmdline" 2>/dev/null; then
             if grep -qs '/cosmic-nightlight\.service$' "$dir/cgroup"; then
