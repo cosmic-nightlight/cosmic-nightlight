@@ -187,7 +187,10 @@ mod tests {
             Mode::Daemon { managed: false }
         );
         assert_eq!(
-            select_mode(&args(&["cosmic-ext-nightlight", "--daemon", "--managed"]), None),
+            select_mode(
+                &args(&["cosmic-ext-nightlight", "--daemon", "--managed"]),
+                None
+            ),
             Mode::Daemon { managed: true }
         );
         assert_eq!(
