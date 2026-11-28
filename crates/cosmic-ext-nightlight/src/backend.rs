@@ -1468,8 +1468,25 @@ fn outdated(state: TintState, brightness: f32) -> bool {
     }
     let settings = config::Settings::load_from(&handler);
     let current = settings.tint_on().then_some(settings.temperature);
-    current != state || settings.brightness as f32 != brightness
+    superseded(current, settings.brightness as f32, state, brightness)
 }
+
+/// Whether the settings, now asking for `current` at `current_brightness`, have
+/// moved on from a request for `state` at `brightness`.
+///
+/// Brightness only counts while tinted, as it does in [`Shown::new`]. Turning
+/// off ignores it, so a slider moved while an off was waiting for the lock must
+/// not cancel that off. Nothing else would take its place, since a brightness
+/// change with the tint off applies nothing.
+fn superseded(
+    current: TintState,
+    current_brightness: f32,
+    state: TintState,
+    brightness: f32,
+) -> bool {
+    current != state || (state.is_some() && current_brightness != brightness)
+}
+
 /// Whether another of our processes has already put `wanted` on the screen
 /// since the user asked for it, so a forced apply would only repeat it.
 ///
@@ -2912,6 +2929,18 @@ mod tests {
                 deferred: None,
             })
         );
+    }
+
+    /// An off still waiting for the lock is the latest word on the screen even
+    /// if the brightness has moved since, because turning off ignores it. A
+    /// tint at the old brightness has been overtaken, though.
+    #[test]
+    fn only_a_tint_is_overtaken_by_a_brightness_change() {
+        assert!(!superseded(None, 0.8, None, 1.0));
+        assert!(superseded(Some(4000), 0.8, Some(4000), 1.0));
+        assert!(!superseded(Some(4000), 0.8, Some(4000), 0.8));
+        assert!(superseded(None, 1.0, Some(4000), 1.0));
+        assert!(superseded(Some(4000), 1.0, None, 1.0));
     }
 
     /// Picking a schedule while unset-up runs the setup, and the pick is stored
