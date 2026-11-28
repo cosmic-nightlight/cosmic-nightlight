@@ -783,9 +783,31 @@ pub fn defer_without_setup(
 ) {
     // One probe for both halves. Unset-up it costs round trips out of the
     // sandbox, and asking twice a tick would double them for one answer.
-    let ready = host_setup() == HostSetup::Ready;
+    let ready = settings_deliverable(host_setup());
     defer_schedule(handler, settings, ready);
     drop_undeliverable_override(handler, settings, ready);
+}
+
+/// Whether the stored settings have a host setup under them, for
+/// [`defer_without_setup`].
+///
+/// Only a host with no setup at all stands them down. An outdated one keeps
+/// them, because a flatpak update leaves the instances that were already
+/// running on the old build: the panel applet above all, which cosmic-panel
+/// does not restart. That build reads the same helper as current, since it
+/// speaks the old contract, and restores whatever this one parks. Parking here
+/// set the two flipping the schedule between manual and its own value on every
+/// tick, and each time it read as manual the old applet cleared the screen and
+/// put the tint back a moment later.
+///
+/// Keeping them costs nothing the parking was protecting against. An outdated
+/// host still holds every unasked apply back, as [`would_prompt`] treats
+/// anything but [`HostSetup::Ready`] as a password prompt, so a schedule left
+/// in place cannot prompt at sunset. It also hands back a schedule an earlier
+/// build parked on an outdated host, as the deferral already does once the
+/// setup lands.
+fn settings_deliverable(setup: HostSetup) -> bool {
+    setup != HostSetup::Needed
 }
 
 /// Parks a schedule that has no host setup under it, and restores it once the
@@ -2937,6 +2959,29 @@ mod tests {
                 "a set-up host delivers {tint_override:?}"
             );
         }
+    }
+
+    /// Only a host with no setup at all stands the settings down. Parking on an
+    /// outdated host fought the applet still running the build from before a
+    /// flatpak update, which reads the same helper as current and restores the
+    /// schedule, so the two flipped it on every tick and blinked the screen.
+    #[test]
+    fn an_outdated_helper_keeps_the_stored_settings() {
+        assert!(settings_deliverable(HostSetup::Ready));
+        assert!(settings_deliverable(HostSetup::Outdated));
+        assert!(!settings_deliverable(HostSetup::Needed));
+        assert_eq!(
+            deferral(
+                settings_deliverable(HostSetup::Outdated),
+                Schedule::Manual,
+                Some(Schedule::Custom),
+            ),
+            Some(ScheduleDeferral {
+                schedule: Schedule::Custom,
+                deferred: None,
+            }),
+            "a schedule an earlier build parked comes back"
+        );
     }
 
     /// The regression this exists for. `/etc/polkit-1/rules.d` is `0750
